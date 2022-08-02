@@ -153,6 +153,3 @@ class SinopacAccount(Account):
     stocks = self.get_stocks(position.keys())
     account_balance = sum([sobj['quantity'] * stocks[sid].close * 1000 for sid, sobj in position.items()])
     return bank_balance + settlements + account_balance
-
-  def support_day_trade_condition(self):
-    return False

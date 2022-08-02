@@ -17,6 +17,7 @@ class Order():
   action: Action
   price: numbers.Number
   quantity: numbers.Number
+  filled_quantity: numbers.Number
   status: OrderStatus
   order_condition: OrderCondition
   time: datetime.datetime
@@ -48,6 +49,18 @@ class Order():
       'ShortSelling': OrderCondition.SHORT_SELLING,
     }[trade.order.order_cond]
 
+    # calculate quantity
+    quantity = trade.order.quantity
+
+    # calculate filled quantity
+    filled_quantity = 0
+    for d in trade.status.deals:
+        filled_quantity += d.quantity
+
+    if trade.order.order_lot == sj.constant.TFTStockOrderLot.IntradayOdd:
+        quantity /= 1000
+        filled_quantity /= 1000
+
     if trade.order.first_sell == 'true' and order_condition == OrderCondition.CASH:
       order_condition = OrderCondition.DAY_TRADING_SHORT
 
@@ -56,7 +69,8 @@ class Order():
      'stock_id': trade.contract.code,
      'action': action,
      'price': trade.order.price if trade.status.modified_price == 0 else trade.status.modified_price,
-     'quantity': trade.order.quantity,
+     'quantity': quantity,
+     'filled_quantity': filled_quantity,
      'status': status,
      'order_condition': order_condition,
      'time': trade.status.order_datetime,
@@ -162,5 +176,9 @@ class Account(ABC):
 
   @abstractmethod
   def get_total_balance():
+    pass
+
+  @abstractmethod
+  def set_realtime_order_update():
     pass
 

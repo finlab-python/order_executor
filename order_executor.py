@@ -29,7 +29,7 @@ class Position():
     self.position = []
     for s, a in stocks.items():
       if a != 0:
-        self.position.append({'stock_id': s, 'quantity': int(a), 'order_condition': long_order_condition if a > 0 else short_order_condition})
+        self.position.append({'stock_id': s, 'quantity': a, 'order_condition': long_order_condition if a > 0 else short_order_condition})
 
   @classmethod
   def from_dict(cls, position):
@@ -41,7 +41,12 @@ class Position():
   def from_report(cls, report, fund, allocation=greedy_allocation, **kwargs):
     weights = report.current_trades.next_weights
     price = data.get('price:收盤價').iloc[-1]
-    stock_quantity, available_funds = allocation(weights, price*1000, fund)
+    stock_quantity, available_funds = allocation(weights, price, fund)
+
+    # round quantity
+    for s, q in stock_quantity:
+        stock_quantity[s] = round(q, 3)
+
     return cls(stock_quantity, **kwargs)
 
   def __add__(self, position):
@@ -187,6 +192,7 @@ class OrderExecutor():
         print('execute', action, o['stock_id'], 'X', abs(o['quantity']), '@', limit, o['order_condition'])
       else:
         print('execute', action, o['stock_id'], 'X', abs(o['quantity']), '@', price, o['order_condition'])
+
       self.account.create_order(action=action,
                                 stock_id=o['stock_id'],
                                 quantity=abs(o['quantity']),
