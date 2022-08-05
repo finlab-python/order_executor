@@ -66,7 +66,7 @@ class Position():
       qty2 = {sobj['stock_id']: sobj['quantity'] for sobj in p2 if sobj['order_condition'] == oc}
 
       ps = self.op(qty1, qty2, operator)
-      ret += [{'stock_id': sid, 'quantity': round(qty), 'order_condition': oc} for sid, qty in ps.items()]
+      ret += [{'stock_id': sid, 'quantity': round(qty, 3), 'order_condition': oc} for sid, qty in ps.items()]
 
     return Position.from_dict(ret)
 
@@ -106,17 +106,14 @@ class Position():
 class OrderExecutor():
 
   def __init__(
-      self, target_position, account=None):
+      self, target_position, account, place_odd_lot=False):
 
     if isinstance(target_position, dict):
       target_position = Position(target_position)
 
     self.account = account
-
-    # if not account.support_day_trade_condition():
-    #   target_position.fall_back_cash()
-
     self.target_position = target_position
+    self.odd_lot = place_odd_lot
 
   @classmethod
   def from_report(
@@ -193,9 +190,22 @@ class OrderExecutor():
       else:
         print('execute', action, o['stock_id'], 'X', abs(o['quantity']), '@', price, o['order_condition'])
 
+      quantity = abs(o['quantity'])
+      board_lot_quantity = quantity // 1
+      odd_lot_quantity = round(1000 * (quantity % 1))
+
+      if self.odd_lot:
+        self.account.create_order(action=action,
+                                  stock_id=o['stock_id'],
+                                  quantity=odd_lot_quantity,
+                                  price=price, market_order=market_order,
+                                  order_cond=o['order_condition'],
+                                  odd_lot=True,
+                                  best_price_limit=best_price_limit)
+
       self.account.create_order(action=action,
                                 stock_id=o['stock_id'],
-                                quantity=abs(o['quantity']),
+                                quantity=board_lot_quantity,
                                 price=price, market_order=market_order,
                                 order_cond=o['order_condition'],
                                 best_price_limit=best_price_limit)

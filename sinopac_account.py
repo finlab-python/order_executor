@@ -47,7 +47,7 @@ class SinopacAccount(Account):
     os.environ['SHIOAJI_PASSWORD'] = password
     os.environ['SHIOAJI_CERT_PATH'] = cert_path
 
-  def create_order(self, action, stock_id, quantity, price=None, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
+  def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
 
     contract = self.api.Contracts.Stocks.get(stock_id)
 
@@ -84,6 +84,8 @@ class SinopacAccount(Account):
       OrderCondition.DAY_TRADING_SHORT: 'Cash'
     }[order_cond]
 
+    order_lot = sj.constant.TFTStockOrderLot.IntradayOdd\
+            if odd_lot else sj.constant.TFTStockOrderLot.Common
 
     order = self.api.Order(price=price,
       quantity=quantity,
@@ -91,9 +93,9 @@ class SinopacAccount(Account):
       price_type="LMT",
       order_type="ROD",
       order_cond=order_cond,
-      order_lot="Common",
       first_sell=first_sell,
       account=self.api.stock_account,
+      order_lot=order_lot,
     )
     trade = self.api.place_order(contract, order)
 

@@ -50,17 +50,11 @@ class Order():
     }[trade.order.order_cond]
 
     # calculate quantity
-    quantity = trade.order.quantity
-
     # calculate filled quantity
-    filled_quantity = 0
-    for d in trade.status.deals:
-        filled_quantity += d.quantity
+    quantity = trade.order.quantity
+    filled_quantity = trade.status.deal_quantity
 
-    if trade.order.order_lot == sj.constant.TFTStockOrderLot.IntradayOdd:
-        quantity /= 1000
-        filled_quantity /= 1000
-
+    # calculate order condition
     if trade.order.first_sell == 'true' and order_condition == OrderCondition.CASH:
       order_condition = OrderCondition.DAY_TRADING_SHORT
 
@@ -96,12 +90,15 @@ class Order():
       'A': OrderCondition.DAY_TRADING_SHORT,
     }[order['trade']]
 
+    filled_quantity = order['mat_qty_share'] if order['ap_code'] == "5" else['mat_qty']
+
     return cls(**{
       'order_id': order['ord_no'],
       'stock_id': order['stock_no'],
       'action': Action.BUY if order['buy_sell'] == 'B' else Action.SELL,
       'price': order.get('od_price', order['avg_price']),
       'quantity': order['org_qty'] - order['mat_qty'] - order['cel_qty'],
+      'filled_quantity': filled_quantity,
       'status': status,
       'order_condition': order_condition,
       'time': datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f'),
@@ -178,7 +175,7 @@ class Account(ABC):
   def get_total_balance():
     pass
 
-  @abstractmethod
-  def set_realtime_order_update():
-    pass
+  # @abstractmethod
+  # def set_realtime_order_update():
+  #   pass
 

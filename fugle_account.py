@@ -38,7 +38,7 @@ class FugleAccount(Account):
 
     self.trades = {}
 
-  def create_order(self, action, stock_id, quantity, price=None, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
+  def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
 
     if quantity <= 0:
         raise ValueError("quantity should be larger than zero")
@@ -56,7 +56,7 @@ class FugleAccount(Account):
         price_flag = PriceFlag.LimitUp
       elif action == Action.SELL:
         price_flag = PriceFlag.LimitDown
-      
+
     elif best_price_limit:
       price = None
       if action == Action.BUY:
@@ -72,11 +72,13 @@ class FugleAccount(Account):
       OrderCondition.DAY_TRADING_SHORT: Trade.DayTradingSell,
     }[order_cond]
 
+    ap_code = APCode.IntradayOdd if odd_lot else APCode.Common
+
     params = dict(
         buy_sell = fugle_action,
         stock_no = stock_id,
         quantity = quantity,
-        ap_code = APCode.Common,
+        ap_code = ap_code,
         price_flag=price_flag,
         trade=order_cond,
         price=price
@@ -84,8 +86,12 @@ class FugleAccount(Account):
 
     order = OrderObject(**params)
     ret = self.sdk.place_order(order)
-    self.trades[ret['ord_no']] = ret
-    return ret['ord_no']
+
+    ord_no = ret['ord_no']
+    if ord_no == '':
+        ord_no = ret['pre_ord_no']
+    self.trades[ord_no] = ret
+    return ord_no
 
   def update_order(self, order_id, price=None, quantity=None):
 
@@ -102,7 +108,7 @@ class FugleAccount(Account):
       try:
         self.sdk.modify_price(self.trades[order_id].org_order, price)
       except ValueError as ve:
-        logging.warning(f"update_order: Cannot update price: {ve}")        
+        logging.warning(f"update_order: Cannot update price: {ve}")
 
     if quantity is not None:
       raise NotImplementedError("Cannot change order quantity")
