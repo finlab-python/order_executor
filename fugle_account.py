@@ -4,7 +4,7 @@ from fugle_trade.order import OrderObject
 from fugle_trade.constant import Action as fugleAction
 from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
 
-from finlab.online.base_account import Account, Stock, Order
+from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
 import requests
 import logging
@@ -160,7 +160,7 @@ class FugleAccount(Account):
         'order_condition': order_condition[i['trade']]
       })
 
-    return ret
+    return Position.from_dict(ret)
 
   def get_total_balance():
     raise NotImplementedError("Total balance not implemented")

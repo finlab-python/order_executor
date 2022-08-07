@@ -8,6 +8,7 @@ import datetime
 import numbers
 import os
 from finlab.online.enums import *
+from finlab.online.order_executor import Position
 
 @dataclass
 class Order():
@@ -54,6 +55,9 @@ class Order():
     quantity = trade.order.quantity
     filled_quantity = trade.status.deal_quantity
 
+    if trade.order.order_lot == 'IntradayOdd':
+        quantity /= 1000
+
     # calculate order condition
     if trade.order.first_sell == 'true' and order_condition == OrderCondition.CASH:
       order_condition = OrderCondition.DAY_TRADING_SHORT
@@ -90,14 +94,18 @@ class Order():
       'A': OrderCondition.DAY_TRADING_SHORT,
     }[order['trade']]
 
-    filled_quantity = order['mat_qty_share'] if order['ap_code'] == "5" else['mat_qty']
+    filled_quantity = order['mat_qty']
+
+    order_id = order['ord_no']
+    if order_id == '':
+      order_id = order['pre_ord_no']
 
     return cls(**{
-      'order_id': order['ord_no'],
+      'order_id': order_id,
       'stock_id': order['stock_no'],
       'action': Action.BUY if order['buy_sell'] == 'B' else Action.SELL,
       'price': order.get('od_price', order['avg_price']),
-      'quantity': order['org_qty'] - order['mat_qty'] - order['cel_qty'],
+      'quantity': order['org_qty'],
       'filled_quantity': filled_quantity,
       'status': status,
       'order_condition': order_condition,
@@ -130,6 +138,10 @@ class Stock():
   @classmethod
   def from_fugle(cls, json_response):
     r = json_response
+
+    if 'data' not in r:
+        raise Exception('Cannot parse fugle quote data' + str(r))
+
     bids = r['data']['quote']['order']['bids']
     asks = r['data']['quote']['order']['asks']
     return cls(
@@ -175,7 +187,7 @@ class Account(ABC):
   def get_total_balance():
     pass
 
-  # @abstractmethod
-  # def set_realtime_order_update():
-  #   pass
+  def sep_odd_lot_order(self):
+    return True
+
 

@@ -7,7 +7,7 @@ import time
 import os
 import re
 
-from finlab.online.base_account import Account, Stock, Order
+from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
 
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
@@ -121,11 +121,11 @@ class SinopacAccount(Account):
       'MarginTrading': OrderCondition.MARGIN_TRADING,
       'ShortSelling': OrderCondition.SHORT_SELLING,
     }
-    return [{
+    return Position.from_dict([{
         'stock_id': p.code,
         'quantity': p.quantity if p.direction == 'Buy' else -p.quantity,
         'order_condition': order_conditions[p.cond]
-      } for p in position]
+      } for p in position])
 
   def get_orders(self):
     self.update_trades()

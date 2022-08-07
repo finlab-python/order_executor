@@ -38,16 +38,31 @@ class Position():
     return ret
 
   @classmethod
-  def from_report(cls, report, fund, allocation=greedy_allocation, **kwargs):
+  def from_weight(cls, weights, fund, price=None, odd_lot=False, board_lot_size=1000, allocation=greedy_allocation):
+
+    if price is None:
+        price = data.get('price:收盤價').iloc[-1]
+
+    if isinstance(price, dict):
+        price = pd.Series(price)
+
+    if isinstance(weights, dict):
+        weights = pd.Series(weights)
+
+    if odd_lot:
+        allocation = greedy_allocation(weights, price, fund)[0]
+        for s, q in allocation.items():
+            allocation[s] = round(q) / board_lot_size
+    else:
+        allocation = greedy_allocation(weights, price*board_lot_size, fund)[0]
+
+    return cls(allocation)
+
+
+  @classmethod
+  def from_report(cls, report, fund, **kwargs):
     weights = report.current_trades.next_weights
-    price = data.get('price:收盤價').iloc[-1]
-    stock_quantity, available_funds = allocation(weights, price, fund)
-
-    # round quantity
-    for s, q in stock_quantity:
-        stock_quantity[s] = round(q, 3)
-
-    return cls(stock_quantity, **kwargs)
+    return cls.from_weight(weights, fund, **kwargs)
 
   def __add__(self, position):
     return self.for_each_trading_condition(self.position, position.position, "+")
@@ -106,38 +121,18 @@ class Position():
 class OrderExecutor():
 
   def __init__(
-      self, target_position, account, place_odd_lot=False):
+      self, target_position, account):
 
     if isinstance(target_position, dict):
       target_position = Position(target_position)
 
     self.account = account
     self.target_position = target_position
-    self.odd_lot = place_odd_lot
-
-  @classmethod
-  def from_report(
-      cls, report, money, account, **kwargs):
-
-    report_position = report.position.iloc[-1]
-    report_position = report_position[report_position != 0].to_dict()
-
-    return cls.from_weights(
-      report_position, money, **kwargs)
-
-  @classmethod
-  def from_weights(
-      cls, weights, money, account, **kwargs):
-
-    stocks = account.get_stocks(list(weights.keys()))
-    stock_price = {sid: s.close * 1000 for sid, s in stocks.items()}
-
-    allocation = greedy_allocation(weights, stock_price, money)
-    return cls(Position(allocation[0], **kwargs), account)
 
   def show_alerting_stocks(self):
 
-    new_orders = self._calculate_new_orders()
+    present_position = self.account.get_position()
+    new_orders = (self.target_position - present_position).position
 
     stock_ids = [o['stock_id'] for o in new_orders]
     stocks = self.account.get_stocks(stock_ids)
@@ -149,7 +144,7 @@ class OrderExecutor():
 
     res = requests.get('https://www.sinotrade.com.tw/Stock/Stock_3_8_1')
     dfs = pd.read_html(res.text)
-    credit_sids = credit_sids.append(dfs[0][dfs[0]['股票代碼'].isin(stock_ids)]['股票代碼'].astype(str))
+    credit_sids = pd.concat([credit_sids, dfs[0][dfs[0]['股票代碼'].isin(stock_ids)]['股票代碼'].astype(str)])
     credit_sids.name = None
 
     for sid in list(credit_sids.values):
@@ -167,7 +162,7 @@ class OrderExecutor():
 
   def create_orders(self, market_order=False, best_price_limit=False, view_only=False):
 
-    present_position = Position.from_dict(self.account.get_position())
+    present_position = self.account.get_position()
     orders = (self.target_position - present_position).position
 
     if view_only:
@@ -191,21 +186,30 @@ class OrderExecutor():
         print('execute', action, o['stock_id'], 'X', abs(o['quantity']), '@', price, o['order_condition'])
 
       quantity = abs(o['quantity'])
-      board_lot_quantity = quantity // 1
-      odd_lot_quantity = round(1000 * (quantity % 1))
+      board_lot_quantity = int(abs(quantity // 1))
+      odd_lot_quantity = int(abs(round(1000 * (quantity % 1))))
 
-      if self.odd_lot:
-        self.account.create_order(action=action,
-                                  stock_id=o['stock_id'],
-                                  quantity=odd_lot_quantity,
-                                  price=price, market_order=market_order,
-                                  order_cond=o['order_condition'],
-                                  odd_lot=True,
-                                  best_price_limit=best_price_limit)
+      if self.account.sep_odd_lot_order():
+          if odd_lot_quantity != 0:
+              self.account.create_order(action=action,
+                                    stock_id=o['stock_id'],
+                                    quantity=odd_lot_quantity,
+                                    price=price, market_order=market_order,
+                                    order_cond=o['order_condition'],
+                                    odd_lot=True,
+                                    best_price_limit=best_price_limit)
 
-      self.account.create_order(action=action,
+          if board_lot_quantity != 0:
+              self.account.create_order(action=action,
+                                    stock_id=o['stock_id'],
+                                    quantity=board_lot_quantity,
+                                    price=price, market_order=market_order,
+                                    order_cond=o['order_condition'],
+                                    best_price_limit=best_price_limit)
+      else:
+          self.account.create_order(action=action,
                                 stock_id=o['stock_id'],
-                                quantity=board_lot_quantity,
+                                quantity=quantity,
                                 price=price, market_order=market_order,
                                 order_cond=o['order_condition'],
                                 best_price_limit=best_price_limit)
@@ -218,34 +222,3 @@ class OrderExecutor():
     for i, o in orders.items():
       if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
         self.account.update_order(i, price=stocks[o.stock_id].close)
-
-  def schedule(self, time_period=10):
-
-    now = datetime.datetime.now()
-
-    # market open time
-    am0900 = now.replace(hour=8, minute=59, second=0, microsecond=0)
-
-    # market close time
-    pm1430 = now.replace(hour=14, minute=29, second=0, microsecond=0)
-
-    # order timings
-    internal_timings = pd.date_range(am0900, pm1430, freq=str(time_period) + 'T')
-
-    prev_time = datetime.datetime.now()
-
-    first_limit_order = True
-
-    while True:
-      prev_time = now
-      now = datetime.datetime.now()
-
-      # place limit orders during 9:00 ~ 14:30
-      if ((now > internal_timings) & (internal_timings > prev_time)).any():
-        if first_limit_order:
-          self.create_orders()
-          first_limit_order = False
-        else:
-          self.update_orders()
-
-      time.sleep(20)
