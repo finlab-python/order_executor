@@ -156,9 +156,9 @@ class OrderPanel():
         return o['quantity']
     return 0
 
-  def start_creating_order(self):
+  def start_creating_order(self, market_order):
     with self.out2:
-        self.oe.create_orders()
+        self.oe.create_orders(market_order)
 
     running = self.display_active_order()
 
