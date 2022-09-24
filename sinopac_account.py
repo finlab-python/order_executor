@@ -13,16 +13,18 @@ from finlab.online.enums import *
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
 
 class SinopacAccount(Account):
-  def __init__(self, account=None, password=None, certificate_path=None):
+  def __init__(self, account=None, password=None, certificate_password=None, certificate_path=None):
 
     account = account or os.environ.get('SHIOAJI_ACCOUNT')
     password = password or os.environ.get('SHIOAJI_PASSWORD')
+    certificate_password = certificate_password or os.environ.get('SHIOAJI_CERT_PASSWORD')
     certificate_path = os.environ.get('SHIOAJI_CERT_PATH')
 
-    if account is None or password is None or certificate_path is None:
+    if account is None or password is None or certificate_password is None or certificate_path is None:
       self.login()
       account = account or os.environ.get('SHIOAJI_ACCOUNT')
       password = password or os.environ.get('SHIOAJI_PASSWORD')
+      certificate_password = certificate_password or os.environ.get('SHIOAJI_CERT_PASSWORD')
       certificate_path = os.environ.get('SHIOAJI_CERT_PATH')
 
     self.api = sj.Shioaji()
@@ -31,7 +33,7 @@ class SinopacAccount(Account):
     if certificate_path:
       self.api.activate_ca(
         ca_path=certificate_path,
-        ca_passwd=account,
+        ca_passwd=certificate_password,
         person_id=account,
       )
 
@@ -41,10 +43,12 @@ class SinopacAccount(Account):
   def login():
     account = input('Account name not found, please enter account name:\n')
     password = input('Enter an account password:\n')
+    cert_password = input('Enter an certificate password :\n')
     cert_path = input('Enter certificate path:\n')
 
     os.environ['SHIOAJI_ACCOUNT'] = account
     os.environ['SHIOAJI_PASSWORD'] = password
+    os.environ['SHIOAJI_CERT_PASSWORD'] = cert_password
     os.environ['SHIOAJI_CERT_PATH'] = cert_path
 
   def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
