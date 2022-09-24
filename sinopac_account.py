@@ -18,14 +18,17 @@ class SinopacAccount(Account):
     account = account or os.environ.get('SHIOAJI_ACCOUNT')
     password = password or os.environ.get('SHIOAJI_PASSWORD')
     certificate_password = certificate_password or os.environ.get('SHIOAJI_CERT_PASSWORD')
-    certificate_path = os.environ.get('SHIOAJI_CERT_PATH')
+    certificate_path = certificate_path or os.environ.get('SHIOAJI_CERT_PATH')
 
-    if account is None or password is None or certificate_password is None or certificate_path is None:
+    if certificate_password is None and account is not None:
+      certificate_password = account
+
+    if account is None or password is None or certificate_path is None:
       self.login()
       account = account or os.environ.get('SHIOAJI_ACCOUNT')
       password = password or os.environ.get('SHIOAJI_PASSWORD')
       certificate_password = certificate_password or os.environ.get('SHIOAJI_CERT_PASSWORD')
-      certificate_path = os.environ.get('SHIOAJI_CERT_PATH')
+      certificate_path = certificate_path or os.environ.get('SHIOAJI_CERT_PATH')
 
     self.api = sj.Shioaji()
     self.accounts = self.api.login(account, password)

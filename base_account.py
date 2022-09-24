@@ -207,6 +207,7 @@ class Account(ABC):
   os.environ['SHIOAJI_ACCOUNT']= '永豐證券帳號'
   os.environ['SHIOAJI_PASSWORD']= '永豐證券密碼'
   os.environ['SHIOAJI_CERT_PATH']= '永豐證券憑證路徑'
+  os.environ['SHIOAJI_CERT_PASSWORD'] = '永豐證券憑證密碼' # 預設與身份證同
 
   acc = SinopacAccount()
   ```
