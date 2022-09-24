@@ -13,6 +13,23 @@ from finlab.online.order_executor import Position
 @dataclass
 class Order():
 
+  """
+  Order status
+
+  委託單的狀態
+
+  Attributes:
+      order_id (str): 委託單的 id，與券商 API 所提供的 id 一致
+      stock_id (str): 股票代號 ex: '2330'
+      action (Action): 買賣方向，通常為 'BUY' 或是 'SELL'
+      price (numbers.Number): 股票買賣的價格(限價單)
+      quantity (numbers.Number): 委託股票的總數量（張數），允許小數點
+      filled_quantity (numbers.Number): 以成交股票的數量（張數），允許小數點
+      status (OrderStatus): 委託狀態，可以設定為：'NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCEL'
+      time (datetime.datetime): 委託時間
+      org_order (Any = None): 券商所提供的委託物件格式
+  """
+
   order_id: str
   stock_id: str
   action: Action
@@ -26,6 +43,7 @@ class Order():
 
   @classmethod
   def from_shioaji(cls, trade):
+    """將 shioaji package 的委託單轉換成 finlab 格式"""
     if trade.order.action == 'Buy':
       action = Action.BUY
     elif trade.order.action == 'Sell':
@@ -77,6 +95,7 @@ class Order():
 
   @classmethod
   def from_fugle(cls, order):
+    """將 fugle package 的委託單轉換成 finlab 格式"""
 
     status = OrderStatus.NEW
     if order['mat_qty'] + order['cel_qty'] > 0:
@@ -116,6 +135,23 @@ class Order():
 @dataclass
 class Stock():
 
+  """
+  Stock
+
+  即時股票資料
+
+  Attributes:
+      stock_id (str): 股票代號
+      open (numbers.Number): 開盤價
+      high (numbers.Number): 最高價
+      low (numbers.Number): 最低價
+      close (numbers.Number): 收盤價
+      bid_price (numbers.Number): 買方第一檔價格
+      bid_volume (numbers.Number): 買方第一檔量
+      ask_price (numbers.Number): 賣方第一檔價格
+      ask_volume (numbers.Number: 賣方第一檔量
+  """
+
   stock_id: str
   open: numbers.Number
   high: numbers.Number
@@ -131,12 +167,14 @@ class Stock():
 
   @classmethod
   def from_shioaji(cls, snapshot):
+    """將 shioaji 股價行情轉換成 finlab 格式"""
     d = snapshot
     return cls(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
         bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
 
   @classmethod
   def from_fugle(cls, json_response):
+    """將 fugle 股價行情轉換成 finlab 格式"""
     r = json_response
 
     if 'data' not in r:
@@ -158,33 +196,89 @@ class Stock():
 
 
 class Account(ABC):
+  """股票帳戶的 abstract class
+  可以繼承此 Account，來實做券商的帳戶買賣動作，目前已經實做 SinopacAccount (永豐證券) 以及 FugleAccount (玉山富果)，來進行交易。可以用以下方式建構物件並用來交易：
+
+  永豐證券
+  ```py
+  import os
+  from finlab.online.sinopac_account import SinopacAccount
+
+  os.environ['SHIOAJI_ACCOUNT']= '永豐證券帳號'
+  os.environ['SHIOAJI_PASSWORD']= '永豐證券密碼'
+  os.environ['SHIOAJI_CERT_PATH']= '永豐證券憑證路徑'
+
+  acc = SinopacAccount()
+  ```
+  玉山富果:
+  ```py
+  from finlab.online.fugle_account import FugleAccount
+  import os
+  os.environ['FUGLE_CONFIG_PATH'] = '玉山富果交易設定檔(config.ini.example)路徑'
+  os.environ['FUGLE_MARKET_API_KEY'] = '玉山富果的行情API Token'
+
+  acc = FugleAccount()
+  ```
+
+  """
 
   @abstractmethod
   def create_order(self, action, stock_id, quantity, price=None, force=False, wait_for_best_price=False):
+    """產生新的委託單
+
+    Attributes:
+        action (Action): 買賣方向，通常為 'BUY' 或是 'SELL'
+        stock_id (str): 股票代號 ex: '2330'
+        quantity (numbers.Number): 委託股票的總數量（張數），允許小數點
+        price (numbers.Number, optional): 股票買賣的價格(限價單)
+        force (bool): 是否用最差之價格（長跌停）強制成交?
+          當成交量足夠時，可以比較快成交，然而當成交量低時，容易有大的滑價
+        wait_for_best_price (bool): 是否用最佳之價格（長跌停），無限時間等待？當今天要出場時，可以開啟等漲停價來購買，當今天要買入時，可以掛跌停價等待買入時機。
+    """
     pass
 
   @abstractmethod
   def update_order(self, order_id, price=None, quantity=None):
+    """產生新的委託單
+
+    Attributes:
+        order_id (str): 券商所提供的委託單 ID
+        price (numbers.Number, optional): 更新的限價
+        quantity (numbers.Number, optional): 更新的待成交量
+    """
     pass
 
   @abstractmethod
   def cancel_order(self, order_id):
+    """刪除委託單
+
+    Attributes:
+        order_id (str): 券商所提供的委託單 ID
+    """
     pass
 
   @abstractmethod
   def get_orders(self):
+    """拿到現在所有委託單
+    """
     pass
 
   @abstractmethod
   def get_stocks(self, stock_ids):
+    """拿到現在股票報價
+    Attributes:
+        stock_ids (`list` of `str`): 一次拿取所有股票的報價，ex: ['1101', '2330']
+    """
     pass
 
   @abstractmethod
   def get_position(self):
+    """拿到當前帳戶的股票部位"""
     pass
 
   @abstractmethod
   def get_total_balance():
+    """拿到當前帳戶的股票部位淨值"""
     pass
 
   def sep_odd_lot_order(self):

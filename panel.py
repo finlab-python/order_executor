@@ -259,6 +259,11 @@ class OrderPanel():
 
 def order_panel(account):
 
+  """下單 GUI 介面
+      Arguments:
+          account (Account): 請參考 Account 針對不同券商來建構相對應的操作帳戶
+  """
+
   strategies = data.get_strategies()
 
   def calc_position(allocations, odd_lot=False):
