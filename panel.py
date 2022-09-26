@@ -217,7 +217,10 @@ class OrderPanel():
 
       s = f'股票代號 {order.stock_id}'
       name_label = widgets.Label(value=s, layout=widgets.Layout(width='300px'))
-      s = f'{str(order.action).split(".")[-1]} {order.filled_quantity} / {order.quantity} @ {order.price}'
+      s = f'{str(order.action).split(".")[-1]} {order.filled_quantity} / {order.quantity}'
+
+      if order.price != 0:
+          s += f' @ {order.price}'
 
       cancel_order_btn = widgets.Button(description='刪單')
       cancel_order_btn.oid = order.order_id
@@ -276,6 +279,15 @@ def order_panel(account):
       weights = {pname.split(' ')[0]: pp['next_weight'] for pname, pp in p.items() if isinstance(pp, dict)}
       s = account.get_stocks([s.split(' ')[0] for s in weights])
       price = {pname:s[pname].close for pname in weights}
+
+      for sid, p in price.items():
+        if p == 0:
+          bid_price = s[sid].bid_price if s[sid].bid_price != 0 else s[sid].ask_price
+          ask_price = s[sid].ask_price if s[sid].ask_price != 0 else s[sid].bid_price
+          price[sid] = (bid_price + ask_price)/2
+
+        if price[sid] == 0:
+          raise Exception(f"Stock {sid} has no price to reference. Use latest close of previous trading day")
 
       position = Position.from_weight(weights, allocation, price=price, odd_lot=odd_lot)
       total_position += position

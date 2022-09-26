@@ -182,12 +182,13 @@ class Stock():
 
     bids = r['data']['quote']['order']['bids']
     asks = r['data']['quote']['order']['asks']
+    has_volume = 'trade' in r['data']['quote']
     return cls(
       stock_id=r['data']['info']['symbolId'],
-      high=r['data']['quote']['priceHigh']['price'],
-      low=r['data']['quote']['priceLow']['price'],
-      close=r['data']['quote']['trade']['price'],
-      open=r['data']['quote']['priceOpen']['price'],
+      high=r['data']['quote']['priceHigh']['price'] if has_volume else 0,
+      low=r['data']['quote']['priceLow']['price'] if has_volume else 0,
+      close=r['data']['quote']['trade']['price'] if has_volume else 0,
+      open=r['data']['quote']['priceOpen']['price'] if has_volume else 0,
       bid_price=bids[0]['price'] if bids else np.nan,
       ask_price=asks[0]['price'] if asks else np.nan,
       bid_volume=bids[0]['volume'] if bids else np.nan,
