@@ -97,7 +97,9 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000, short
         # Calculate the equivalent continuous weights of the shares that
         # have already been bought
         current_weights = np.array(buy_prices) * np.array(shares_bought)
-        current_weights = current_weights / current_weights.sum()
+        wsum = current_weights.sum()
+        if wsum != 0:
+            current_weights = current_weights / wsum
         ideal_weights = np.array([i[1] for i in weights])
         deficit = ideal_weights - current_weights
 

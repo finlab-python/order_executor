@@ -138,7 +138,7 @@ class Position():
     """
 
     if price is None:
-        price = data.get('price:收盤價').iloc[-1]
+        price = data.get('price:收盤價').ffill().iloc[-1]
 
     if isinstance(price, dict):
         price = pd.Series(price)
@@ -169,7 +169,9 @@ class Position():
         allocation (func): 資產配置演算法（最大資金部屬貪婪法）
 
     """
-    weights = report.current_trades.next_weights
+    weights = report.current_trades.next_weights\
+        .groupby(report.current_trades.index).last()
+
     return cls.from_weight(weights, fund, **kwargs)
 
   def __add__(self, position):
