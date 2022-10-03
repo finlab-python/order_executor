@@ -64,6 +64,8 @@ class SinopacAccount(Account):
     if price == None:
       price = self.api.snapshots([contract])[0].close
 
+    close_price = float(price)
+
     if market_order:
       if action == Action.BUY:
         price = contract.limit_up
@@ -74,6 +76,8 @@ class SinopacAccount(Account):
         price = contract.limit_down
       elif action == Action.SELL:
         price = contract.limit_up
+
+    price = max(min(close_price * 1.1, price), close_price * 0.9)
 
     if action == Action.BUY:
       action = 'Buy'
