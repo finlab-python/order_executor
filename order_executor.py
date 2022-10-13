@@ -169,8 +169,18 @@ class Position():
             allocation (func): 資產配置演算法（最大資金部屬貪婪法）
 
         """
-        weights = report.current_trades.next_weights\
-            .groupby(report.current_trades.index).last()
+
+        # next trading date arrived
+        tz = datetime.timezone(datetime.timedelta(hours=8))
+        next_trading_time = report.next_trading_date.tz_localize(tz) + datetime.timedelta(hours=16)
+
+        if datetime.datetime.now(tz) >= next_trading_time:
+            w = report.next_weights
+        else:
+            w = report.weights.copy()
+            w.loc[report.actions[report.actions == 'sl_tp_exit'].index] = 0
+            
+        w = w.groupby(w.index).last()
 
         return cls.from_weight(weights, fund, **kwargs)
 
