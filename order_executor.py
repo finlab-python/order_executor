@@ -179,10 +179,10 @@ class Position():
         else:
             w = report.weights.copy()
             w.loc[report.actions[report.actions == 'sl_tp_exit'].index] = 0
-            
+
         w = w.groupby(w.index).last()
 
-        return cls.from_weight(weights, fund, **kwargs)
+        return cls.from_weight(w, fund, **kwargs)
 
     def __add__(self, position):
         return self.for_each_trading_condition(self.position, position.position, "+")
