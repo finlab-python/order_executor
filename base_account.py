@@ -238,6 +238,9 @@ class Account(ABC):
             force (bool): 是否用最差之價格（長跌停）強制成交?
               當成交量足夠時，可以比較快成交，然而當成交量低時，容易有大的滑價
             wait_for_best_price (bool): 是否用最佳之價格（長跌停），無限時間等待？當今天要出場時，可以開啟等漲停價來購買，當今天要買入時，可以掛跌停價等待買入時機。
+
+        Returns:
+            (str): order id 券商提供的委託單編號
         """
         pass
 
@@ -249,6 +252,8 @@ class Account(ABC):
             order_id (str): 券商所提供的委託單 ID
             price (numbers.Number, optional): 更新的限價
             quantity (numbers.Number, optional): 更新的待成交量
+        Returns:
+            (None): 無跳出 erorr 代表成功更新委託單
         """
         pass
 
@@ -256,8 +261,17 @@ class Account(ABC):
     def cancel_order(self, order_id):
         """刪除委託單
 
+        建議使用 刪除委託單此功能前，先使用 update_order() 來更新委託單的狀況！如下
+        ```py
+        acc.update_order()
+        acc.cancel_order('ORDER_ID')
+        ```
+
         Attributes:
             order_id (str): 券商所提供的委託單 ID
+
+        Returns:
+            (None): 代表成功更新委託單
         """
         pass
 
@@ -277,7 +291,11 @@ class Account(ABC):
 
     @abstractmethod
     def get_position(self):
-        """拿到當前帳戶的股票部位"""
+        """拿到當前帳戶的股票部位
+
+        Returns:
+            (Position): 當前股票部位
+        """
         pass
 
     @abstractmethod
