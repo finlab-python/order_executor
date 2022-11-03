@@ -1,9 +1,11 @@
 from finlab.online.utils import greedy_allocation
 from finlab.online.enums import *
 from finlab import data
+from warnings import warn
 import pandas as pd
 import requests
 import datetime
+import json
 import time
 
 
@@ -79,7 +81,7 @@ class Position():
                     {'stock_id': s, 'quantity': a, 'order_condition': long_order_condition if a > 0 else short_order_condition})
 
     @classmethod
-    def from_dict(cls, position):
+    def from_list(cls, position):
         """利用 `dict` 建構股票部位
 
 
@@ -89,7 +91,7 @@ class Position():
               from finlab.online.enums import OrderCondition
               from finlab.online.order_executor import Position
 
-              Position.from_dict(
+              Position.from_list(
               [{
                   'stock_id': '1101', # 股票代號
                   'quantity': 1.1, # 張數
@@ -101,6 +103,18 @@ class Position():
               其中 OrderCondition 除了 `CASH` 外，還有 `MARGIN_TRADING`、`DAY_TRADING_LONG`、`SHORT_SELLING`、`DAY_TRADING_SHORT`。
 
         """
+        ret = cls({})
+        ret.position = position
+        return ret
+
+
+    @classmethod
+    def from_dict(cls, position):
+
+        warn('This method is renamed and will be deprecated.'
+             ' Please replace `Position.from_dict()` to `Position.from_list().`',
+             DeprecationWarning, stacklevel=2)
+
         ret = cls({})
         ret.position = position
         return ret
@@ -184,6 +198,15 @@ class Position():
 
         return cls.from_weight(w, fund, **kwargs)
 
+    def to_json(self, path):
+        with open(path, 'w') as f:
+            json.dump(self.position, f)
+    
+    @classmethod
+    def from_json(self, path):
+        with open(path, 'r') as f:
+            Position.json.load(f)
+
     def __add__(self, position):
         return self.for_each_trading_condition(self.position, position.position, "+")
 
@@ -220,7 +243,7 @@ class Position():
             ret += [{'stock_id': sid, 'quantity': round(
                 qty, 3), 'order_condition': oc} for sid, qty in ps.items()]
 
-        return Position.from_dict(ret)
+        return Position.from_list(ret)
 
     @staticmethod
     def op(position1, position2, operator):
@@ -328,7 +351,7 @@ class OrderExecutor():
 
             action = Action.BUY if o['quantity'] > 0 else Action.SELL
             price = stocks[o['stock_id']].close
-            if best_price_limit:
+            if best_price_limit or market_order:
                 limit = 'LOWEST' if action == Action.BUY else 'HIGHEST'
                 print('execute', action, o['stock_id'], 'X', abs(
                     o['quantity']), '@', limit, o['order_condition'])

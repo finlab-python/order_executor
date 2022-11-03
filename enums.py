@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import IntEnum as Enum
 
 OrderStatus = Enum('OrderStatus', 'NEW PARTIALLY_FILLED FILLED CANCEL')
 
