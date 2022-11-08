@@ -278,6 +278,11 @@ class Account(ABC):
     @abstractmethod
     def get_orders(self):
         """拿到現在所有委託單
+        Returns:
+            (dict): 委託單狀態與相關資料，格式為：{OrderStatusID: finlab.online.base_account.Order},
+            OrderStatusID 分為 1:NEW(新委託)、2:PARTIALLY_FILLED(部分成交)、3:FILLED(已全部成交)、4:CANCEL(取消)、'':(下單失敗)
+                !!! example
+                    `{1:Order(order_id='12345A', stock_id='5410',...),...}`
         """
         pass
 
@@ -286,6 +291,10 @@ class Account(ABC):
         """拿到現在股票報價
         Attributes:
             stock_ids (`list` of `str`): 一次拿取所有股票的報價，ex: ['1101', '2330']
+        Returns:
+            (dict): 報價資料，
+                !!! example
+                    `{'1101': Stock(stock_id='1101', open=31.15, high=31.85, low=31.1, close=31.65, bid_price=31.6, bid_volume=728.0, ask_price=31.65, ask_volume=202)}`
         """
         pass
 
@@ -299,7 +308,7 @@ class Account(ABC):
         pass
 
     @abstractmethod
-    def get_total_balance():
+    def get_total_balance(self):
         """拿到當前帳戶的股票部位淨值"""
         pass
 

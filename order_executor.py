@@ -124,12 +124,12 @@ class Position():
         """利用 `weight` 建構股票部位
 
         Attributes:
-            weight (`dict` of `float`): 股票詳細部位
+            weights (`dict` of `float`): 股票詳細部位
             fund (number.Number): 資金大小
             price (pd.Series or `dict` of `float`): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
             odd_lot (bool): 是否考慮零股
             board_lot_size (int): 一張股票等於幾股
-            allocation (func): 資產配置演算法（最大資金部屬貪婪法）
+            allocation (func): 資產配置演算法選定，預設為預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）
 
         Examples:
               例如，用 100 萬的資金，全部投入，持有 1101 和 2330 各一半：
@@ -172,16 +172,28 @@ class Position():
 
     @classmethod
     def from_report(cls, report, fund, **kwargs):
-        """利用回測完的報告 `finlab.report.Report` 建構股票部位
+        """利用回測完的報告 `finlab.report.Report` 建構股票部位。
 
         Attributes:
-            report (finlab.report.Report): 回測完的結果報告
-            fund (int): 希望部屬的資金
+            report (finlab.report.Report): 回測完的結果報告。
+            fund (int): 希望部屬的資金。
             price (pd.Series or `dict` of `float`): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
-            odd_lot (bool): 是否考慮零股
-            board_lot_size (int): 一張股票等於幾股
-            allocation (func): 資產配置演算法（最大資金部屬貪婪法）
+            odd_lot (bool): 是否考慮零股。預設為 False，只使用整張操作。
+            board_lot_size (int): 一張股票等於幾股。預設為1000，一張等於1000股。
+            allocation (func): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。
+        !!! example
+            ```py
+            from finlab import backtest
+            from finlab.online.order_executor import Position
 
+            report1 = backtest.sim(...)
+            report2 = backtest.sim(...)
+
+            position1 = Position.from_report(report1, 1000000) # 策略操作金額一百萬
+            position2 = Position.from_report(report2, 1000000) # 策略操作金額一百萬
+
+            total_position = position1 + position2
+            ```
         """
 
         # next trading date arrived
@@ -285,7 +297,7 @@ class OrderExecutor():
             self, target_position, account):
         """對比實際帳戶與欲部屬的股票部位，進行同步
             Arguments:
-                target_position (Position): 想要部屬的股票部位
+                target_position (Position): 想要部屬的股票部位。
                 account (Account): 目前支援永豐與富果帳戶，請參考 Account 來實做。
         """
 
@@ -332,7 +344,13 @@ class OrderExecutor():
                 self.account.cancel_order(oid)
 
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False):
-        """產生委託單，將部位同步成 self.target_position"""
+        """產生委託單，將部位同步成 self.target_position
+        預設為限價單下單模式。
+        Attributes:
+            market_order (bool): 市價進出。委買第一檔掛賣、委賣第一檔掛買。
+            best_price_limit (bool): 委買第一檔掛買、委賣第一檔掛賣。
+            view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)。
+        """
 
         present_position = self.account.get_position()
         orders = (self.target_position - present_position).position
