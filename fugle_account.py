@@ -73,7 +73,7 @@ class FugleAccount(Account):
             OrderCondition.CASH: Trade.Cash,
             OrderCondition.MARGIN_TRADING: Trade.Margin,
             OrderCondition.SHORT_SELLING: Trade.Short,
-            OrderCondition.DAY_TRADING_LONG: Trade.DayTrading,
+            # OrderCondition.DAY_TRADING_LONG: Trade.DayTrading,
             OrderCondition.DAY_TRADING_SHORT: Trade.DayTradingSell,
         }[order_cond]
 
