@@ -186,19 +186,24 @@ class Stock():
         if 'data' not in r:
             raise Exception('Cannot parse fugle quote data' + str(r))
 
-        bids = r['data']['quote']['order']['bids']
-        asks = r['data']['quote']['order']['asks']
+        if 'order' in r['data']['quote']:
+            bids = r['data']['quote']['order']['bids']
+            asks = r['data']['quote']['order']['asks']
+        else:
+            bids = []
+            asks = []
+
         has_volume = 'trade' in r['data']['quote']
         return cls(
             stock_id=r['data']['info']['symbolId'],
-            high=r['data']['quote']['priceHigh']['price'] if has_volume else 0,
-            low=r['data']['quote']['priceLow']['price'] if has_volume else 0,
-            close=r['data']['quote']['trade']['price'] if has_volume else 0,
-            open=r['data']['quote']['priceOpen']['price'] if has_volume else 0,
+            high=r['data']['quote']['priceHigh']['price'] if has_volume else np.nan,
+            low=r['data']['quote']['priceLow']['price'] if has_volume else np.nan,
+            close=r['data']['quote']['trade']['price'] if has_volume else np.nan,
+            open=r['data']['quote']['priceOpen']['price'] if has_volume else np.nan,
             bid_price=bids[0]['price'] if bids else np.nan,
             ask_price=asks[0]['price'] if asks else np.nan,
-            bid_volume=bids[0]['volume'] if bids else np.nan,
-            ask_volume=asks[0]['volume'] if asks else np.nan,
+            bid_volume=bids[0]['volume'] if bids else 0,
+            ask_volume=asks[0]['volume'] if asks else 0,
         )
 
 

@@ -10,6 +10,7 @@ from finlab.online.enums import *
 import requests
 import datetime
 import logging
+import math
 import time
 import os
 
@@ -151,8 +152,14 @@ class FugleAccount(Account):
                     f'https://api.fugle.tw/realtime/v0.3/intraday/quote?symbolId={s}&apiToken={self.market_api_key}')
                 json_response = res.json()
                 ret[s] = Stock.from_fugle(json_response)
+
+                if math.isnan(ret[s].close):
+                    res = requests.get(f'https://api.fugle.tw/realtime/v0.3/intraday/meta?symbolId={s}&apiToken={self.market_api_key}')
+                    json_response = res.json()
+                    ret[s].close = json_response['data']['meta']['priceReference']
+
             except Exception as e:
-                logging.warn(f"** Fugle API: cannot get stock {s}")
+                logging.warn(f"Fugle API: cannot get stock {s}")
                 logging.warn(e)
 
         return ret
@@ -178,14 +185,19 @@ class FugleAccount(Account):
 
         ret = []
         for i in inv:
-            total_qty = sum([int(d['qty']) for d in i['stk_dats']]) / 1000
-            ret.append({
-                'stock_id': i['stk_no'],
-                'quantity': total_qty,
-                'order_condition': order_condition[i['trade']]
-            })
 
-        return Position.from_dict(ret)
+            # removed: position of stk_dats is not completed
+            # total_qty = sum([int(d['qty']) for d in i['stk_dats']]) / 1000
+            total_qty = (int(i['qty_l']) + int(i['qty_bm']) - int(i['qty_sm'])) / 1000
+
+            if total_qty != 0:
+                ret.append({
+                    'stock_id': i['stk_no'],
+                    'quantity': total_qty,
+                    'order_condition': order_condition[i['trade']]
+                })
+
+        return Position.from_list(ret)
 
     def get_total_balance(self):
         raise NotImplementedError("Total balance not implemented")

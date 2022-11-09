@@ -138,7 +138,7 @@ class SinopacAccount(Account):
             'MarginTrading': OrderCondition.MARGIN_TRADING,
             'ShortSelling': OrderCondition.SHORT_SELLING,
         }
-        return Position.from_dict([{
+        return Position.from_list([{
             'stock_id': p.code,
             'quantity': p.quantity/1000 if p.direction == 'Buy' else -p.quantity/1000,
             'order_condition': order_conditions[p.cond]

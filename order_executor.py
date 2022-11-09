@@ -5,6 +5,7 @@ from warnings import warn
 import pandas as pd
 import requests
 import datetime
+import numbers
 import json
 import time
 
@@ -345,10 +346,10 @@ class OrderExecutor():
 
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False):
         """產生委託單，將部位同步成 self.target_position
-        預設為限價單下單模式。
+        預設以該商品最後一筆成交價設定為限價來下單
         Attributes:
-            market_order (bool): 市價進出。委買第一檔掛賣、委賣第一檔掛買。
-            best_price_limit (bool): 委買第一檔掛買、委賣第一檔掛賣。
+            market_order (bool): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
+            best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
             view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)。
         """
 
@@ -367,8 +368,12 @@ class OrderExecutor():
             if o['quantity'] == 0:
                 continue
 
+            stock = stocks[o['stock_id']]
             action = Action.BUY if o['quantity'] > 0 else Action.SELL
-            price = stocks[o['stock_id']].close
+            price = stock.close if isinstance(stock.close, numbers.Number) else (
+                    stock.bid_price if action == Action.BUY else stock.ask_price
+                    )
+
             if best_price_limit or market_order:
                 limit = 'LOWEST' if action == Action.BUY else 'HIGHEST'
                 print('execute', action, o['stock_id'], 'X', abs(
