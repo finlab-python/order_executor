@@ -181,7 +181,7 @@ class FugleAccount(Account):
 
         return Position.from_dict(ret)
 
-    def get_total_balance():
+    def get_total_balance(self):
         raise NotImplementedError("Total balance not implemented")
 
     def support_day_trade_condition(self):
