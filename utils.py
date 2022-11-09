@@ -15,6 +15,9 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000, short
     else:
         short_ratio = short_ratio
 
+    if len(weights) == 0:
+        return {}, total_portfolio_value
+
     """
     Convert continuous weights into a discrete portfolio allocation
     using a greedy iterative approach.
