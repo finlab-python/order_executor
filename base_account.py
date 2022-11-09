@@ -2,11 +2,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+import pkg_resources
 import pandas as pd
 import numpy as np
+import importlib
 import datetime
 import numbers
 import os
+
+from finlab import logger
 from finlab.online.enums import *
 from finlab.online.order_executor import Position
 
@@ -225,6 +229,21 @@ class Account(ABC):
     ```
 
     """
+
+    @classmethod
+    def check_version(self):
+
+        m = self.required_module
+        v = self.module_version
+
+        # check module installed
+        if importlib.util.find_spec(m) is None:
+            raise Exception(f"Please install {m} using the following script: pip install {m}=={v}.")
+
+        # check module version
+        present_version = pkg_resources.get_distribution(m).version
+        if present_version > v:
+            logger.warning(f'Current {m}=={present_version} may not be compatable. You could using the following command to install the compatable version: pip install {m}=={v}')
 
     @abstractmethod
     def create_order(self, action, stock_id, quantity, price=None, force=False, wait_for_best_price=False):

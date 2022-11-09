@@ -6,6 +6,7 @@ from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
 
 from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
+
 import requests
 import datetime
 import logging
@@ -15,7 +16,12 @@ import os
 
 class FugleAccount(Account):
 
+    required_module = 'fugle_trade'
+    module_version = '0.4.0'
+
     def __init__(self, config_path='./config.ini.example', market_api_key=None):
+
+        self.check_version()
 
         self.market_api_key = market_api_key
 
