@@ -97,7 +97,11 @@ class FugleAccount(Account):
         )
 
         order = OrderObject(**params)
-        ret = self.sdk.place_order(order)
+
+        try:
+            ret = self.sdk.place_order(order)
+        except Exception as e:
+            logging.warning(f"create_order: Cannot create order of {params}: {e}")
 
         ord_no = ret['ord_no']
         if ord_no == '':
@@ -121,7 +125,7 @@ class FugleAccount(Account):
             try:
                 self.sdk.modify_price(self.trades[order_id].org_order, price)
             except ValueError as ve:
-                logging.warning(f"update_order: Cannot update price: {ve}")
+                logging.warning(f"update_order: Cannot update price of order {order_id}: {ve}")
 
         if quantity is not None:
             raise NotImplementedError("Cannot change order quantity")
@@ -130,7 +134,10 @@ class FugleAccount(Account):
         if not order_id in self.trades:
             self.trades = self.get_orders()
 
-        self.sdk.cancel_order(self.trades[order_id].org_order)
+        try:
+            self.sdk.cancel_order(self.trades[order_id].org_order)
+        except Exception as e:
+            logging.warning(f"cancel_order: Cannot cancel order {order_id}: {e}")
 
     def get_orders(self):
         orders = self.sdk.get_order_results()
