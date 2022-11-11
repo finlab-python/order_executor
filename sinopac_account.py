@@ -102,6 +102,11 @@ class SinopacAccount(Account):
 
         order_lot = sj.constant.TFTStockOrderLot.IntradayOdd\
             if odd_lot else sj.constant.TFTStockOrderLot.Common
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+        if datetime.time(13,40) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and odd_lot:
+            order_lot = sj.constant.TFTStockOrderLot.Odd
+        if datetime.time(14,00) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and not odd_lot:
+            order_lot = sj.constant.TFTStockOrderLot.Fixing
 
         order = self.api.Order(price=price,
                                quantity=quantity,
