@@ -303,10 +303,9 @@ class Account(ABC):
     def get_orders(self):
         """拿到現在所有委託單
         Returns:
-            (dict): 委託單狀態與相關資料，格式為：{OrderStatusID: finlab.online.base_account.Order},
-            OrderStatusID 分為 1:NEW(新委託)、2:PARTIALLY_FILLED(部分成交)、3:FILLED(已全部成交)、4:CANCEL(取消)、'':(下單失敗)
+            (Dict[str, Order]): 所有委託單 id 與委託單資料
                 !!! example
-                    `{1:Order(order_id='12345A', stock_id='5410',...),...}`
+                    `{'12345A': Order(order_id='12345A', stock_id='5410',...),...}`
         """
         pass
 
