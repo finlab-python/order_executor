@@ -108,6 +108,7 @@ class FugleAccount(Account):
             ret = self.sdk.place_order(order)
         except Exception as e:
             logging.warning(f"create_order: Cannot create order of {params}: {e}")
+            return
 
         ord_no = ret['ord_no']
         if ord_no == '':
