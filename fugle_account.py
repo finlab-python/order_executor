@@ -130,7 +130,20 @@ class FugleAccount(Account):
 
         if price is not None:
             try:
-                self.sdk.modify_price(self.trades[order_id].org_order, price)
+                if self.trades[order_id].org_order['ap_code'] == 5:
+                    fugle_order = self.trades[order_id].org_order
+                    action = Action.BUY if fugle_order['buy_sell'] == 'B' else Action.SELL
+                    stock_id = fugle_order['stock_no']
+                    q = fugle_order['org_qty_share'] - fugle_order['mat_qty_share'] - fugle_order['cel_qty_share']
+
+                    self.cancel_order(order_id)
+                    self.create_order(action=action, 
+                                        stock_id = stock_id, 
+                                        quantity = q, 
+                                        price = price, 
+                                        odd_lot=True)
+                else:
+                    self.sdk.modify_price(self.trades[order_id].org_order, price)
             except ValueError as ve:
                 logging.warning(f"update_order: Cannot update price of order {order_id}: {ve}")
 
