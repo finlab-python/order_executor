@@ -105,10 +105,10 @@ class Order():
         status = OrderStatus.NEW
         if order['mat_qty'] + order['cel_qty'] > 0:
             status = OrderStatus.PARTIALLY_FILLED
+        if order['cel_qty'] == order['org_qty'] or order['err_code'] != '00000000' or order['celable'] == 2:
+            status = OrderStatus.CANCEL
         if order['org_qty'] - order['mat_qty'] - order['cel_qty'] == 0:
             status = OrderStatus.FILLED
-        if order['cel_qty'] == order['org_qty'] or order['err_code'] != '00000000':
-            status = OrderStatus.CANCEL
 
         order_condition = {
             '0': OrderCondition.CASH,

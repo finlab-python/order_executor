@@ -85,6 +85,12 @@ class FugleAccount(Account):
         }[order_cond]
 
         ap_code = APCode.IntradayOdd if odd_lot else APCode.Common
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+        if datetime.time(13,40) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and odd_lot:
+            ap_code = APCode.Odd	
+        if datetime.time(14,00) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and not odd_lot:
+            ap_code = APCode.AfterMarket
+            price_flag = PriceFlag.Limit
 
         params = dict(
             buy_sell=fugle_action,
@@ -97,7 +103,12 @@ class FugleAccount(Account):
         )
 
         order = OrderObject(**params)
-        ret = self.sdk.place_order(order)
+
+        try:
+            ret = self.sdk.place_order(order)
+        except Exception as e:
+            logging.warning(f"create_order: Cannot create order of {params}: {e}")
+            return
 
         ord_no = ret['ord_no']
         if ord_no == '':
@@ -119,9 +130,22 @@ class FugleAccount(Account):
 
         if price is not None:
             try:
-                self.sdk.modify_price(self.trades[order_id].org_order, price)
+                if self.trades[order_id].org_order['ap_code'] == 5:
+                    fugle_order = self.trades[order_id].org_order
+                    action = Action.BUY if fugle_order['buy_sell'] == 'B' else Action.SELL
+                    stock_id = fugle_order['stock_no']
+                    q = fugle_order['org_qty_share'] - fugle_order['mat_qty_share'] - fugle_order['cel_qty_share']
+
+                    self.cancel_order(order_id)
+                    self.create_order(action=action, 
+                                        stock_id = stock_id, 
+                                        quantity = q, 
+                                        price = price, 
+                                        odd_lot=True)
+                else:
+                    self.sdk.modify_price(self.trades[order_id].org_order, price)
             except ValueError as ve:
-                logging.warning(f"update_order: Cannot update price: {ve}")
+                logging.warning(f"update_order: Cannot update price of order {order_id}: {ve}")
 
         if quantity is not None:
             raise NotImplementedError("Cannot change order quantity")
@@ -130,7 +154,10 @@ class FugleAccount(Account):
         if not order_id in self.trades:
             self.trades = self.get_orders()
 
-        self.sdk.cancel_order(self.trades[order_id].org_order)
+        try:
+            self.sdk.cancel_order(self.trades[order_id].org_order)
+        except Exception as e:
+            logging.warning(f"cancel_order: Cannot cancel order {order_id}: {e}")
 
     def get_orders(self):
         orders = self.sdk.get_order_results()
