@@ -315,27 +315,29 @@ class OrderExecutor():
         new_orders = (self.target_position - present_position).position
 
         stock_ids = [o['stock_id'] for o in new_orders]
-        stocks = self.account.get_stocks(stock_ids)
         quantity = {o['stock_id']: o['quantity'] for o in new_orders}
 
         res = requests.get('https://www.sinotrade.com.tw/Stock/Stock_3_8_3')
         dfs = pd.read_html(res.text)
-        credit_sids = dfs[0][dfs[0]['股票代碼'].isin(stock_ids)]['股票代碼']
+        credit_sids = dfs[0][dfs[0]['股票代碼'].astype(str).isin(stock_ids)]['股票代碼']
 
         res = requests.get('https://www.sinotrade.com.tw/Stock/Stock_3_8_1')
         dfs = pd.read_html(res.text)
         credit_sids = pd.concat(
-            [credit_sids, dfs[0][dfs[0]['股票代碼'].isin(stock_ids)]['股票代碼'].astype(str)])
+            [credit_sids, dfs[0][dfs[0]['股票代碼'].astype(str).isin(stock_ids)]['股票代碼']])
         credit_sids.name = None
 
-        for sid in list(credit_sids.values):
-            total_amount = quantity[sid]*stocks[sid].close*1000
-            if quantity[sid] > 0:
-                print(
-                    f"買入 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}")
-            else:
-                print(
-                    f"賣出 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}")
+        if credit_sids.any():
+            close = data.get('price:收盤價').ffill().iloc[-1]
+            for sid in list(credit_sids.values):
+                if quantity[sid] > 0:
+                    total_amount = quantity[sid]*close[sid]*1000*1.1
+                    print(
+                        f"買入 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}")
+                else:
+                    total_amount = quantity[sid]*close[sid]*1000*0.9
+                    print(
+                        f"賣出 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}")
 
     def cancel_orders(self):
         """刪除所有未實現委託單"""
