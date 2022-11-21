@@ -105,9 +105,9 @@ class Order():
         status = OrderStatus.NEW
         if order['org_qty'] == order['mat_qty']:
             status = OrderStatus.FILLED
-        elif order['org_qty'] > order['mat_qty'] and order['celable'] == 1 and order['mat_qty'] > 0:
+        elif order['org_qty'] > order['mat_qty'] and order['celable'] == '1' and order['mat_qty'] > 0:
             status = OrderStatus.PARTIALLY_FILLED
-        elif order['cel_qty'] > 0 or order['err_code'] != '00000000' or order['celable'] == 2:
+        elif order['cel_qty'] > 0 or order['err_code'] != '00000000' or order['celable'] == '2':
             status = OrderStatus.CANCEL
 
         order_condition = {
