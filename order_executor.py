@@ -324,7 +324,7 @@ class OrderExecutor():
         res = requests.get('https://www.sinotrade.com.tw/Stock/Stock_3_8_1')
         dfs = pd.read_html(res.text)
         credit_sids = pd.concat(
-            [credit_sids, dfs[0][dfs[0]['股票代碼'].astype(str).isin(stock_ids)]['股票代碼']])
+            [credit_sids, dfs[0][dfs[0]['股票代碼'].astype(str).isin(stock_ids)]['股票代碼'].astype(str)])
         credit_sids.name = None
 
         if credit_sids.any():
