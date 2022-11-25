@@ -218,7 +218,7 @@ class Position():
     @classmethod
     def from_json(self, path):
         with open(path, 'r') as f:
-            Position.json.load(f)
+            return json.load(f)
 
     def __add__(self, position):
         return self.for_each_trading_condition(self.position, position.position, "+")
