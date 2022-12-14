@@ -162,7 +162,7 @@ class SinopacAccount(Account):
 
     def get_total_balance(self):
         # get bank balance
-        bank_balance = self.api.account_balance()[0].acc_balance
+        bank_balance = self.api.account_balance().acc_balance
 
         # get settlements
         settlements = self.api.list_settlements(self.api.stock_account)
