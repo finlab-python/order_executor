@@ -224,7 +224,12 @@ class FugleAccount(Account):
         return Position.from_list(ret)
 
     def get_total_balance(self):
-        raise NotImplementedError("Total balance not implemented")
+        # get bank balance
+        bank_balance = self.sdk.get_balance()['available_balance']
+
+        # get position balance
+        account_balance = sum(int(inv['value_mkt']) for inv in self.sdk.get_inventories())
+        return bank_balance + account_balance
 
     def support_day_trade_condition(self):
         return True
