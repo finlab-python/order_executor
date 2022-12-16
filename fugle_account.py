@@ -227,9 +227,13 @@ class FugleAccount(Account):
         # get bank balance
         bank_balance = self.sdk.get_balance()['available_balance']
 
+        # get settlements
+        settlements = self.sdk.get_settlements()
+        settlements = sum(int(settlement['price']) for settlement in settlements if datetime.datetime.strptime(settlement['c_date'] +' 10:00', '%Y%m%d %H:%M') > datetime.datetime.now())
+
         # get position balance
         account_balance = sum(int(inv['value_mkt']) for inv in self.sdk.get_inventories())
-        return bank_balance + account_balance
+        return bank_balance + settlements + account_balance
 
     def support_day_trade_condition(self):
         return True
