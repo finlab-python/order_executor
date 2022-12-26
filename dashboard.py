@@ -101,7 +101,7 @@ class Dashboard():
                         'time': (datetime.datetime.strptime(f"{str((datetime.datetime.utcnow()+datetime.timedelta(hours=8)).date())} {data['mat_time']}", "%Y-%m-%d %H%M%S%f")-datetime.timedelta(hours=8)).replace(tzinfo=tz).isoformat(),
                         'asset_id': data['stock_no'],
                         'qty': int(data['mat_qty'])/1000 if data['buy_sell'] =='B' else -int(data['mat_qty'])/1000,
-                        'price': data['pay_price'],
+                        'price': data['mat_price'],
                         'pt': self.paper_trade # paper trade
                     }
                 }
