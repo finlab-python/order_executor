@@ -117,9 +117,8 @@ class Dashboard():
         self.thread_balancecheck.start()
 
         # create order
-        oe = OrderExecutor(self.position, self.acc)
-        oe.create_orders(market_order=market_order)        
-
+        self.oe = OrderExecutor(self.position, self.acc)
+        self.oe.create_orders(market_order=market_order)        
 
     def callback(self):
         self.acc.sdk.connect_websocket()
@@ -141,7 +140,12 @@ class Dashboard():
             self.acc.sdk._SDK__wsHandler._WebsocketHandler__ws.close()
         self.acc.sdk._SDK__wsHandler._WebsocketHandler__ws = None
 
+        time.sleep(1)
         if self.thread_callback:
             self.thread_callback.join()
         if self.thread_balancecheck:
             self.thread_balancecheck.join()
+    
+    def update_order_price(self):
+        if hasattr(self, 'oe'):
+            self.oe.update_order_price()
