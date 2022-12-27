@@ -72,7 +72,7 @@ class Dashboard():
         target_qty = target_qty_close if close_time else target_qty_open_fake
         # get present_qty
         acc_position = self.acc.get_position().position
-        acc_position  = pd.DataFrame(acc_position).groupby('stock_id').sum()
+        acc_position  = pd.DataFrame(acc_position).groupby('stock_id').sum() if len(acc_position) > 0 else []
         present_qty = []
         for i in range(len(acc_position)):
             present_qty.append({'asset_id':acc_position.index[i], 'qty': acc_position.quantity[i]})
