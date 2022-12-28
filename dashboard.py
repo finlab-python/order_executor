@@ -1,11 +1,10 @@
 from finlab.online.order_executor import Position
 from finlab.online.order_executor import OrderExecutor
+from threading import Thread, Event
 import finlab
 import datetime
 import requests
-import threading
 import pandas as pd
-import time
 
 class Dashboard():
 
@@ -14,6 +13,7 @@ class Dashboard():
         self.paper_trade = paper_trade
         self.thread_callback = None
         self.thread_balancecheck = None
+        self.event = Event()
 
     def rebalance(self, odd_lot=False, market_order=False, api_token=None):
         if not api_token:
@@ -72,20 +72,17 @@ class Dashboard():
         target_qty = target_qty_close if close_time else target_qty_open_fake
         # get present_qty
         acc_position = self.acc.get_position().position
-        acc_position  = pd.DataFrame(acc_position).groupby('stock_id').sum() if len(acc_position) > 0 else []
+        acc_position = pd.DataFrame(acc_position).groupby('stock_id').sum() if len(acc_position) > 0 else []
         present_qty = []
         for i in range(len(acc_position)):
             present_qty.append({'asset_id':acc_position.index[i], 'qty': acc_position.quantity[i]})
         dash_set_qty = {
             'api_token': api_token,
-            "present_qty":
-                present_qty,
-            "target_qty":
-                target_qty,
+            "present_qty": present_qty,
+            "target_qty": target_qty,
         }
         url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dash_set_qty'
         requests.post(url, json=dash_set_qty)
-
 
         # create new position
         target_qty = target_qty_close if close_time else target_qty_open
@@ -110,10 +107,10 @@ class Dashboard():
 
         # create new threads to deal with trade info callback and balance check
         self.stop()
-        self.stop_thread = False
-        self.thread_callback = threading.Thread(target = self.callback)
+        self.event = Event()
+        self.thread_callback = Thread(target = self.callback)
         self.thread_callback.start()
-        self.thread_balancecheck = threading.Thread(target = self.balancecheck)
+        self.thread_balancecheck = Thread(target = self.balancecheck)
         self.thread_balancecheck.start()
 
         # create order
@@ -126,8 +123,8 @@ class Dashboard():
     def balancecheck(self):
         # check if balanced
         position = sorted(self.position.position, key=lambda d: d['stock_id']) 
-        while True and not self.stop_thread:
-            time.sleep(30)
+        while True and not self.event.is_set():
+            self.event.wait(30)
             account_present = sorted(self.acc.get_position().position, key=lambda d: d['stock_id']) 
             if account_present == position:
                 break
@@ -135,17 +132,14 @@ class Dashboard():
         self.stop()
         
     def stop(self):
-        self.stop_thread = True
+        self.event.set()
         if self.acc.sdk._SDK__wsHandler._WebsocketHandler__ws:
             self.acc.sdk._SDK__wsHandler._WebsocketHandler__ws.close()
         self.acc.sdk._SDK__wsHandler._WebsocketHandler__ws = None
 
-        time.sleep(1)
         if self.thread_callback:
             self.thread_callback.join()
-        if self.thread_balancecheck:
-            self.thread_balancecheck.join()
-    
+
     def update_order_price(self):
         if hasattr(self, 'oe'):
             self.oe.update_order_price()
