@@ -4,6 +4,7 @@ from threading import Thread, Event
 import finlab
 import datetime
 import requests
+import traceback
 import pandas as pd
 
 class Dashboard():
@@ -84,6 +85,11 @@ class Dashboard():
         url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dash_set_qty'
         requests.post(url, json=dash_set_qty)
 
+        try:
+            self.set_qty(present_qty, target_qty)
+        except:
+            print(traceback.format_exc())
+
         # create new position
         target_qty = target_qty_close if close_time else target_qty_open
         self.position = Position({t['asset_id']: t['qty'] for t in target_qty})
@@ -104,6 +110,10 @@ class Dashboard():
                 }
                 url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dash_add_txn'
                 requests.post(url, json=txn)
+                try:
+                    self.add_txn(txn['txn'])
+                except:
+                    print(traceback.format_exc())
 
         # create new threads to deal with trade info callback and balance check
         self.stop()
@@ -130,7 +140,7 @@ class Dashboard():
                 break
         # close callback thread
         self.stop()
-        
+
     def stop(self):
         self.event.set()
         if self.acc.sdk._SDK__wsHandler._WebsocketHandler__ws:
@@ -143,3 +153,70 @@ class Dashboard():
     def update_order_price(self):
         if hasattr(self, 'oe'):
             self.oe.update_order_price()
+
+    def set_allocation(self, amounts):
+        url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_portfolio'
+        json = {
+                "allocs": [
+                    {
+                        "id": a['id'],
+                        "position": a['position'],
+                        }
+                    for a in amounts],
+                "api_token": finlab.get_token()
+                }
+        requests.post(url, json=json)
+
+    def set_qty(self, target_qty, present_qty):
+
+        # fill stock price for target_qty and present_qty
+        stocks = self.acc.get_stocks([p['asset_id'] for p in present_qty] + [t['asset_id'] for t in target_qty])
+        for p in present_qty:
+            p['price'] = stocks[p['asset_id']].close
+        for q in target_qty:
+            q['price'] = stocks[q['asset_id']].close
+
+        url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
+        json = {
+                'target_qty': [
+                    {
+                        'symbol': {'id': t['asset_id'], 'market': 'tw_stock'},
+                        'price': t['price'],
+                        'qty': t['qty'],
+                        'strategy_id': t['strategy_id']
+                        }
+                    for t in target_qty
+                    ],
+                'present_qty': [
+                    {
+                        'symbol': {'id': t['asset_id'], 'market': 'tw_stock'},
+                        'price': t['price'],
+                        'qty': t['qty']
+                        }
+                    for t in present_qty
+                    ],
+                'api_token': finlab.get_token()
+                }
+
+        requests.post(url, json=json)
+
+    def add_txn(self, txn):
+
+        url = "https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_add_txn"
+
+        json ={
+                "api_token": finlab.get_token(),
+                "pt": self.paper_trade,
+                "symbol": {
+                    "id": txn['asset_id'],
+                    "market": "tw_stock",
+                    },
+                "txn": {
+                    "price": txn['price'],
+                    "qty": txn['qty'],
+                    "time": txn['time'],
+                    }
+                }
+        requests.post(url, json=json)
+        
+
