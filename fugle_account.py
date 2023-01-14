@@ -25,6 +25,7 @@ class FugleAccount(Account):
     def __init__(self, config_path='./config.ini.example', market_api_key=None):
 
         self.check_version()
+        self.market = 'tw_stock'
 
         self.market_api_key = market_api_key
 

@@ -51,7 +51,7 @@ class Dashboard():
                                             price=price, fund=fund, odd_lot=odd_lot)
 
             for p in position.position:
-                symbol = f'{p["stock_id"]}.tw_stock'
+                symbol = f'{p["stock_id"]}.{self.acc.market}'
                 target_qty.append({
                     'symbol': symbol,
                     'qty': p['quantity'],
@@ -136,6 +136,27 @@ class Dashboard():
     def rebalance(self, *args, refresh_time=30, rebalance_once=True, **kwargs):
         if self.position is None:
             self.calc_target_position()
+
+        if self.paper_trade:
+            # get present_qty
+            position = self.position
+            acc_position = pd.DataFrame(position.position).groupby(
+                'stock_id').sum() if len(position.position) > 0 else []
+
+            stocks = self.acc.get_stocks(acc_position.index.tolist())
+
+            present_qty = [{
+                'symbol': f'{stock_id}.{self.acc.market}',
+                'price': stocks[stock_id].close,
+                'qty': row['quantity']
+            } for stock_id, row in acc_position.iterrows()]
+
+            # upload present and target qty
+            url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
+            requests.post(url, json={
+                'target_qty': [], 'present_qty': present_qty,
+                'api_token': finlab.get_token(), 'pt': True})
+            return
 
         position = sorted(self.position.position, key=lambda d: d['stock_id'])
 
