@@ -243,12 +243,14 @@ class Account(ABC):
 
         # check module installed
         if importlib.util.find_spec(m) is None:
-            raise Exception(f"Please install {m} using the following script: pip install {m}=={v}.")
+            raise Exception(
+                f"Please install {m} using the following script: pip install {m}=={v}.")
 
         # check module version
         present_version = pkg_resources.get_distribution(m).version
         if present_version > v:
-            logger.warning(f'Current {m}=={present_version} may not be compatable. You could using the following command to install the compatable version: pip install {m}=={v}')
+            logger.warning(
+                f'Current {m}=={present_version} may not be compatable. You could using the following command to install the compatable version: pip install {m}=={v}')
 
     @abstractmethod
     def create_order(self, action, stock_id, quantity, price=None, force=False, wait_for_best_price=False):
@@ -355,3 +357,6 @@ class Account(ABC):
                     f"Stock {sid} has no price to reference. Use latest close of previous trading day")
 
         return price
+
+    def on_trades(self, func):
+        pass

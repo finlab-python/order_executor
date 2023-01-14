@@ -7,6 +7,7 @@ from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
 from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
 
+from threading import Thread
 import requests
 import datetime
 import logging
@@ -49,6 +50,7 @@ class FugleAccount(Account):
         self.market_api_key = market_api_key
 
         self.trades = {}
+        self.threading = None
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
 
@@ -87,9 +89,9 @@ class FugleAccount(Account):
 
         ap_code = APCode.IntradayOdd if odd_lot else APCode.Common
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        if datetime.time(13,40) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and odd_lot:
-            ap_code = APCode.Odd	
-        if datetime.time(14,00) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and not odd_lot:
+        if datetime.time(13, 40) < datetime.time(now.hour, now.minute) and datetime.time(now.hour, now.minute) < datetime.time(14, 30) and odd_lot:
+            ap_code = APCode.Odd
+        if datetime.time(14, 00) < datetime.time(now.hour, now.minute) and datetime.time(now.hour, now.minute) < datetime.time(14, 30) and not odd_lot:
             ap_code = APCode.AfterMarket
             price_flag = PriceFlag.Limit
 
@@ -108,7 +110,8 @@ class FugleAccount(Account):
         try:
             ret = self.sdk.place_order(order)
         except Exception as e:
-            logging.warning(f"create_order: Cannot create order of {params}: {e}")
+            logging.warning(
+                f"create_order: Cannot create order of {params}: {e}")
             return
 
         ord_no = ret['ord_no']
@@ -135,14 +138,19 @@ class FugleAccount(Account):
                     fugle_order = self.trades[order_id].org_order
                     action = Action.BUY if fugle_order['buy_sell'] == 'B' else Action.SELL
                     stock_id = fugle_order['stock_no']
-                    q = fugle_order['org_qty_share'] - fugle_order['mat_qty_share'] - fugle_order['cel_qty_share']
+                    q = fugle_order['org_qty_share'] - \
+                        fugle_order['mat_qty_share'] - \
+                        fugle_order['cel_qty_share']
 
                     self.cancel_order(order_id)
-                    self.create_order(action=action, stock_id=stock_id, quantity=q, price=price, odd_lot=True)
+                    self.create_order(
+                        action=action, stock_id=stock_id, quantity=q, price=price, odd_lot=True)
                 else:
-                    self.sdk.modify_price(self.trades[order_id].org_order, price)
+                    self.sdk.modify_price(
+                        self.trades[order_id].org_order, price)
             except ValueError as ve:
-                logging.warning(f"update_order: Cannot update price of order {order_id}: {ve}")
+                logging.warning(
+                    f"update_order: Cannot update price of order {order_id}: {ve}")
 
         if quantity is not None:
             raise NotImplementedError("Cannot change order quantity")
@@ -154,7 +162,8 @@ class FugleAccount(Account):
         try:
             self.sdk.cancel_order(self.trades[order_id].org_order)
         except Exception as e:
-            logging.warning(f"cancel_order: Cannot cancel order {order_id}: {e}")
+            logging.warning(
+                f"cancel_order: Cannot cancel order {order_id}: {e}")
 
     def get_orders(self):
         orders = self.sdk.get_order_results()
@@ -178,7 +187,8 @@ class FugleAccount(Account):
                 ret[s] = Stock.from_fugle(json_response)
 
                 if math.isnan(ret[s].close):
-                    res = requests.get(f'https://api.fugle.tw/realtime/v0.3/intraday/meta?symbolId={s}&apiToken={self.market_api_key}')
+                    res = requests.get(
+                        f'https://api.fugle.tw/realtime/v0.3/intraday/meta?symbolId={s}&apiToken={self.market_api_key}')
                     json_response = res.json()
                     ret[s].close = json_response['data']['meta']['priceReference']
 
@@ -212,7 +222,8 @@ class FugleAccount(Account):
 
             # removed: position of stk_dats is not completed
             # total_qty = sum([int(d['qty']) for d in i['stk_dats']]) / 1000
-            total_qty = (int(i['qty_l']) + int(i['qty_bm']) - int(i['qty_sm'])) / 1000
+            total_qty = (int(i['qty_l']) +
+                         int(i['qty_bm']) - int(i['qty_sm'])) / 1000
 
             if total_qty != 0:
                 ret.append({
@@ -229,11 +240,38 @@ class FugleAccount(Account):
 
         # get settlements
         settlements = self.sdk.get_settlements()
-        settlements = sum(int(settlement['price']) for settlement in settlements if datetime.datetime.strptime(settlement['c_date'] +' 10:00', '%Y%m%d %H:%M') > datetime.datetime.now())
+        settlements = sum(int(settlement['price']) for settlement in settlements if datetime.datetime.strptime(
+            settlement['c_date'] + ' 10:00', '%Y%m%d %H:%M') > datetime.datetime.now())
 
         # get position balance
-        account_balance = sum(int(inv['value_mkt']) for inv in self.sdk.get_inventories())
+        account_balance = sum(int(inv['value_mkt'])
+                              for inv in self.sdk.get_inventories())
         return bank_balance + settlements + account_balance
 
     def support_day_trade_condition(self):
         return True
+
+    def on_trades(self, func):
+
+        order_condition = {
+            '0': OrderCondition.CASH,
+            '3': OrderCondition.MARGIN_TRADING,
+            '4': OrderCondition.SHORT_SELLING,
+            '9': OrderCondition.DAY_TRADING_LONG,
+            'A': OrderCondition.DAY_TRADING_SHORT,
+        }
+
+        @self.acc.sdk.on('dealt')
+        def on_dealt(data):
+            if isinstance(data, dict):
+                time = (datetime.datetime.strptime(f"{str((datetime.datetime.utcnow()+datetime.timedelta(hours=8)).date())} {data['mat_time']}", "%Y-%m-%d %H%M%S%f")-datetime.timedelta(
+                    hours=8)).replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8))).isoformat()
+
+                o = Order(order_id=data['ord_no'], stock_id=data['stock_no'],
+                          action='BUY' if data['buy_sell'] == 'B' else 'SELL', price=data['mat_price'],
+                          quantity=data['mat_qty'], filled_quantity=data['mat_qty'],
+                          status='FILLED', order_condition=order_condition[data['trade']],
+                          time=time, org_order=None)
+
+                func(o)
+        self.threading = Thread(target=lambda: self.sdk.connect_websocket())
