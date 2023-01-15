@@ -233,9 +233,12 @@ class BinanceAccount(Account):
 
     def __init__(self):
 
-        key = os.environ['BINANCE_API_KEY']
-        secret = os.environ['BINANCE_API_SECRET']
-        self.simple_client = BinanceSimpleClient(client.Client(key, secret))
+        if 'BINANCE_API_KEY' in os.environ:
+            key = os.environ['BINANCE_API_KEY']
+            secret = os.environ['BINANCE_API_SECRET']
+            self.simple_client = BinanceSimpleClient(client.Client(key, secret))
+        else:
+            self.simple_client = BinanceSimpleClient(client.Client())
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH) -> str:
 

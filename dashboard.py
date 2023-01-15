@@ -20,6 +20,13 @@ class Dashboard():
         url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_get_portfolio'
         return requests.post(url, json={'api_token': finlab.get_token()}).json()['msg']
 
+    def set_portfolio(self, allocs):
+        url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_portfolio'
+        return requests.post(url, json={
+            'api_token': finlab.get_token(),
+            'allocs': allocs,
+            }).json()['msg']
+
     def set_qty(self, odd_lot=False):
 
         port = self.fetch_portfolio()
