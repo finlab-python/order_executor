@@ -324,14 +324,21 @@ class BinanceAccount(Account):
             return ret
 
     def get_stocks(self, stock_ids):
-        ret = {}
 
-        tickers = self.simple_client.client.get_ticker(symbols='["'+ '","'.join(stock_ids) + '"]')
+        if not stock_ids:
+            return {}
+
+        ret = {}
+        symbols = '["'+ '","'.join(stock_ids) + '"]'
+        tickers = self.simple_client.client.get_ticker(symbols=symbols)
 
         for t in tickers:
-            ret[t['sybmol']] = Stock(stock_id=t['symbol'], open=t['openPrice'], high=t['highPrice'], low=t['lowPrice'], 
-                close=t['closePrice'], bid_price=t['bidPrice'], bid_volume=t['bidQty'], 
-                ask_price=t['askPrice'], ask_volume=t['askQty'])
+            ret[t['symbol']] = Stock(stock_id=t['symbol'], open=float(t['openPrice']), 
+                                     high=float(t['highPrice']), low=float(t['lowPrice']), 
+                close=float(t['lastPrice']), bid_price=float(t['bidPrice']), bid_volume=float(t['bidQty']), 
+                ask_price=float(t['askPrice']), ask_volume=float(t['askQty']))
+
+            print(ret[t['symbol']])
         return ret
 
     def get_position(self):
