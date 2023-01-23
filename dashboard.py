@@ -1,15 +1,18 @@
 from finlab.online.order_executor import Position
 from finlab.online.order_executor import OrderExecutor
+import sched
 import time
 import finlab
+import threading
 import datetime
 import requests
 import pandas as pd
+from typing import List
 
 
 class Dashboard():
 
-    def __init__(self, acc, paper_trade=False, odd_lot=True, minutes_before=10):
+    def __init__(self, acc, paper_trade=False, odd_lot=True, trade_in_advance=1800, price_update_period=300, *args, **kwargs):
         self.acc = acc
         self.paper_trade = paper_trade
         self.odd_lot = odd_lot
@@ -17,6 +20,33 @@ class Dashboard():
         self.thread_balancecheck = None
         self.position = None
         self.target_position = None
+        self.trade_in_advance = trade_in_advance
+        self.price_update_period = price_update_period
+
+        self.sched = sched.scheduler(time.time, time.sleep)
+        self.events = []
+        self.thread_sched = threading.Thread(target=self.running_sched)
+        self.thread_sched.start()
+
+        self.thread_update_price = threading.Thread(target=self.update_price)
+        self.thread_update_price.start()
+
+        self.record_txn_event()
+        self.args = args
+        self.kwargs = kwargs
+        self.oe = None
+
+    def running_sched(self):
+        while True:
+            time.sleep(3)
+            self.sched.run()
+
+    def update_price(self):
+        while True:
+            time.sleep(self.price_update_period)
+
+            if self.oe:
+                self.oe.update_order_price()
 
     def fetch_portfolio(self):
         url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_get_portfolio'
@@ -39,20 +69,24 @@ class Dashboard():
 
         stocks = self.acc.get_stocks(acc_position.index.tolist())
 
-        present_qty = [{
-            'symbol': f'{stock_id}.tw_stock',
-            'price': stocks[stock_id].close,
-            'qty': row['quantity']
-        } for stock_id, row in acc_position.iterrows()]
+
+        if isinstance(acc_position, list):
+            present_qty = []
+        else:
+            present_qty = [{
+                'symbol': f'{stock_id}.tw_stock',
+                'price': stocks[stock_id].close,
+                'qty': row['quantity']
+            } for stock_id, row in acc_position.iterrows()]
 
         return present_qty
 
-    def get_target_qty(self, port, sid):
+    def get_target_qty(self, port, sid) -> List:
 
         if (sid not in port.strategy 
             or len(port.strategy[sid]) == 0
             or port.strategy[sid][-1].q is not None):
-            return
+            return []
 
         s = port.strategy[sid][-1]
 
@@ -60,11 +94,8 @@ class Dashboard():
         weight = s['w']
 
         # get price
-        stocks = [l.split('.')[0] for l in list(weight.keys())]
-        id_to_symbol = {l.split('.')[0]:l for l in list(weight.keys())}
-        stocks = self.acc.get_stocks(stocks)
-        price = {id_to_symbol[sid]: stock.close for sid,
-                 stock in stocks.items()}
+        stocks = self.acc.get_stocks(list(weight.keys()))
+        price = {sid:stock.close for sid, stock in stocks.items()}
 
         position = Position.from_weight(weight, price=price, fund=alloc, odd_lot=self.odd_lot)
 
@@ -73,14 +104,13 @@ class Dashboard():
         for p in position.position:
             q[p['stock_id']] = p['quantity']
 
-
         target_qty = []
 
         for p in position.position:
             target_qty.append({
                 'symbol': p["stock_id"],
                 'qty': p['quantity'],
-                'strategy_id': strategy_id
+                'strategy_id': sid
             })
 
         return target_qty
@@ -95,99 +125,65 @@ class Dashboard():
         res = requests.post(url, json={
                             'target_qty': target_qty, 'present_qty': present_qty,
                             'api_token': finlab.get_token(), 'pt': self.paper_trade})
+        
+        for t in target_qty:
+            port.s[t['strategy_id']][-1].q[t['symbol']] = t['qty']
 
-    def set_schedule(self): # todo refine schedule
+        p = self.calc_target_position(port)
+
+        if not self.paper_trade:
+            self.oe = OrderExecutor(p, self.acc)
+            self.oe.create_orders(*self.args, **self.kwargs)
+        else:
+            stocks = self.acc.get_stocks([p['stock_id'].split('.')[0] for p in p.position])
+
+            present_qty = [{
+                'symbol': p['stock_id'],
+                'price': stocks[p['stock_id']].close,
+                'qty': p['quantity']
+            } for p in p.position]
+
+            # upload present and target qty
+            url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
+            requests.post(url, json={
+                'target_qty': [], 'present_qty': present_qty,
+                'api_token': finlab.get_token(), 'pt': True})
+ 
+
+    def set_schedule(self):
 
         port = self.fetch_portfolio()
+
+        for e in self.events:
+            self.sched.cancel(e)
 
         for sid, strategy in port.s.items():
-            if strategy and strategy[-1].q:
-
-        # assign rebalance weight
-        rebalance_strategy = {aid: dict() for aid, a in port['allocs'].items()}
-
-        tw_stock_accepted_trade_at_price = ['close', 'open'] if (datetime.datetime.utcnow(
-        ) + datetime.timedelta(hours=8)).time() > datetime.time(12, 0) else ['open']
-
-        for symbol, asset in port['assets'].items():
-            asset_id, market = symbol.split('.')
-            for strategy_id, strategy in asset['strategy_events'].items():
-
-                accepted_trade_at_price = tw_stock_accepted_trade_at_price if market == 'tw_stock' else ['close', 'open']
-
-                if strategy[-1]['type'] == 'ALLOC'\
-                        and strategy[-1]['qty'] is None\
-                        and strategy[-1]['trade_at_price'] in accepted_trade_at_price:
-
-                    rebalance_strategy[strategy_id][symbol] = strategy[-1]['alloc']
-
-        # calculate and assign target qty
-        target_qty = []
-        for strategy_id, allocation in rebalance_strategy.items():
-            fund = sum(allocation.values())
-
-            stocks = [l.split('.')[0] for l in list(allocation.keys())]
-            id_to_symbol = {l.split('.')[0]:l for l in list(allocation.keys())}
-            stocks = self.acc.get_stocks(stocks)
-            price = {id_to_symbol[sid]: stock.close for sid,
-                     stock in stocks.items()}
-            weight = {k: v/fund for k, v in allocation.items()}
-            position = Position.from_weight(weight, price=price, fund=fund, odd_lot=odd_lot)
-
-            for p in position.position:
-                target_qty.append({
-                    'symbol': p["stock_id"],
-                    'qty': p['quantity'],
-                    'strategy_id': strategy_id
-                })
-                port['assets'][p["stock_id"]]['strategy_events'][strategy_id][-1]['qty'] = p['quantity']
-
-        # upload present and target qty
-        if self.paper_trade:
-
-            url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
-            # url = 'http://localhost:8080'
-            res = requests.post(url, json={
-                                'target_qty': target_qty, 'present_qty': [],
-                                'api_token': finlab.get_token(), 'pt': self.paper_trade})
-            return
+            if strategy and strategy[-1].q is None:
+                rebalance_time = strategy[-1].tb - datetime.timedelta(minutes=self.trade_in_advance)
+                secs = int(rebalance_time.timestamp())
+                self.events.append(self.sched.enter(secs, 1, self.set_qty, (sid)))
+                
+    @staticmethod
+    def calc_target_position(port) -> Position:
 
 
-        # upload present and target qty
-        url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
-        # url = 'http://localhost:8080'
-        res = requests.post(url, json={
-                            'target_qty': target_qty, 'present_qty': present_qty,
-                            'api_token': finlab.get_token(), 'pt': self.paper_trade})
+        ret = Position({})
 
-    def calc_target_position(self):
+        for sid, strategy in port.s.items():
+            sqty = {}
 
-        port = self.fetch_portfolio()
+            if len(strategy) == 0:
+                pass
+            elif strategy[-1].q is not None:
+                sqty = strategy[-1].q
+            elif len(strategy) >= 2 and strategy[-2].q is not None:
+                sqty = strategy[-2].q
 
-        # get portfolio position
-        now = datetime.datetime.now(
-            tz=datetime.timezone(datetime.timedelta(hours=8)))
-        target_position = {}
-        for symbol, asset in port['assets'].items():
-            for strategy_id, strategy in asset['strategy_events'].items():
+            ret += Position(sqty)
 
-                q2 = strategy[-1]['qty']  # latest qty
-                # previous qty
-                q1 = strategy[-2]['qty'] if len(strategy) >= 2 else 0
+        return ret
 
-                qty = q2 if now > datetime.datetime.fromisoformat(
-                    strategy[-1]['time']) - datetime.timedelta(minutes=30) else q1
-                if qty:
-                    if symbol not in target_position:
-                        target_position[symbol] = 0
-                    target_position[symbol] += qty
-
-
-        self.target_position = target_position
-
-        return self.target_position
-
-    def connect(self):
+    def record_txn_event(self):
 
         if self.acc.threading and self.acc.threading.is_alive():
             return
@@ -213,43 +209,3 @@ class Dashboard():
 
         self.acc.on_trades(upload_trade)
 
-    def rebalance(self, *args, refresh_time=30, rebalance_once=True, **kwargs):
-        if self.target_position is None:
-            self.calc_target_position()
-
-        assert self.target_position is not None
-
-        if self.paper_trade:
-            # get present_qty
-            position = self.target_position
-
-            stocks = self.acc.get_stocks([symbol.split('.')[0] for symbol in self.target_position.keys()])
-
-            present_qty = [{
-                'symbol': symbol,
-                'price': stocks[symbol.split('.')[0]].close,
-                'qty': qty
-            } for symbol, qty in position.items()]
-
-            # upload present and target qty
-            url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
-            requests.post(url, json={
-                'target_qty': [], 'present_qty': present_qty,
-                'api_token': finlab.get_token(), 'pt': True})
-            return
-
-        self.position = Position(self.target_position)
-        self.oe = OrderExecutor(self.position, self.acc)
-        position = sorted(self.position.position, key=lambda d: d['stock_id'])
-
-        self.connect()
-
-        self.oe.create_orders(*args, **kwargs)
-
-        while not rebalance_once:
-            time.sleep(refresh_time)
-            account_present = sorted(
-                self.acc.get_position().position, key=lambda d: d['stock_id'])
-            if account_present == position:
-                break
-            self.oe.update_order_price()
