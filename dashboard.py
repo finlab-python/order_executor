@@ -29,7 +29,8 @@ class Dashboard():
         self.thread_sched.start()
 
         self.thread_update_price = threading.Thread(target=self.update_price)
-        self.thread_update_price.start()
+        if self.paper_trade:
+            self.thread_update_price.start()
 
         self.record_txn_event()
         self.args = args
@@ -39,7 +40,7 @@ class Dashboard():
     def running_sched(self):
         while True:
             time.sleep(3)
-            self.sched.run()
+            self.sched.run(blocking=True)
 
     def update_price(self):
         while True:
@@ -53,8 +54,8 @@ class Dashboard():
         return requests.post(url, json={'api_token': finlab.get_token()}).json()['msg']
 
     def set_portfolio(self, allocs):
-        # url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_portfolio'
-        url = 'http://127.0.0.1:8080'
+        url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_portfolio'
+        # url = 'http://127.0.0.1:8080'
         return requests.post(url, json={
             'api_token': finlab.get_token(),
             'allocs': allocs,
@@ -115,19 +116,21 @@ class Dashboard():
 
         return target_qty
 
-    def set_qty(self, sid):
+    def set_qty(self, sid=None):
         port = self.fetch_portfolio()
 
-        target_qty = self.get_target_qty(port, sid)
-        present_qty = self.get_present_qty() if not self.paper_trade else []
+        if sid is not None:
 
-        url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
-        res = requests.post(url, json={
-                            'target_qty': target_qty, 'present_qty': present_qty,
-                            'api_token': finlab.get_token(), 'pt': self.paper_trade})
+            target_qty = self.get_target_qty(port, sid)
+            present_qty = self.get_present_qty() if not self.paper_trade else []
+
+            url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
+            res = requests.post(url, json={
+                                'target_qty': target_qty, 'present_qty': present_qty,
+                                'api_token': finlab.get_token(), 'pt': self.paper_trade})
         
-        for t in target_qty:
-            port.s[t['strategy_id']][-1].q[t['symbol']] = t['qty']
+            for t in target_qty:
+                port.s[t['strategy_id']][-1].q[t['symbol']] = t['qty']
 
         p = self.calc_target_position(port)
 
@@ -156,12 +159,27 @@ class Dashboard():
 
         for e in self.events:
             self.sched.cancel(e)
+        self.events = []
 
-        for sid, strategy in port.s.items():
-            if strategy and strategy[-1].q is None:
-                rebalance_time = strategy[-1].tb - datetime.timedelta(minutes=self.trade_in_advance)
+        self.set_qty()
+
+        for sid, strategy in port['s'].items():
+            if strategy and strategy[-1]['q'] is None:
+                rebalance_time = datetime.datetime.fromisoformat(strategy[-1]['tb']) - datetime.timedelta(seconds=self.trade_in_advance)
+                print(time.time(), rebalance_time.timestamp())
+
+                print(strategy[-1]['tb'])
+                print(sid, rebalance_time)
                 secs = int(rebalance_time.timestamp())
-                self.events.append(self.sched.enter(secs, 1, self.set_qty, (sid)))
+                self.events.append(self.sched.enter(secs, 1, self.set_qty, (sid,)))
+
+
+    def start(self):
+
+        while True:
+            self.set_schedule()
+            time.sleep(60)
+
                 
     @staticmethod
     def calc_target_position(port) -> Position:
@@ -169,15 +187,15 @@ class Dashboard():
 
         ret = Position({})
 
-        for sid, strategy in port.s.items():
+        for sid, strategy in port['s'].items():
             sqty = {}
 
             if len(strategy) == 0:
                 pass
-            elif strategy[-1].q is not None:
-                sqty = strategy[-1].q
+            elif strategy[-1]['q'] is not None:
+                sqty = strategy[-1]['q']
             elif len(strategy) >= 2 and strategy[-2].q is not None:
-                sqty = strategy[-2].q
+                sqty = strategy[-2]['q']
 
             ret += Position(sqty)
 

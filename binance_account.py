@@ -240,6 +240,8 @@ class BinanceAccount(Account):
         else:
             self.simple_client = BinanceSimpleClient(client.Client())
 
+        self.threading = None
+
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH) -> str:
 
         if quantity <= 0:
