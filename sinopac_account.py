@@ -14,29 +14,17 @@ pattern = re.compile(r'(?<!^)(?=[A-Z])')
 
 
 class SinopacAccount(Account):
-    def __init__(self, account=None, password=None, certificate_password=None, certificate_path=None):
+    def __init__(self, api_key=None, secret_key=None, account=None, certificate_password=None, certificate_path=None):
 
-        account = account or os.environ.get('SHIOAJI_ACCOUNT')
-        password = password or os.environ.get('SHIOAJI_PASSWORD')
+        api_key = api_key or os.environ.get('SHIOAJI_API_KEY')
+        secret_key = secret_key or os.environ.get('SHIOAJI_SECRET_KEY')
         certificate_password = certificate_password or os.environ.get(
             'SHIOAJI_CERT_PASSWORD')
-        certificate_path = certificate_path or os.environ.get(
-            'SHIOAJI_CERT_PATH')
-
-        if certificate_password is None and account is not None:
-            certificate_password = account
-
-        if account is None or password is None or certificate_path is None:
-            self.login()
-            account = account or os.environ.get('SHIOAJI_ACCOUNT')
-            password = password or os.environ.get('SHIOAJI_PASSWORD')
-            certificate_password = certificate_password or os.environ.get(
-                'SHIOAJI_CERT_PASSWORD')
-            certificate_path = certificate_path or os.environ.get(
-                'SHIOAJI_CERT_PATH')
 
         self.api = sj.Shioaji()
-        self.accounts = self.api.login(account, password)
+        self.accounts = self.api.login(api_key, secret_key)
+
+        self.trades = {}
 
         if certificate_path:
             self.api.activate_ca(
@@ -45,19 +33,6 @@ class SinopacAccount(Account):
                 person_id=account,
             )
 
-        self.trades = {}
-
-    @staticmethod
-    def login():
-        account = input('Account name not found, please enter account name:\n')
-        password = input('Enter an account password:\n')
-        cert_password = input('Enter an certificate password :\n')
-        cert_path = input('Enter certificate path:\n')
-
-        os.environ['SHIOAJI_ACCOUNT'] = account
-        os.environ['SHIOAJI_PASSWORD'] = password
-        os.environ['SHIOAJI_CERT_PASSWORD'] = cert_password
-        os.environ['SHIOAJI_CERT_PATH'] = cert_path
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
 
@@ -85,8 +60,8 @@ class SinopacAccount(Account):
         elif action == Action.SELL:
             action = 'Sell'
 
-        first_sell = order_cond == OrderCondition.DAY_TRADING_SHORT
-        first_sell = 'true' if first_sell else 'false'
+        daytrade_short = order_cond == OrderCondition.DAY_TRADING_SHORT
+        daytrade_short = True if daytrade_short else False
 
         order_cond = {
             OrderCondition.CASH: 'Cash',
@@ -96,21 +71,21 @@ class SinopacAccount(Account):
             OrderCondition.DAY_TRADING_SHORT: 'Cash'
         }[order_cond]
 
-        order_lot = sj.constant.TFTStockOrderLot.IntradayOdd\
-            if odd_lot else sj.constant.TFTStockOrderLot.Common
+        order_lot = sj.constant.StockOrderLot.IntradayOdd\
+            if odd_lot else sj.constant.StockOrderLot.Common
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         if datetime.time(13,40) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and odd_lot:
-            order_lot = sj.constant.TFTStockOrderLot.Odd
+            order_lot = sj.constant.StockOrderLot.Odd
         if datetime.time(14,00) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and not odd_lot:
-            order_lot = sj.constant.TFTStockOrderLot.Fixing
+            order_lot = sj.constant.StockOrderLot.Fixing
 
         order = self.api.Order(price=price,
                                quantity=quantity,
                                action=action,
-                               price_type="LMT",
-                               order_type="ROD",
+                               price_type=sj.constant.StockPriceType.LMT,
+                               order_type=sj.constant.OrderType.ROD,
                                order_cond=order_cond,
-                               first_sell=first_sell,
+                               daytrade_short=daytrade_short,
                                account=self.api.stock_account,
                                order_lot=order_lot,
                                )
@@ -165,13 +140,16 @@ class SinopacAccount(Account):
         bank_balance = self.api.account_balance().acc_balance
 
         # get settlements
-        settlements = self.api.list_settlements(self.api.stock_account)
-        settlements = settlements[0].t_money + \
-            settlements[0].t1_money + settlements[0].t2_money
+        settlements = self.api.settlements(self.api.stock_account)
+        settlements = settlements[0].amount + \
+            settlements[1].amount + settlements[2].amount
 
         # get position balance
         position = self.get_position()
-        stocks = self.get_stocks(position.keys())
-        account_balance = sum(
-            [sobj['quantity'] * stocks[sid].close * 1000 for sid, sobj in position.items()])
+        if position.position:
+            stocks = self.get_stocks([str(i.id) for i in position.position])
+            account_balance = sum(
+                [sobj['quantity'] * stocks[sid].close * 1000 for sid, sobj in position.items()])
+        else:
+            account_balance = 0
         return bank_balance + settlements + account_balance
