@@ -147,9 +147,9 @@ class SinopacAccount(Account):
         # get position balance
         position = self.get_position()
         if position.position:
-            stocks = self.get_stocks([str(i.id) for i in position.position])
+            stocks = self.get_stocks([i['stock_id'] for i in position.position])
             account_balance = sum(
-                [sobj['quantity'] * stocks[sid].close * 1000 for sid, sobj in position.items()])
+                [i['quantity'] * stocks[i['stock_id']].close * 1000 for i in position.position])
         else:
             account_balance = 0
         return bank_balance + settlements + account_balance
