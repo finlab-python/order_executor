@@ -91,13 +91,15 @@ class Account(ABC):
     from finlab.online.sinopac_account import SinopacAccount
 
 
+    # 舊版請使用
     # shioaji < 1.0.0 and finlab < 0.3.18
     os.environ['SHIOAJI_ACCOUNT']= '永豐證券帳號'
     os.environ['SHIOAJI_PASSWORD']= '永豐證券密碼'
 
+    # 新版請使用
     # shioaji >= 1.0.0 and finlab >= 0.3.18
     os.environ['SHIOAJI_API_KEY'] = '永豐證券API_KEY'
-    os.environ['SHIOAJI_API_SECRET'] = '永豐證券API_SECRET'
+    os.environ['SHIOAJI_SECRET_KEY'] = '永豐證券SECRET_KEY'
     os.environ['SHIOAJI_CERT_PERSON_ID']= '身份證字號'
 
     # shioaji
