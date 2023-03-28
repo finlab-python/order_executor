@@ -97,7 +97,7 @@ class Account(ABC):
 
     # shioaji >= 1.0.0 and finlab >= 0.3.18
     os.environ['SHIOAJI_API_KEY'] = '永豐證券API_KEY'
-    os.environ['SHIOAJI_API_KEY'] = '永豐證券API_SECRET'
+    os.environ['SHIOAJI_API_SECRET'] = '永豐證券API_SECRET'
     os.environ['SHIOAJI_CERT_PERSON_ID']= '身份證字號'
 
     # shioaji
