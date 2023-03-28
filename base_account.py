@@ -46,97 +46,6 @@ class Order():
     time: datetime.datetime
     org_order: Any = None
 
-    @classmethod
-    def from_shioaji(cls, trade):
-        """將 shioaji package 的委託單轉換成 finlab 格式"""
-        if trade.order.action == 'Buy':
-            action = Action.BUY
-        elif trade.order.action == 'Sell':
-            action = Action.SELL
-        else:
-            raise Exception('trader order action should be "Buy" or "Sell"')
-
-        status = {
-            'PendingSubmit': OrderStatus.NEW,
-            'PreSubmitted': OrderStatus.NEW,
-            'Submitted': OrderStatus.NEW,
-            'Failed': OrderStatus.CANCEL,
-            'Cancelled': OrderStatus.CANCEL,
-            'Filled': OrderStatus.FILLED,
-            'Filling': OrderStatus.PARTIALLY_FILLED,
-            'PartFilled': OrderStatus.PARTIALLY_FILLED,
-        }[trade.status.status]
-
-        order_condition = {
-            'Cash': OrderCondition.CASH,
-            'MarginTrading': OrderCondition.MARGIN_TRADING,
-            'ShortSelling': OrderCondition.SHORT_SELLING,
-        }[trade.order.order_cond]
-
-        # calculate quantity
-        # calculate filled quantity
-        quantity = trade.order.quantity
-        filled_quantity = trade.status.deal_quantity
-
-        if trade.order.order_lot == 'IntradayOdd':
-            quantity /= 1000
-
-        # calculate order condition
-        if trade.order.first_sell == 'true' and order_condition == OrderCondition.CASH:
-            order_condition = OrderCondition.DAY_TRADING_SHORT
-
-        return cls(**{
-            'order_id': trade.status.id,
-            'stock_id': trade.contract.code,
-            'action': action,
-            'price': trade.order.price if trade.status.modified_price == 0 else trade.status.modified_price,
-            'quantity': quantity,
-            'filled_quantity': filled_quantity,
-            'status': status,
-            'order_condition': order_condition,
-            'time': trade.status.order_datetime,
-            'org_order': trade
-        })
-
-    @classmethod
-    def from_fugle(cls, order):
-        """將 fugle package 的委託單轉換成 finlab 格式"""
-
-        status = OrderStatus.NEW
-        if order['org_qty'] == order['mat_qty']:
-            status = OrderStatus.FILLED
-        elif order['org_qty'] > order['mat_qty'] and order['celable'] == '1' and order['mat_qty'] > 0:
-            status = OrderStatus.PARTIALLY_FILLED
-        elif order['cel_qty'] > 0 or order['err_code'] != '00000000' or order['celable'] == '2':
-            status = OrderStatus.CANCEL
-
-        order_condition = {
-            '0': OrderCondition.CASH,
-            '3': OrderCondition.MARGIN_TRADING,
-            '4': OrderCondition.SHORT_SELLING,
-            '9': OrderCondition.DAY_TRADING_LONG,
-            'A': OrderCondition.DAY_TRADING_SHORT,
-        }[order['trade']]
-
-        filled_quantity = order['mat_qty']
-
-        order_id = order['ord_no']
-        if order_id == '':
-            order_id = order['pre_ord_no']
-
-        return cls(**{
-            'order_id': order_id,
-            'stock_id': order['stock_no'],
-            'action': Action.BUY if order['buy_sell'] == 'B' else Action.SELL,
-            'price': order.get('od_price', order['avg_price']),
-            'quantity': order['org_qty'],
-            'filled_quantity': filled_quantity,
-            'status': status,
-            'order_condition': order_condition,
-            'time': datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f'),
-            'org_order': order
-        })
-
 
 @dataclass
 class Stock():
@@ -171,41 +80,6 @@ class Stock():
     def to_dict(self):
         return {a: getattr(self, a) for a in Stock.attrs}
 
-    @classmethod
-    def from_shioaji(cls, snapshot):
-        """將 shioaji 股價行情轉換成 finlab 格式"""
-        d = snapshot
-        return cls(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
-                   bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
-
-    @classmethod
-    def from_fugle(cls, json_response):
-        """將 fugle 股價行情轉換成 finlab 格式"""
-        r = json_response
-
-        if 'data' not in r:
-            raise Exception('Cannot parse fugle quote data' + str(r))
-
-        if 'order' in r['data']['quote']:
-            bids = r['data']['quote']['order']['bids']
-            asks = r['data']['quote']['order']['asks']
-        else:
-            bids = []
-            asks = []
-
-        has_volume = 'trade' in r['data']['quote']
-        return cls(
-            stock_id=r['data']['info']['symbolId'],
-            high=r['data']['quote']['priceHigh']['price'] if has_volume else np.nan,
-            low=r['data']['quote']['priceLow']['price'] if has_volume else np.nan,
-            close=r['data']['quote']['trade']['price'] if has_volume else np.nan,
-            open=r['data']['quote']['priceOpen']['price'] if has_volume else np.nan,
-            bid_price=bids[0]['price'] if bids else np.nan,
-            ask_price=asks[0]['price'] if asks else np.nan,
-            bid_volume=bids[0]['volume'] if bids else 0,
-            ask_volume=asks[0]['volume'] if asks else 0,
-        )
-
 
 class Account(ABC):
     """股票帳戶的 abstract class
@@ -216,10 +90,19 @@ class Account(ABC):
     import os
     from finlab.online.sinopac_account import SinopacAccount
 
+
+    # shioaji < 1.0.0
     os.environ['SHIOAJI_ACCOUNT']= '永豐證券帳號'
     os.environ['SHIOAJI_PASSWORD']= '永豐證券密碼'
+
+    # shioaji >= 1.0.0
+    os.environ['SHIOAJI_API_KEY'] = '永豐證券API_KEY'
+    os.environ['SHIOAJI_API_KEY'] = '永豐證券API_SECRET'
+    os.environ['SHIOAJI_CERT_PERSON_ID']= '身份證字號'
+
+    # shioaji
     os.environ['SHIOAJI_CERT_PATH']= '永豐證券憑證路徑'
-    os.environ['SHIOAJI_CERT_PASSWORD'] = '永豐證券憑證密碼' # 預設與身份證同
+    os.environ['SHIOAJI_CERT_PASSWORD'] = '永豐證券憑證密碼' # 預設與身份證字號
 
     acc = SinopacAccount()
     ```

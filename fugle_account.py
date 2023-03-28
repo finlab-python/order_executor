@@ -51,7 +51,7 @@ class FugleAccount(Account):
         self.market_api_key = market_api_key
 
         self.trades = {}
-        self.threading = None
+        self.thread = None
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
 
@@ -174,7 +174,7 @@ class FugleAccount(Account):
             if order_id == '':
                 order_id = o['pre_ord_no']
 
-            ret[order_id] = Order.from_fugle(o)
+            ret[order_id] = create_finlab_order(o)
         self.trades = ret
         return copy.deepcopy(ret)
 
@@ -185,7 +185,7 @@ class FugleAccount(Account):
                 res = requests.get(
                     f'https://api.fugle.tw/realtime/v0.3/intraday/quote?symbolId={s}&apiToken={self.market_api_key}')
                 json_response = res.json()
-                ret[s] = Stock.from_fugle(json_response)
+                ret[s] = to_finlab_stock(json_response)
 
                 if math.isnan(ret[s].close):
                     res = requests.get(
@@ -276,3 +276,72 @@ class FugleAccount(Account):
 
                 func(o)
         self.threading = Thread(target=lambda: self.sdk.connect_websocket())
+
+
+
+def create_finlab_order(order):
+    """將 fugle package 的委託單轉換成 finlab 格式"""
+
+    status = OrderStatus.NEW
+    if order['org_qty'] == order['mat_qty']:
+        status = OrderStatus.FILLED
+    elif order['org_qty'] > order['mat_qty'] and order['celable'] == '1' and order['mat_qty'] > 0:
+        status = OrderStatus.PARTIALLY_FILLED
+    elif order['cel_qty'] > 0 or order['err_code'] != '00000000' or order['celable'] == '2':
+        status = OrderStatus.CANCEL
+
+    order_condition = {
+        '0': OrderCondition.CASH,
+        '3': OrderCondition.MARGIN_TRADING,
+        '4': OrderCondition.SHORT_SELLING,
+        '9': OrderCondition.DAY_TRADING_LONG,
+        'A': OrderCondition.DAY_TRADING_SHORT,
+    }[order['trade']]
+
+    filled_quantity = order['mat_qty']
+
+    order_id = order['ord_no']
+    if order_id == '':
+        order_id = order['pre_ord_no']
+
+    return Order(**{
+        'order_id': order_id,
+        'stock_id': order['stock_no'],
+        'action': Action.BUY if order['buy_sell'] == 'B' else Action.SELL,
+        'price': order.get('od_price', order['avg_price']),
+        'quantity': order['org_qty'],
+        'filled_quantity': filled_quantity,
+        'status': status,
+        'order_condition': order_condition,
+        'time': datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f'),
+        'org_order': order
+    })
+
+
+def to_finlab_stock(json_response):
+    """將 fugle 股價行情轉換成 finlab 格式"""
+    r = json_response
+
+    if 'data' not in r:
+        raise Exception('Cannot parse fugle quote data' + str(r))
+
+    if 'order' in r['data']['quote']:
+        bids = r['data']['quote']['order']['bids']
+        asks = r['data']['quote']['order']['asks']
+    else:
+        bids = []
+        asks = []
+
+    has_volume = 'trade' in r['data']['quote']
+    return Stock(
+        stock_id=r['data']['info']['symbolId'],
+        high=r['data']['quote']['priceHigh']['price'] if has_volume else np.nan,
+        low=r['data']['quote']['priceLow']['price'] if has_volume else np.nan,
+        close=r['data']['quote']['trade']['price'] if has_volume else np.nan,
+        open=r['data']['quote']['priceOpen']['price'] if has_volume else np.nan,
+        bid_price=bids[0]['price'] if bids else np.nan,
+        ask_price=asks[0]['price'] if asks else np.nan,
+        bid_volume=bids[0]['volume'] if bids else 0,
+        ask_volume=asks[0]['volume'] if asks else 0,
+    )
+
