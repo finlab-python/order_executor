@@ -8,6 +8,7 @@ from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
 
 from threading import Thread
+import numpy as np
 import requests
 import datetime
 import logging
