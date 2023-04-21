@@ -121,7 +121,7 @@ class Position():
         return ret
 
     @classmethod
-    def from_weight(cls, weights, fund, price=None, odd_lot=False, board_lot_size=1000, allocation=greedy_allocation):
+    def from_weight(cls, weights, fund, price=None, odd_lot=False, board_lot_size=1000, allocation=greedy_allocation, **kwargs):
         """利用 `weight` 建構股票部位
 
         Attributes:
@@ -169,7 +169,7 @@ class Position():
             allocation = greedy_allocation(
                 weights, price*board_lot_size, fund)[0]
 
-        return cls(allocation)
+        return cls(allocation, **kwargs)
 
     @classmethod
     def from_report(cls, report, fund, **kwargs):
@@ -376,13 +376,15 @@ class OrderExecutor():
                     stock.bid_price if action == Action.BUY else stock.ask_price
                     )
 
-            if best_price_limit or market_order:
-                limit = 'LOWEST' if action == Action.BUY else 'HIGHEST'
-                print('execute', action, o['stock_id'], 'X', abs(
-                    o['quantity']), '@', limit, o['order_condition'])
+            if best_price_limit:
+                price_string = 'LOWEST' if action == Action.BUY else 'HIGHEST'
+            elif market_order:
+                price_string = 'HIGHEST' if action == Action.BUY else 'LOWEST'
             else:
-                print('execute', action, o['stock_id'], 'X', abs(
-                    o['quantity']), '@', price, o['order_condition'])
+                price_string = str(price)
+
+            print('execute', action, o['stock_id'], 'X', abs(
+                o['quantity']), '@', price_string, o['order_condition'])
 
             quantity = abs(o['quantity'])
             board_lot_quantity = int(abs(quantity // 1))
