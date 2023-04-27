@@ -1,19 +1,18 @@
 import numpy as np
+import pandas as pd
 
-def greedy_allocation(weights, latest_prices, total_portfolio_value=10000, short_ratio=None):
+def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
 
     """
     original source code: PyPortfolioOpt
     https://pypi.org/project/pyportfolioopt/
     """
 
+    weights = pd.Series(weights)
+
     weights.index = weights.index.str.split(' ').str[0]
     weights = list(weights.items())
     latest_prices = latest_prices
-    if short_ratio is None:
-        short_ratio = sum((-x[1] for x in weights if x[1] < 0))
-    else:
-        short_ratio = short_ratio
 
     if len(weights) == 0:
         return {}, total_portfolio_value
@@ -47,10 +46,8 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000, short
         shorts = {t: w / short_total_weight for t, w in shorts.items()}
 
         # Construct long-only discrete allocations for each
-        short_val = total_portfolio_value * short_ratio
-        long_val = total_portfolio_value
-        if reinvest:
-            long_val += short_val
+        short_val = total_portfolio_value * short_total_weight
+        long_val = total_portfolio_value * long_total_weight
 
         if verbose:
             print("\nAllocating long sub-portfolio...")
@@ -139,5 +136,6 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000, short
 
     if verbose:
         print("Funds remaining: {:.2f}".format(available_funds))
-        _allocation_rmse_error(verbose)
     return allocation, available_funds
+
+
