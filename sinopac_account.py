@@ -52,6 +52,11 @@ class SinopacAccount(Account):
             price = self.api.snapshots([contract])[0].close
 
         if market_order:
+            price_type = sj.constant.StockPriceType.MKT
+        else:
+            price_type = sj.constant.StockPriceType.LMT
+
+        if market_order:
             if action == Action.BUY:
                 price = contract.limit_up
             elif action == Action.SELL:
@@ -89,7 +94,7 @@ class SinopacAccount(Account):
         order = self.api.Order(price=price,
                                quantity=quantity,
                                action=action,
-                               price_type=sj.constant.StockPriceType.LMT,
+                               price_type=price_type,
                                order_type=sj.constant.OrderType.ROD,
                                order_cond=order_cond,
                                daytrade_short=daytrade_short,
