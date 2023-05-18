@@ -10,7 +10,8 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
 
     weights = pd.Series(weights)
 
-    weights.index = weights.index.str.split(' ').str[0]
+    weights.index = weights.index.to_series().astype(str)\
+            .str.split(' ').str[0]
     weights = list(weights.items())
     latest_prices = latest_prices
 
