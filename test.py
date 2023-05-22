@@ -19,8 +19,11 @@ def check_order_executor(self, oe, **args_for_creating_orders):
   stock_orders = {o['stock_id']: o for o in view_orders}
   stock_quantity = {o.stock_id: 0 for oid, o in orders.items()}
 
+
   for oid, o in orders.items():
-    if o.status == OrderStatus.CANCEL:
+    if o.status == OrderStatus.CANCEL\
+        or o.stock_id not in stock_orders\
+        or o.status == OrderStatus.FILLED:
         continue
 
     # get stock id
