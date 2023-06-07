@@ -51,10 +51,7 @@ class SinopacAccount(Account):
         if price == None:
             price = self.api.snapshots([contract])[0].close
 
-        if market_order:
-            price_type = sj.constant.StockPriceType.MKT
-        else:
-            price_type = sj.constant.StockPriceType.LMT
+        price_type = sj.constant.StockPriceType.LMT
 
         if market_order:
             if action == Action.BUY:
