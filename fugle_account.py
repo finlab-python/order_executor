@@ -54,14 +54,10 @@ class FugleAccount(Account):
         self.trades = {}
         self.thread = None
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
+    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH, extra_bid_pct=0):
 
         if quantity <= 0:
             raise ValueError("quantity should be larger than zero")
-
-        if best_price_limit and market_order:
-            raise ValueError(
-                "The flags best_price_limit and  market_order should not both be True")
 
         fugle_action = fugleAction.Buy if action == Action.BUY else fugleAction.Sell
 
@@ -80,6 +76,8 @@ class FugleAccount(Account):
                 price_flag = PriceFlag.LimitDown
             elif action == Action.SELL:
                 price_flag = PriceFlag.LimitUp
+        elif extra_bid_pct > 0:
+            price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
 
         order_cond = {
             OrderCondition.CASH: Trade.Cash,
@@ -346,3 +344,33 @@ def to_finlab_stock(json_response):
         ask_volume=asks[0]['volume'] if asks else 0,
     )
 
+def calculate_price_with_extra_bid(price, extra_bid_pct, action):
+    if action == Action.BUY:
+        result = price * (1 + extra_bid_pct)
+        if result <= 10:
+            result = math.floor(round(result, 3) * 100) / 100
+        elif result <= 50:
+            result = math.floor(result * 20) / 20
+        elif result <= 100:
+            result = math.floor(result * 10) / 10
+        elif result <= 500:
+            result = math.floor(result * 2) / 2
+        elif result <= 1000:
+            result = math.floor(result)
+        else:
+            result = math.floor(result / 5) * 5
+    elif action == Action.SELL:
+        result = price * (1 - extra_bid_pct)
+        if result <= 10:
+            result = math.ceil(round(result, 3) * 100) / 100
+        elif result <= 50:
+            result = math.ceil(result * 20) / 20
+        elif result <= 100:
+            result = math.ceil(result * 10) / 10
+        elif result <= 500:
+            result = math.ceil(result * 2) / 2
+        elif result <= 1000:
+            result = math.ceil(result)
+        else:
+            result = math.ceil(result / 5) * 5
+    return result

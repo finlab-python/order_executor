@@ -3,6 +3,7 @@ import datetime
 import time
 import os
 import re
+import math
 
 from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
@@ -41,7 +42,7 @@ class SinopacAccount(Account):
             person_id=certificate_person_id,
         )
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
+    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH, extra_bid_pct=0):
 
         contract = self.api.Contracts.Stocks.get(stock_id)
 
@@ -54,15 +55,20 @@ class SinopacAccount(Account):
         price_type = sj.constant.StockPriceType.LMT
 
         if market_order:
-            if action == Action.BUY:
-                price = contract.limit_up
-            elif action == Action.SELL:
-                price = contract.limit_down
+            if odd_lot:
+                price = calculate_price_with_extra_bid(price, 0.1, action)
+            else: 
+                if action == Action.BUY:
+                    price = contract.limit_up
+                elif action == Action.SELL:
+                    price = contract.limit_down
         elif best_price_limit:
             if action == Action.BUY:
                 price = contract.limit_down
             elif action == Action.SELL:
                 price = contract.limit_up
+        elif extra_bid_pct > 0:
+            price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
 
         if action == Action.BUY:
             action = 'Buy'
@@ -220,3 +226,34 @@ def snapshot_to_stock(snapshot):
     d = snapshot
     return Stock(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
                bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
+
+def calculate_price_with_extra_bid(price, extra_bid_pct, action):
+    if action == Action.BUY:
+        result = price * (1 + extra_bid_pct)
+        if result <= 10:
+            result = math.floor(round(result, 3) * 100) / 100
+        elif result <= 50:
+            result = math.floor(result * 20) / 20
+        elif result <= 100:
+            result = math.floor(result * 10) / 10
+        elif result <= 500:
+            result = math.floor(result * 2) / 2
+        elif result <= 1000:
+            result = math.floor(result)
+        else:
+            result = math.floor(result / 5) * 5
+    elif action == Action.SELL:
+        result = price * (1 - extra_bid_pct)
+        if result <= 10:
+            result = math.ceil(round(result, 3) * 100) / 100
+        elif result <= 50:
+            result = math.ceil(result * 20) / 20
+        elif result <= 100:
+            result = math.ceil(result * 10) / 10
+        elif result <= 500:
+            result = math.ceil(result * 2) / 2
+        elif result <= 1000:
+            result = math.ceil(result)
+        else:
+            result = math.ceil(result / 5) * 5
+    return result

@@ -346,7 +346,7 @@ class OrderExecutor():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
                 self.account.cancel_order(oid)
 
-    def create_orders(self, market_order=False, best_price_limit=False, view_only=False):
+    def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
         """產生委託單，將部位同步成 self.target_position
         預設以該商品最後一筆成交價設定為限價來下單
         Attributes:
@@ -354,6 +354,8 @@ class OrderExecutor():
             best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
             view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)。
         """
+        if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
+            raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
 
         present_position = self.account.get_position()
         orders = (self.target_position - present_position).position
@@ -383,8 +385,12 @@ class OrderExecutor():
             else:
                 price_string = str(price)
 
+            extra_bid_text = ''
+            if extra_bid_pct > 0:
+                extra_bid_text = f'with extra bid {extra_bid_pct*100}%'
+
             print('execute', action, o['stock_id'], 'X', abs(
-                o['quantity']), '@', price_string, o['order_condition'])
+                o['quantity']), '@', price_string, extra_bid_text, o['order_condition'])
 
             quantity = abs(o['quantity'])
             board_lot_quantity = int(abs(quantity // 1))
@@ -398,7 +404,8 @@ class OrderExecutor():
                                               price=price, market_order=market_order,
                                               order_cond=o['order_condition'],
                                               odd_lot=True,
-                                              best_price_limit=best_price_limit)
+                                              best_price_limit=best_price_limit,
+                                              extra_bid_pct=extra_bid_pct)
 
                 if board_lot_quantity != 0:
                     self.account.create_order(action=action,
@@ -406,14 +413,16 @@ class OrderExecutor():
                                               quantity=board_lot_quantity,
                                               price=price, market_order=market_order,
                                               order_cond=o['order_condition'],
-                                              best_price_limit=best_price_limit)
+                                              best_price_limit=best_price_limit,
+                                              extra_bid_pct=extra_bid_pct)
             else:
                 self.account.create_order(action=action,
                                           stock_id=o['stock_id'],
                                           quantity=quantity,
                                           price=price, market_order=market_order,
                                           order_cond=o['order_condition'],
-                                          best_price_limit=best_price_limit)
+                                          best_price_limit=best_price_limit,
+                                          extra_bid_pct=extra_bid_pct)
 
     def update_order_price(self):
         """更新委託單，將委託單的限價調整成當天最後一筆價格。
