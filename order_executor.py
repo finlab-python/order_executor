@@ -357,6 +357,8 @@ class OrderExecutor():
         """
         if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
             raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
+        if extra_bid_pct < 0 or extra_bid_pct > 0.1:
+            raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
 
         present_position = self.account.get_position()
         orders = (self.target_position - present_position).position
