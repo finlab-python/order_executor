@@ -352,7 +352,8 @@ class OrderExecutor():
         Attributes:
             market_order (bool): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
             best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
-            view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)。
+            view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
+            extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.1 時，將以超出(低於)昨日收盤價之10%漲停(跌停)價格下單。參數有效範圍為 0 到 0.1 內
         """
         if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
             raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
