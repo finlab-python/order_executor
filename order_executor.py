@@ -205,7 +205,7 @@ class Position():
             w = report.next_weights
         else:
             w = report.weights.copy()
-            w.loc[report.actions[report.actions == 'sl_tp_exit'].index] = 0
+            w.loc[report.actions[report.actions.isin(['sl', 'tp'])].index] = 0
 
         w = w.groupby(w.index).last()
 
