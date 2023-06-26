@@ -115,3 +115,30 @@ class TestSinopacAccount(unittest.TestCase):
       assert pos.position[0]['quantity'] == 2
       assert pos.position[0]['order_condition'] == OrderCondition.CASH
 
+class CalculatePriceWithExtraBidTest(unittest.TestCase):
+    def test_calculate_price_with_extra_bid(self):
+        from fugle_account import calculate_price_with_extra_bid, Action
+        test_data = {
+            'test_1': {'price': 5.2, 'extra_bid_pct': 0.06, 'action': Action.BUY, 'expected_result': 5.51},
+            'test_2': {'price': 7.4, 'extra_bid_pct': 0.02, 'action': Action.SELL, 'expected_result': 7.26},
+            'test_3': {'price': 25.65, 'extra_bid_pct': 0.1, 'action': Action.BUY, 'expected_result': 28.20},
+            'test_4': {'price': 11.05, 'extra_bid_pct': 0.1, 'action': Action.SELL, 'expected_result': 9.95},
+            'test_5': {'price': 87.0, 'extra_bid_pct': 0.04, 'action': Action.BUY, 'expected_result': 90.4},
+            'test_6': {'price': 73.0, 'extra_bid_pct': 0.06, 'action': Action.SELL, 'expected_result': 68.7},
+            'test_7': {'price': 234.0, 'extra_bid_pct': 0.08, 'action': Action.BUY, 'expected_result': 252.5},
+            'test_8': {'price': 234.0, 'extra_bid_pct': 0.08, 'action': Action.SELL, 'expected_result': 215.5},
+            'test_9': {'price': 650.0, 'extra_bid_pct': 0.05, 'action': Action.BUY, 'expected_result': 682},
+            'test_10': {'price': 756.0, 'extra_bid_pct': 0.055, 'action': Action.SELL, 'expected_result': 715},
+            'test_11': {'price': 1990.0, 'extra_bid_pct': 0.035, 'action': Action.BUY, 'expected_result': 2055},
+            'test_12': {'price': 1455.0, 'extra_bid_pct': 0.088, 'action': Action.SELL, 'expected_result': 1330},
+        }
+
+        for test_name, test_case in test_data.items():
+            price = test_case['price']
+            extra_bid_pct = test_case['extra_bid_pct']
+            action = test_case['action']
+            expected_result = test_case['expected_result']
+
+            with self.subTest(test_name=test_name):
+                result = calculate_price_with_extra_bid(price, extra_bid_pct, action)
+                self.assertEqual(result, expected_result)
