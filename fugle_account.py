@@ -6,6 +6,7 @@ from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
 
 from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
+from finlab import data
 
 from threading import Thread
 import numpy as np
@@ -77,7 +78,11 @@ class FugleAccount(Account):
             elif action == Action.SELL:
                 price_flag = PriceFlag.LimitUp
         elif extra_bid_pct > 0:
+            last_close = data.get('price:收盤價').ffill().iloc[-1][stock_id]
+            up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, action)
             price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
+            if (action == Action.BUY and price > up_down_limit) or (action == Action.SELL and price < up_down_limit):
+                price = up_down_limit
 
         order_cond = {
             OrderCondition.CASH: Trade.Cash,
