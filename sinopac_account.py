@@ -7,6 +7,7 @@ import math
 
 from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
+from finlab.online.order_executor import calculate_price_with_extra_bid
 from finlab import data
 
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
@@ -235,34 +236,3 @@ def snapshot_to_stock(snapshot):
     d = snapshot
     return Stock(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
                bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
-
-def calculate_price_with_extra_bid(price, extra_bid_pct, action):
-    if action == Action.BUY:
-        result = price * (1 + extra_bid_pct)
-        if result <= 10:
-            result = math.floor(round(result, 3) * 100) / 100
-        elif result <= 50:
-            result = math.floor(result * 20) / 20
-        elif result <= 100:
-            result = math.floor(result * 10) / 10
-        elif result <= 500:
-            result = math.floor(result * 2) / 2
-        elif result <= 1000:
-            result = math.floor(result)
-        else:
-            result = math.floor(result / 5) * 5
-    elif action == Action.SELL:
-        result = price * (1 - extra_bid_pct)
-        if result <= 10:
-            result = math.ceil(round(result, 3) * 100) / 100
-        elif result <= 50:
-            result = math.ceil(result * 20) / 20
-        elif result <= 100:
-            result = math.ceil(result * 10) / 10
-        elif result <= 500:
-            result = math.ceil(result * 2) / 2
-        elif result <= 1000:
-            result = math.ceil(result)
-        else:
-            result = math.ceil(result / 5) * 5
-    return result

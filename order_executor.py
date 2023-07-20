@@ -8,6 +8,7 @@ import datetime
 import numbers
 import json
 import time
+import math
 
 
 class Position():
@@ -427,13 +428,59 @@ class OrderExecutor():
                                           best_price_limit=best_price_limit,
                                           extra_bid_pct=extra_bid_pct)
 
-    def update_order_price(self):
+    def update_order_price(self, extra_bid_pct=0):
         """更新委託單，將委託單的限價調整成當天最後一筆價格。
-        （讓沒成交的限價單去追價）"""
+        （讓沒成交的限價單去追價）
+        Attributes:
+            extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.1 時，將以超出(低於)現價之10%價格下單，以漲停(跌停)價為限。參數有效範圍為 0 到 0.1 內
+            """
+        if extra_bid_pct < 0 or extra_bid_pct > 0.1:
+            raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
         orders = self.account.get_orders()
         sids = set([o.stock_id for i, o in orders.items()])
         stocks = self.account.get_stocks(sids)
 
         for i, o in orders.items():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
-                self.account.update_order(i, price=stocks[o.stock_id].close)
+
+                price = stocks[o.stock_id].close
+                if extra_bid_pct > 0:
+                    last_close = data.get('price:收盤價').ffill().iloc[-1][o.stock_id]
+                    up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, o.action)
+                    price = calculate_price_with_extra_bid(price, extra_bid_pct, o.action)
+                    if (o.action == Action.BUY and price > up_down_limit) or (o.action == Action.SELL and price < up_down_limit):
+                        price = up_down_limit
+
+                self.account.update_order(i, price=price)
+                
+
+def calculate_price_with_extra_bid(price, extra_bid_pct, action):
+    if action == Action.BUY:
+        result = price * (1 + extra_bid_pct)
+        if result <= 10:
+            result = math.floor(round(result, 3) * 100) / 100
+        elif result <= 50:
+            result = math.floor(result * 20) / 20
+        elif result <= 100:
+            result = math.floor(result * 10) / 10
+        elif result <= 500:
+            result = math.floor(result * 2) / 2
+        elif result <= 1000:
+            result = math.floor(result)
+        else:
+            result = math.floor(result / 5) * 5
+    elif action == Action.SELL:
+        result = price * (1 - extra_bid_pct)
+        if result <= 10:
+            result = math.ceil(round(result, 3) * 100) / 100
+        elif result <= 50:
+            result = math.ceil(result * 20) / 20
+        elif result <= 100:
+            result = math.ceil(result * 10) / 10
+        elif result <= 500:
+            result = math.ceil(result * 2) / 2
+        elif result <= 1000:
+            result = math.ceil(result)
+        else:
+            result = math.ceil(result / 5) * 5
+    return result
