@@ -226,10 +226,12 @@ class FugleAccount(Account):
             total_qty = (int(i['qty_l']) +
                          int(i['qty_bm']) - int(i['qty_sm'])) / 1000
 
+            o = order_condition[i['trade']]
+
             if total_qty != 0:
                 ret.append({
                     'stock_id': i['stk_no'],
-                    'quantity': total_qty,
+                    'quantity': total_qty if o != OrderCondition.SHORT_SELLING else -total_qty,
                     'order_condition': order_condition[i['trade']]
                 })
 

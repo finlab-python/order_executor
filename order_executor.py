@@ -430,7 +430,9 @@ class OrderExecutor():
                                           order_cond=o['order_condition'],
                                           best_price_limit=best_price_limit,
                                           extra_bid_pct=extra_bid_pct)
-
+                
+        return orders
+    
     def update_order_price(self, extra_bid_pct=0):
         """更新委託單，將委託單的限價調整成當天最後一筆價格。
         （讓沒成交的限價單去追價）
