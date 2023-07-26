@@ -126,7 +126,7 @@ class FugleAccount(Account):
         self.trades[ord_no] = ret
         return ord_no
 
-    def update_order(self, order_id, price=None, quantity=None):
+    def update_order(self, order_id, price=None):
 
         if isinstance(price, int):
             price = float(price)
@@ -158,8 +158,6 @@ class FugleAccount(Account):
                 logging.warning(
                     f"update_order: Cannot update price of order {order_id}: {ve}")
 
-        if quantity is not None:
-            raise NotImplementedError("Cannot change order quantity")
 
     def cancel_order(self, order_id):
         if not order_id in self.trades:
@@ -188,15 +186,12 @@ class FugleAccount(Account):
         for s in stock_ids:
             try:
                 res = requests.get(
-                    f'https://api.fugle.tw/realtime/v0.3/intraday/quote?symbolId={s}&apiToken={self.market_api_key}')
+                    f'https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/{s}',headers={'X-API-KEY': self.market_api_key})
                 json_response = res.json()
                 ret[s] = to_finlab_stock(json_response)
 
                 if math.isnan(ret[s].close):
-                    res = requests.get(
-                        f'https://api.fugle.tw/realtime/v0.3/intraday/meta?symbolId={s}&apiToken={self.market_api_key}')
-                    json_response = res.json()
-                    ret[s].close = json_response['data']['meta']['priceReference']
+                    ret[s].close = json_response['previousClose']
 
             except Exception as e:
                 logging.warn(f"Fugle API: cannot get stock {s}")
@@ -327,26 +322,26 @@ def to_finlab_stock(json_response):
     """將 fugle 股價行情轉換成 finlab 格式"""
     r = json_response
 
-    if 'data' not in r:
+    if 'statusCode' in r:
         raise Exception('Cannot parse fugle quote data' + str(r))
 
-    if 'order' in r['data']['quote']:
-        bids = r['data']['quote']['order']['bids']
-        asks = r['data']['quote']['order']['asks']
+    if 'bids' in r:
+        bids = r['bids']
+        asks = r['asks']
     else:
         bids = []
         asks = []
 
-    has_volume = 'trade' in r['data']['quote']
+    has_volume = 'lastTrade' in r
     return Stock(
-        stock_id=r['data']['info']['symbolId'],
-        high=r['data']['quote']['priceHigh']['price'] if has_volume else np.nan,
-        low=r['data']['quote']['priceLow']['price'] if has_volume else np.nan,
-        close=r['data']['quote']['trade']['price'] if has_volume else np.nan,
-        open=r['data']['quote']['priceOpen']['price'] if has_volume else np.nan,
+        stock_id=r['symbol'],
+        high=r['highPrice'] if has_volume else np.nan,
+        low=r['lowPrice'] if has_volume else np.nan,
+        close=r['closePrice'] if has_volume else np.nan,
+        open=r['openPrice'] if has_volume else np.nan,
         bid_price=bids[0]['price'] if bids else np.nan,
         ask_price=asks[0]['price'] if asks else np.nan,
-        bid_volume=bids[0]['volume'] if bids else 0,
-        ask_volume=asks[0]['volume'] if asks else 0,
+        bid_volume=bids[0]['size'] if bids else 0,
+        ask_volume=asks[0]['size'] if asks else 0,
     )
 

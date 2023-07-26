@@ -4,6 +4,7 @@ import time
 import os
 import re
 import math
+import logging
 
 from finlab.online.base_account import Account, Stock, Order, Position
 from finlab.online.enums import *
@@ -123,9 +124,26 @@ class SinopacAccount(Account):
         self.api.update_status(self.api.stock_account)
         self.trades = {t.status.id: t for t in self.api.list_trades()}
 
-    def update_order(self, order_id, **argv):
+    def update_order(self, order_id, price):
+        order = self.get_orders()[order_id]
         trade = self.trades[order_id]
-        self.api.update_order(trade, **argv)
+
+        try:
+            if trade.order.order_lot == 'IntradayOdd':
+                action = order.action
+                stock_id = order.stock_id
+                q = order.quantity - \
+                    order.filled_quantity
+                q *= 1000
+
+                self.cancel_order(order_id)
+                self.create_order(
+                    action=action, stock_id=stock_id, quantity=q, price=price, odd_lot=True)
+            else:
+                self.api.update_order(trade, price=price)
+        except ValueError as ve:
+            logging.warning(
+                f"update_order: Cannot update price of order {order_id}: {ve}")
 
     def cancel_order(self, order_id):
         self.update_trades()
