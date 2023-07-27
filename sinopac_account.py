@@ -230,6 +230,7 @@ def trade_to_order(trade):
 
     if trade.order.order_lot == 'IntradayOdd':
         quantity /= 1000
+        filled_quantity /= 1000
 
     # calculate order condition
     if trade.order.daytrade_short == True and order_condition == OrderCondition.CASH:
