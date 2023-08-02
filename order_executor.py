@@ -203,13 +203,14 @@ class Position():
         next_trading_time = report.next_trading_date.tz_localize(tz) + datetime.timedelta(hours=16)
 
         if datetime.datetime.now(tz) >= next_trading_time:
-            w = report.next_weights
+            w = report.next_weights.copy()
         else:
             w = report.weights.copy()
         check_sl_tp = report.actions.isin(['sl_', 'tp_','sl', 'tp'])
 
         if sum(check_sl_tp):
-            w.loc[report.actions[check_sl_tp].index] = 0
+            sl_tp_index = report.actions[check_sl_tp].index.intersection(w.index)
+            w.loc[sl_tp_index] = 0
 
         w = w.groupby(w.index).last()
 
