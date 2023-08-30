@@ -183,8 +183,9 @@ class SinopacAccount(Account):
         bank_balance = self.api.account_balance().acc_balance
 
         # get settlements
+        tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         settlements = self.api.settlements(self.api.stock_account)
-        settlements = sum(int(settlement.amount) for settlement in settlements if datetime.datetime.combine(settlement.date, datetime.time(10,0)) > datetime.datetime.now())
+        settlements = sum(int(settlement.amount) for settlement in settlements if datetime.datetime.combine(settlement.date, datetime.time(10,0)) > tw_now)
 
         # get position balance
         position = self.get_position()

@@ -242,9 +242,10 @@ class FugleAccount(Account):
         bank_balance = self.sdk.get_balance()['available_balance']
 
         # get settlements
+        tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         settlements = self.sdk.get_settlements()
         settlements = sum(int(settlement['price']) for settlement in settlements if datetime.datetime.strptime(
-            settlement['c_date'] + ' 10:00', '%Y%m%d %H:%M') > datetime.datetime.now())
+            settlement['c_date'] + ' 10:00', '%Y%m%d %H:%M') > tw_now)
 
         # get position balance
         account_balance = sum(int(inv['value_mkt'])
