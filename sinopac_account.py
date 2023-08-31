@@ -114,7 +114,7 @@ class SinopacAccount(Account):
                                daytrade_short=daytrade_short,
                                account=self.api.stock_account,
                                order_lot=order_lot,
-                               custom_field="finlab",
+                               custom_field="FiNlAB",
                                )
         trade = self.api.place_order(contract, order)
 
