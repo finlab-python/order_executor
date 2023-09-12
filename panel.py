@@ -293,6 +293,8 @@ def order_panel(account):
 
         for (strategy, allocation) in allocations:
             p = strategies[strategy]['positions']
+            if 'position' in p:
+                p = p['position']
 
             weights = {pname.split(' ')[0]: pp['next_weight']
                        for pname, pp in p.items() if isinstance(pp, dict)}
