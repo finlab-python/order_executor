@@ -2,7 +2,7 @@ from binance import client
 from binance.helpers import round_step_size
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET
 
-from finlab.online.base_account import OrderCondition, Account, Action, Order, Stock, OrderStatus
+from finlab.online.base_account import OrderCondition, Account, Action, Order, Stock, OrderStatus, Position
 import os
 import os
 import sys
@@ -344,7 +344,10 @@ class BinanceAccount(Account):
         return ret
 
     def get_position(self):
-        return BinanceHelper.get_spot_position(self.simple_client.client)
+        ret = BinanceHelper.get_spot_position(self.simple_client.client)
+        return Position.from_list([
+           {'stock_id': sym, 'quantity': amount, 'order_condition': OrderCondition.CASH} 
+           for sym, amount in ret.items()])
         
     def get_total_balance(self):
         
