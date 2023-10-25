@@ -323,7 +323,7 @@ class BinanceAccount(Account):
                 quantity=o['origQty'], filled_quantity=o['executedQty'], status=status, 
                 time=datetime.datetime.fromtimestamp(int(o['transactTime'])), 
                 stock_id=o['symbol'], order_condition=OrderCondition.CASH, org_order=o)
-            return ret
+        return ret
 
     def get_stocks(self, stock_ids):
 
