@@ -144,7 +144,7 @@ class BinanceSimpleClient():
 
   def pass_min_notional(self, symbol, quantity, market_type, price=None):
     info = self.market_info[market_type]
-    notional = self.list_select(info.loc[symbol].filters, 'filterType', 'MIN_NOTIONAL')
+    notional = self.list_select(info.loc[symbol].filters, 'filterType', 'NOTIONAL')
     min_notional = float(notional.get('minNotional', notional.get('notional', 0)))
     
     present_price = price
@@ -231,7 +231,7 @@ class BinanceSimpleClient():
 
 class BinanceAccount(Account):
 
-    def __init__(self):
+    def __init__(self, base_currency='USDT'):
 
         if 'BINANCE_API_KEY' in os.environ:
             key = os.environ['BINANCE_API_KEY']
@@ -241,8 +241,9 @@ class BinanceAccount(Account):
             self.simple_client = BinanceSimpleClient(client.Client())
 
         self.threading = None
+        self.base_currency = base_currency
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH) -> str:
+    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH, extra_bid_pct=0) -> str:
 
         if quantity <= 0:
             raise ValueError("quantity should be larger than zero")
@@ -260,7 +261,7 @@ class BinanceAccount(Account):
         # create_order(self, symbol, quantity, market_type, price=None, stop_price=None):
 
         args = {
-            'symbol': stock_id,
+            'symbol': stock_id+self.base_currency,
             'quantity': quantity,
             'market_type': 'SPOT',
         }
@@ -331,16 +332,19 @@ class BinanceAccount(Account):
             return {}
 
         ret = {}
-        symbols = '["'+ '","'.join(stock_ids) + '"]'
+
+        all_symbols = set(t['symbol'] for t in self.simple_client.client.get_all_tickers())
+
+        symbols = '["'+ '","'.join([s+self.base_currency for s in stock_ids if s+self.base_currency in all_symbols]) + '"]'
         tickers = self.simple_client.client.get_ticker(symbols=symbols)
 
         for t in tickers:
-            ret[t['symbol']] = Stock(stock_id=t['symbol'], open=float(t['openPrice']), 
+            asset = t['symbol'].replace(self.base_currency, '')
+            ret[asset] = Stock(stock_id=asset, open=float(t['openPrice']), 
                                      high=float(t['highPrice']), low=float(t['lowPrice']), 
                 close=float(t['lastPrice']), bid_price=float(t['bidPrice']), bid_volume=float(t['bidQty']), 
                 ask_price=float(t['askPrice']), ask_volume=float(t['askQty']))
-
-            print(ret[t['symbol']])
+            
         return ret
 
     def get_position(self):
