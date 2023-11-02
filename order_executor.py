@@ -223,7 +223,7 @@ class Position():
     @classmethod
     def from_json(self, path):
         with open(path, 'r') as f:
-            return json.load(f)
+            return Position.from_list(json.load(f))
 
     def __add__(self, position):
         return self.for_each_trading_condition(self.position, position.position, "+")
@@ -294,7 +294,10 @@ class Position():
         self.position = pos
 
     def __repr__(self):
-        return str(self.position)
+        ret = ''
+        for p in self.position:
+            ret += str(p) + '\n'
+        return ret
 
 
 class OrderExecutor():
