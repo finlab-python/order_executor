@@ -35,7 +35,7 @@ class SinopacAccount(Account):
                 'SHIOAJI_CERT_PERSON_ID')
 
         self.api = sj.Shioaji()
-        self.accounts = self.api.login(api_key, secret_key)
+        self.accounts = self.api.login(api_key, secret_key, fetch_contract=False)
 
         self.trades = {}
 
@@ -47,10 +47,18 @@ class SinopacAccount(Account):
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH, extra_bid_pct=0):
 
-        contract = self.api.Contracts.Stocks.get(stock_id)
+        # contract = self.api.Contracts.Stocks.get(stock_id)
+        contract = sj.contracts.Contract(security_type='STK', code=stock_id, exchange='TSE')
+        pinfo = self.get_price_info()
+        limitup = float(pinfo[stock_id]['漲停價'])
+        limitdn = float(pinfo[stock_id]['跌停價'])
+        last_close = float(pinfo[stock_id]['收盤價'])
 
-        assert quantity > 0
-        assert contract is not None
+        if stock_id not in pinfo:
+            raise Exception(f"stock {stock_id} not in price info")
+        
+        if quantity <= 0:
+            raise Exception(f"quantity must be positive, got {quantity}")
 
         if price == None:
             price = self.api.snapshots([contract])[0].close
@@ -59,23 +67,23 @@ class SinopacAccount(Account):
 
         if market_order:
             if odd_lot:
-                last_close = data.get('price:收盤價').ffill().iloc[-1][stock_id]
                 up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, action)
                 price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
                 if (action == Action.BUY and price > up_down_limit) or (action == Action.SELL and price < up_down_limit):
                     price = up_down_limit
             else: 
                 if action == Action.BUY:
-                    price = contract.limit_up
+                    price = limitup
                 elif action == Action.SELL:
-                    price = contract.limit_down
+                    price = limitdn
+
         elif best_price_limit:
             if action == Action.BUY:
-                price = contract.limit_down
+                price = limitdn
             elif action == Action.SELL:
-                price = contract.limit_up
+                price = limitup
+
         elif extra_bid_pct > 0:
-            last_close = data.get('price:收盤價').ffill().iloc[-1][stock_id]
             up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, action)
             price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
             if (action == Action.BUY and price > up_down_limit) or (action == Action.SELL and price < up_down_limit):
@@ -170,11 +178,11 @@ class SinopacAccount(Account):
 
     def get_stocks(self, stock_ids):
         try:
-            contracts = [self.api.Contracts.Stocks.get(s) for s in stock_ids]
+            contracts = [sj.contracts.Contract(security_type='STK', code=s, exchange='TSE') for s in stock_ids]
             snapshots = self.api.snapshots(contracts)
         except:
             time.sleep(10)
-            contracts = [self.api.Contracts.Stocks.get(s) for s in stock_ids]
+            contracts = [sj.contracts.Contract(security_type='STK', code=s, exchange='TSE') for s in stock_ids]
             snapshots = self.api.snapshots(contracts)
 
         return {s.code: snapshot_to_stock(s) for s in snapshots}
