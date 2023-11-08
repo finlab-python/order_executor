@@ -88,14 +88,17 @@ class Stock():
 @lru_cache(maxsize=1)
 def fetch_price_data(timestamp=None):
 
+    def replace_comma(arr):
+        return [a.replace(', ', '') for a in arr]
+
     def fetch_twe_data():
         res = requests.get('https://www.twse.com.tw/rwd/zh/variation/TWT84U?response=json')
         d = res.json()
-        return {s[0]: dict(zip(d['fields'], s)) for s in d['data']}
+        return {s[0]: dict(zip(d['fields'], replace_comma(s))) for s in d['data']}
 
     def fetch_otc_data():
         res = requests.get('https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw')
-        return {a[0]: dict(zip(['收盤價', '漲停價', '跌停價'], a[-3:])) for a in res.json()['aaData']}
+        return {a[0]: dict(zip(['收盤價', '漲停價', '跌停價'], replace_comma(a[-3:]))) for a in res.json()['aaData']}
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         twe_future = executor.submit(fetch_twe_data)
