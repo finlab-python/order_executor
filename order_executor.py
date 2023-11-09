@@ -357,6 +357,7 @@ class OrderExecutor():
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
         """產生委託單，將部位同步成 self.target_position
         預設以該商品最後一筆成交價設定為限價來下單
+        
         Attributes:
             market_order (bool): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
             best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價

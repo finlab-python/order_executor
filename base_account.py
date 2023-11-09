@@ -173,13 +173,17 @@ class Account(ABC):
     def create_order(self, action, stock_id, quantity, price=None, force=False, wait_for_best_price=False):
         """產生新的委託單
 
-        Attributes:
+        Args:
             action (Action): 買賣方向，通常為 'BUY' 或是 'SELL'
+
             stock_id (str): 股票代號 ex: '2330'
+
             quantity (numbers.Number): 委託股票的總數量（張數），允許小數點
+
             price (numbers.Number, optional): 股票買賣的價格(限價單)
-            force (bool): 是否用最差之價格（長跌停）強制成交?
-              當成交量足夠時，可以比較快成交，然而當成交量低時，容易有大的滑價
+
+            force (bool): 是否用最差之價格（長跌停）強制成交? 當成交量足夠時，可以比較快成交，然而當成交量低時，容易有大的滑價
+
             wait_for_best_price (bool): 是否用最佳之價格（長跌停），無限時間等待？當今天要出場時，可以開啟等漲停價來購買，當今天要買入時，可以掛跌停價等待買入時機。
 
         Returns:
@@ -195,6 +199,7 @@ class Account(ABC):
             order_id (str): 券商所提供的委託單 ID
             price (numbers.Number, optional): 更新的限價
             quantity (numbers.Number, optional): 更新的待成交量
+
         Returns:
             (None): 無跳出 erorr 代表成功更新委託單
         """
@@ -221,6 +226,7 @@ class Account(ABC):
     @abstractmethod
     def get_orders(self):
         """拿到現在所有委託單
+        
         Returns:
             (Dict[str, Order]): 所有委託單 id 與委託單資料
                 !!! example
@@ -231,8 +237,10 @@ class Account(ABC):
     @abstractmethod
     def get_stocks(self, stock_ids):
         """拿到現在股票報價
+
         Attributes:
             stock_ids (`list` of `str`): 一次拿取所有股票的報價，ex: ['1101', '2330']
+        
         Returns:
             (dict): 報價資料，
                 !!! example
