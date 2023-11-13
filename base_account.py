@@ -16,7 +16,6 @@ import os
 
 from finlab import logger
 from finlab.online.enums import *
-from finlab.online.order_executor import Position
 
 
 @dataclass

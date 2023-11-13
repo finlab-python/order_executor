@@ -1,15 +1,18 @@
 from finlab.online.utils import greedy_allocation
 from finlab.online.enums import *
 from finlab import data
-from warnings import warn
+from decimal import Decimal
 import pandas as pd
 import requests
 import datetime
+import logging
 import numbers
 import json
+import copy
 import time
 import math
 
+logger = logging.getLogger(__name__)
 
 class Position():
 
@@ -113,7 +116,7 @@ class Position():
     @classmethod
     def from_dict(cls, position):
 
-        warn('This method is renamed and will be deprecated.'
+        logger.warning('This method is renamed and will be deprecated.'
              ' Please replace `Position.from_dict()` to `Position.from_list().`',
              DeprecationWarning, stacklevel=2)
 
@@ -122,7 +125,7 @@ class Position():
         return ret
 
     @classmethod
-    def from_weight(cls, weights, fund, price=None, odd_lot=False, board_lot_size=1000, allocation=greedy_allocation, **kwargs):
+    def from_weight(cls, weights, fund, price=None, odd_lot=False, board_lot_size=1000, allocation=greedy_allocation, precision=None, **kwargs):
         """利用 `weight` 建構股票部位
 
         Attributes:
@@ -131,7 +134,12 @@ class Position():
             price (pd.Series or `dict` of `float`): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
             odd_lot (bool): 是否考慮零股
             board_lot_size (int): 一張股票等於幾股
+            precision (int or None): 計算張數時的精度，預設為 None 代表依照 board_lot_size 而定，而 1 代表 0.1 張，2 代表 0.01 張，以此類推。
             allocation (func): 資產配置演算法選定，預設為預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）
+            margin_trading (bool): 做多部位是否使用融資
+            short_selling (bool): 做空部位是否使用融券
+            day_trading_long (bool): 做多部位為當沖先做多
+            day_trading_short (bool): 做空部位為當沖先做空
 
         Examples:
               例如，用 100 萬的資金，全部投入，持有 1101 和 2330 各一半：
@@ -153,6 +161,9 @@ class Position():
               ```
         """
 
+        if precision != None and precision < 0:
+            raise ValueError("The precision parameter is out of the valid range >= 0")
+
         if price is None:
             price = data.get('price:收盤價').ffill().iloc[-1]
 
@@ -162,13 +173,37 @@ class Position():
         if isinstance(weights, dict):
             weights = pd.Series(weights)
 
+        if precision is not None and board_lot_size != 1:
+            logger.warning(
+                "The precision parameter is ignored when board_lot_size is not 1.")
+        
+        if precision is None:
+            precision = 0
+
         if odd_lot:
-            allocation = greedy_allocation(weights, price, fund)[0]
+            if board_lot_size == 1000:
+                precision = max(3, precision)
+            elif board_lot_size == 100:
+                precision = max(2, precision)
+            elif board_lot_size == 10:
+                precision = max(1, precision)
+            elif board_lot_size == 1:
+                precision = max(0, precision)
+            else:
+                raise ValueError(
+                    "The board_lot_size parameter is out of the valid range 1, 10, 100, 1000")
+
+        multiple = 10**precision
+
+        allocation = greedy_allocation(
+            weights, price*board_lot_size, fund*multiple)[0]
+        
+        for s, q in allocation.items():
+            allocation[s] = Decimal(q) / multiple
+
+        if not odd_lot:
             for s, q in allocation.items():
-                allocation[s] = round(q) / board_lot_size
-        else:
-            allocation = greedy_allocation(
-                weights, price*board_lot_size, fund)[0]
+                allocation[s] = round(q)
 
         return cls(allocation, **kwargs)
 
@@ -199,10 +234,15 @@ class Position():
         """
 
         # next trading date arrived
-        tz = datetime.timezone(datetime.timedelta(hours=8))
-        next_trading_time = report.next_trading_date.tz_localize(tz) + datetime.timedelta(hours=16)
 
-        if datetime.datetime.now(tz) >= next_trading_time:
+        if hasattr(report.market_info, 'market_close_at_timestamp'):
+            next_trading_time = report.market_info.market_close_at_timestamp(report.next_trading_date)
+        else:
+            # tw stock only
+            tz = datetime.timezone(datetime.timedelta(hours=8))
+            next_trading_time = report.next_trading_date.tz_localize(tz) + datetime.timedelta(hours=16)
+
+        if datetime.datetime.now(tz=datetime.timezone.utc) >= next_trading_time:
             w = report.next_weights.copy()
         else:
             w = report.weights.copy()
@@ -213,17 +253,63 @@ class Position():
             w.loc[sl_tp_index] = 0
 
         w = w.groupby(w.index).last()
+        if hasattr(report.market_info, 'get_reference_price'):
+            price = report.market_info.get_reference_price()
 
-        return cls.from_weight(w, fund, **kwargs)
+            # find w.index not in price.keys()
+            for s in w.index:
+                if s.split(' ')[0] not in price:
+                    w = w.drop(s)
+                    logger.warning(f"Stock {s} is not in price data. It is dropped from the position.")
+
+        else:
+            price = report.market_info.get_price('close', adj=False).iloc[-1].to_dict()
+
+        return cls.from_weight(w, fund, price=price, **kwargs)
 
     def to_json(self, path):
+        """
+        Converts the position dictionary to a JSON file and saves it to the specified path.
+        
+        Args:
+            path (str): The path where the JSON file will be saved.
+            
+        Returns:
+            None
+        """
+        
+        # Custom JSON Encoder that handles Decimal objects
+        class DecimalEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, Decimal):
+                    return str(obj)  # Convert Decimal to string
+                # Let the base class default method raise the TypeError
+                return json.JSONEncoder.default(self, obj)
+            
         with open(path, 'w') as f:
-            json.dump(self.position, f)
+            json.dump(self.position, f, cls=DecimalEncoder)
     
     @classmethod
     def from_json(self, path):
+        """
+        Load a JSON file from the given path and convert it to a list of positions.
+        
+        Args:
+            path (str): The path to the JSON file.
+        
+        Returns:
+            None
+        """
+        
+
         with open(path, 'r') as f:
-            return Position.from_list(json.load(f))
+            ret = json.load(f)
+            for p in ret:
+                if isinstance(p['quantity'], str):
+                    p['quantity'] = Decimal(p['quantity'])
+
+        Position.from_list(ret)
+            
 
     def __add__(self, position):
         return self.for_each_trading_condition(self.position, position.position, "+")
@@ -258,30 +344,32 @@ class Position():
             #         for sobj in p2 if sobj['order_condition'] == oc}
 
             ps = self.op(qty1, qty2, operator)
-            ret += [{'stock_id': sid, 'quantity': round(
-                qty, 3), 'order_condition': oc} for sid, qty in ps.items()]
+            ret += [{'stock_id': sid, 'quantity': qty,
+                'order_condition': oc} for sid, qty in ps.items()]
 
         return Position.from_list(ret)
 
     @staticmethod
     def op(position1, position2, operator):
-        position1 = pd.Series(position1, dtype="float").astype(float)
-        position2 = pd.Series(position2, dtype="float").astype(float)
-        union_index = position1.index.union(position2.index)
-        position1 = position1.reindex(union_index)
-        position1.fillna(0, inplace=True)
-
-        position2 = position2.reindex(union_index)
-        position2.fillna(0, inplace=True)
-
-        if operator == "-":
-            ret = position1 - position2
-        elif operator == "+":
-            ret = position1 + position2
-
-        ret = ret[ret != 0]
-
-        return ret.to_dict()
+        # Create a set of unique keys from both dictionaries
+        keys = set(position1.keys()).union(position2.keys())
+        
+        # Initialize an empty result dictionary
+        result = {}
+        
+        for key in keys:
+            value1 = position1.get(key, 0)
+            value2 = position2.get(key, 0)
+            
+            if operator == "-":
+                result[key] = value1 - value2
+            elif operator == "+":
+                result[key] = value1 + value2
+        
+        # Remove entries with zero values
+        result = {k: v for k, v in result.items() if v != 0}
+        
+        return result
 
     def fall_back_cash(self):
         pos = []
@@ -354,6 +442,110 @@ class OrderExecutor():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
                 self.account.cancel_order(oid)
 
+    def generate_orders(self):
+        """
+        Generate orders based on the difference between target position and present position.
+        
+        Returns:
+        orders (dict): Orders to be executed.
+        """
+
+        target_position = Position.from_list(copy.copy(self.target_position.position))
+
+        if hasattr(self.account, 'base_currency'):
+            base_currency = self.account.base_currency
+            for pp in target_position.position:
+                if pp['stock_id'][-len(base_currency):] == base_currency:
+                    pp['stock_id'] = pp['stock_id'][:len(base_currency)]
+                else:
+                    raise ValueError(f"Stock ID {pp['stock_id']} does not end with {base_currency}")
+
+        present_position = self.account.get_position()
+        orders = (target_position - present_position).position
+        return orders
+    
+    def execute_orders(self, orders, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
+
+        if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
+            raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
+        if extra_bid_pct < 0 or extra_bid_pct > 0.1:
+            raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
+
+        self.cancel_orders()
+        stocks = self.account.get_stocks(list({o['stock_id'] for o in orders}))
+
+        # make orders
+        for o in orders:
+
+            if o['quantity'] == 0:
+                continue
+
+            if o['stock_id'] not in stocks:
+                logging.warning(o['stock_id'] + 'not in stocks... skipped!')
+                continue
+
+            stock = stocks[o['stock_id']]
+            action = Action.BUY if o['quantity'] > 0 else Action.SELL
+            price = stock.close if isinstance(stock.close, numbers.Number) else (
+                    stock.bid_price if action == Action.BUY else stock.ask_price
+                    )
+
+            if isinstance(price, Decimal):
+                price = format(price, 'f')
+
+            if best_price_limit:
+                price_string = 'LOWEST' if action == Action.BUY else 'HIGHEST'
+            elif market_order:
+                price_string = 'HIGHEST' if action == Action.BUY else 'LOWEST'
+            else:
+                price_string = str(price)
+
+            extra_bid_text = ''
+            if extra_bid_pct > 0:
+                extra_bid_text = f'with extra bid {extra_bid_pct*100}%'
+
+            logger.warning('%-11s %-6s X %-10s @ %-11s %s %s', action, o['stock_id'], abs(o['quantity']), price_string, extra_bid_text, o['order_condition'])
+
+            quantity = abs(o['quantity'])
+            board_lot_quantity = int(abs(quantity // 1))
+            odd_lot_quantity = int(abs(round(1000 * (quantity % 1))))
+
+            if view_only:
+                continue
+
+            if self.account.sep_odd_lot_order():
+                if odd_lot_quantity != 0:
+                    self.account.create_order(action=action,
+                                              stock_id=o['stock_id'],
+                                              quantity=odd_lot_quantity,
+                                              price=price, market_order=market_order,
+                                              order_cond=o['order_condition'],
+                                              odd_lot=True,
+                                              best_price_limit=best_price_limit,
+                                              extra_bid_pct=extra_bid_pct)
+
+                if board_lot_quantity != 0:
+                    self.account.create_order(action=action,
+                                              stock_id=o['stock_id'],
+                                              quantity=board_lot_quantity,
+                                              price=price, market_order=market_order,
+                                              order_cond=o['order_condition'],
+                                              best_price_limit=best_price_limit,
+                                              extra_bid_pct=extra_bid_pct)
+            else:
+                self.account.create_order(action=action,
+                                          stock_id=o['stock_id'],
+                                          quantity=quantity,
+                                          price=price, market_order=market_order,
+                                          order_cond=o['order_condition'],
+                                          best_price_limit=best_price_limit,
+                                          extra_bid_pct=extra_bid_pct)
+                
+        return orders
+
+
+
+
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
         """產生委託單，將部位同步成 self.target_position
         預設以該商品最後一筆成交價設定為限價來下單
@@ -364,6 +556,10 @@ class OrderExecutor():
             view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
             extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.1 時，將以超出(低於)現價之10%價格下單，以漲停(跌停)價為限。參數有效範圍為 0 到 0.1 內
         """
+
+        orders = self.generate_orders()
+        return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct)
+    
         if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
             raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
         if extra_bid_pct < 0 or extra_bid_pct > 0.1:

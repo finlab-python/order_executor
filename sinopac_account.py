@@ -5,11 +5,11 @@ import os
 import re
 import math
 import logging
+from decimal import Decimal
 
-from finlab.online.base_account import Account, Stock, Order, Position
+from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
-from finlab.online.order_executor import calculate_price_with_extra_bid
-from finlab import data
+from finlab.online.order_executor import calculate_price_with_extra_bid, Position
 
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
 
@@ -168,7 +168,7 @@ class SinopacAccount(Account):
         }
         return Position.from_list([{
             'stock_id': p.code,
-            'quantity': p.quantity/1000 if p.direction == 'Buy' else -p.quantity/1000,
+            'quantity': Decimal(p.quantity)/1000 if p.direction == 'Buy' else -Decimal(p.quantity)/1000,
             'order_condition': order_conditions[p.cond]
         } for p in position])
 
@@ -204,7 +204,11 @@ class SinopacAccount(Account):
                 [i['quantity'] * stocks[i['stock_id']].close * 1000 for i in position.position])
         else:
             account_balance = 0
-        return bank_balance + settlements + account_balance
+        return bank_balance + settlements + account_balance    
+
+
+    def sep_odd_lot_order(self):
+        return True
 
 
 def trade_to_order(trade):
@@ -235,8 +239,8 @@ def trade_to_order(trade):
 
     # calculate quantity
     # calculate filled quantity
-    quantity = trade.order.quantity
-    filled_quantity = trade.status.deal_quantity
+    quantity = Decimal(trade.order.quantity)
+    filled_quantity = Decimal(trade.status.deal_quantity)
 
     if trade.order.order_lot == 'IntradayOdd':
         quantity /= 1000
@@ -265,3 +269,4 @@ def snapshot_to_stock(snapshot):
     d = snapshot
     return Stock(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
                bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
+

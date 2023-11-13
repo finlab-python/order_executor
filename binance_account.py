@@ -1,17 +1,41 @@
 from binance import client
-from binance.helpers import round_step_size
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET
 
-from finlab.online.base_account import OrderCondition, Account, Action, Order, Stock, OrderStatus, Position
+from finlab.online.base_account import OrderCondition, Account, Action, Order, Stock, OrderStatus
+from finlab.online.order_executor import Position
 import os
 import os
 import sys
 import time
+import math
 import logging
 import datetime
 import traceback
 import pandas as pd
 import cachetools.func
+from typing import Union
+from decimal import Decimal
+
+
+
+def round_step_size(quantity: Union[float, Decimal], step_size: Union[float, Decimal], round_up: bool = False) -> Decimal:
+    """Rounds a given quantity to a specific step size, either rounding up or down.
+
+    :param quantity: required
+    :param step_size: required
+    :param round_up: If True, round up; if False, round down.
+
+    :return: decimal
+    """
+    quantity = Decimal(str(quantity))
+    step_size = Decimal(str(step_size))
+
+    if round_up:
+        rounded_quantity = math.ceil(quantity / step_size) * step_size
+    else:
+        rounded_quantity = math.floor(quantity / step_size) * step_size
+
+    return rounded_quantity.normalize()
 
 def retry(f, n_retry, *args, **argvs):
   for i in range(1, n_retry + 1):
@@ -62,22 +86,22 @@ class BinanceHelper(object):
   @staticmethod
   @cachetools.func.ttl_cache(ttl=60)
   def get_spot_asset_price(client):
-    all_tickers = retry(client.get_all_tickers, 3)
-    all_ticker_price = {d['symbol']: float(d['price']) for d in all_tickers}
-    return all_ticker_price
+      all_tickers = retry(client.get_all_tickers, 3)
+      all_ticker_price = {d['symbol']: Decimal(d['price']) for d in all_tickers}
+      return all_ticker_price
   
   @staticmethod
   @cachetools.func.ttl_cache(ttl=60)
   def get_futures_asset_price(client):
     all_tickers = retry(client.futures_mark_price, 3)
-    all_ticker_price = {m['symbol']: float(m['markPrice']) for m in all_tickers}
+    all_ticker_price = {m['symbol']: Decimal(m['markPrice']) for m in all_tickers}
     return all_ticker_price
   
   @staticmethod
   def get_spot_position(client):
     # spot balance
     account = retry(client.get_account, 3)['balances']
-    spot_balance = {obj['asset']:float(obj['free']) + float(obj['locked']) for obj in account if float(obj['free']) != 0}
+    spot_balance = {obj['asset']:Decimal(obj['free']) + Decimal(obj['locked']) for obj in account if Decimal(obj['free']) != 0}
     return {k:v for k, v in spot_balance.items()}
   
   @staticmethod
@@ -112,21 +136,21 @@ class BinanceSimpleClient():
       'SPOT': pd.DataFrame(exchange_info['symbols']).set_index('symbol'),
     }
 
-  def round_price(self, symbol, price, market_type):
+  def round_price(self, symbol, price, round_up=False, market_type='SPOT'):
     info = self.market_info[market_type]
-    ticksize = float(self.list_select(info.loc[symbol].filters, 'filterType', 'PRICE_FILTER')['tickSize'])
+    ticksize = Decimal(self.list_select(info.loc[symbol].filters, 'filterType', 'PRICE_FILTER')['tickSize'])
     #return round(int(price / ticksize) * ticksize, 9)
-    return round_step_size(price, ticksize)
+    return round_step_size(price, ticksize, round_up=round_up)
 
-  def round_quantity(self, symbol, quantity, market_type):
+  def round_quantity(self, symbol, quantity, round_up=False, market_type='SPOT'):
 
     info = self.market_info[market_type]
     symbol_info = self.list_select(info.loc[symbol].filters, 'filterType', 'LOT_SIZE')
-    step_size = float(symbol_info['stepSize'])
-    min_qty = float(symbol_info['minQty'])
+    step_size = Decimal(symbol_info['stepSize'])
+    min_qty = Decimal(symbol_info['minQty'])
     
     sign = (quantity < 0) * -2 + 1
-    ret = sign * round_step_size(abs(quantity), step_size)
+    ret = sign * round_step_size(abs(quantity), step_size, round_up=round_up)
     # ret = round(sign * (int((quantity-min_qty) / step_size) * step_size + min_qty), 9)
     
     if abs(ret) < min_qty:
@@ -145,7 +169,7 @@ class BinanceSimpleClient():
   def pass_min_notional(self, symbol, quantity, market_type, price=None):
     info = self.market_info[market_type]
     notional = self.list_select(info.loc[symbol].filters, 'filterType', 'NOTIONAL')
-    min_notional = float(notional.get('minNotional', notional.get('notional', 0)))
+    min_notional = Decimal(notional.get('minNotional', notional.get('notional', 0)))
     
     present_price = price
     if present_price is None:
@@ -173,33 +197,32 @@ class BinanceSimpleClient():
     order_type = ORDER_TYPE_STOP if stop_price is not None else \
         ORDER_TYPE_LIMIT if price is not None else ORDER_TYPE_MARKET
 
-
+    
     if price is not None:
-      price = self.round_price(symbol, price, market_type=market_type)
+      price = self.round_price(symbol, price, round_up=False, market_type=market_type)
 
     if stop_price is not None:
-      stop_price = self.round_price(symbol, stop_price, market_type=market_type)
+      stop_price = self.round_price(symbol, stop_price, round_up=False, market_type=market_type)
 
     # recalculate amount according to step size
-    quantity = self.round_quantity(symbol, quantity, market_type=market_type)
-    icebergQty = self.round_quantity(symbol, quantity/9.7, market_type=market_type)
-
+    quantity = self.round_quantity(symbol, quantity, round_up=False, market_type=market_type)
+    icebergQty = self.round_quantity(symbol, quantity/Decimal('9.5'), round_up=False, market_type=market_type)
 
     # check min invest value (notional)
     
     pass_notional = self.pass_min_notional(symbol, quantity, market_type=market_type, price=price)
 
     use_iceberg = (abs(quantity) * abs(price) > 1000) & (abs(icebergQty)*10 > abs(quantity))
-
+    
     params = {
       'side':side,
       'type':order_type,
       'symbol':symbol,
-      'quantity':abs(quantity),
+      'quantity': format(abs(quantity), 'f') if isinstance(quantity, Decimal) else abs(quantity),
     }
     
     if use_iceberg and market_type == 'SPOT' and icebergQty != 0:
-      params['icebergQty'] = abs(icebergQty)
+      params['icebergQty'] = format(abs(icebergQty), 'f') if isinstance(icebergQty, Decimal) else abs(icebergQty),
 
     if market_type == 'FUTURES' and side == SIDE_BUY:
       params['reduceOnly'] = 'true'
@@ -282,7 +305,7 @@ class BinanceAccount(Account):
         stock_id, order_id = order_id.split('|')
 
         if isinstance(price, int):
-            price = float(price) 
+            price = Decimal(price)
 
         order = self.simple_client.client.get_order(symbol=stock_id, orderId=order_id)
         self.simple_client.client.cancel_order(symbol=stock_id, orderId=order_id)
@@ -340,10 +363,10 @@ class BinanceAccount(Account):
 
         for t in tickers:
             asset = t['symbol'].replace(self.base_currency, '')
-            ret[asset] = Stock(stock_id=asset, open=float(t['openPrice']), 
-                                     high=float(t['highPrice']), low=float(t['lowPrice']), 
-                close=float(t['lastPrice']), bid_price=float(t['bidPrice']), bid_volume=float(t['bidQty']), 
-                ask_price=float(t['askPrice']), ask_volume=float(t['askQty']))
+            ret[asset] = Stock(stock_id=asset, open=Decimal(t['openPrice']), 
+                               high=Decimal(t['highPrice']), low=Decimal(t['lowPrice']), 
+                close=Decimal(t['lastPrice']), bid_price=Decimal(t['bidPrice']), bid_volume=Decimal(t['bidQty']), 
+                ask_price=Decimal(t['askPrice']), ask_volume=Decimal(t['askQty']))
             
         return ret
 
@@ -362,4 +385,7 @@ class BinanceAccount(Account):
 
     def on_trades(self, func):
         pass
+    
+    def sep_odd_lot_order(self):
+        return False
       

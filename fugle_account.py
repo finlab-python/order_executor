@@ -4,12 +4,13 @@ from fugle_trade.order import OrderObject
 from fugle_trade.constant import Action as fugleAction
 from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
 
-from finlab.online.base_account import Account, Stock, Order, Position
+from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
-from finlab.online.order_executor import calculate_price_with_extra_bid
+from finlab.online.order_executor import calculate_price_with_extra_bid, Position
 from finlab import data
 
 from threading import Thread
+from decimal import Decimal
 import numpy as np
 import requests
 import datetime
@@ -223,7 +224,7 @@ class FugleAccount(Account):
 
             # removed: position of stk_dats is not completed
             # total_qty = sum([int(d['qty']) for d in i['stk_dats']]) / 1000
-            total_qty = (int(i['qty_l']) +
+            total_qty = Decimal(int(i['qty_l']) +
                          int(i['qty_bm']) - int(i['qty_sm'])) / 1000
 
             o = order_condition[i['trade']]
@@ -280,6 +281,8 @@ class FugleAccount(Account):
                 func(o)
         self.threading = Thread(target=lambda: self.sdk.connect_websocket())
 
+    def sep_odd_lot_order(self):
+        return True
 
 
 def create_finlab_order(order):
