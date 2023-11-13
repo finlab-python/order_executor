@@ -89,7 +89,7 @@ class Stock():
 def fetch_price_data(timestamp=None):
 
     def replace_comma(arr):
-        return [a.replace(', ', '') for a in arr]
+        return [a.replace(',', '') for a in arr]
 
     def fetch_twe_data():
         res = requests.get('https://www.twse.com.tw/rwd/zh/variation/TWT84U?response=json')
