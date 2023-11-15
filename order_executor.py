@@ -308,7 +308,7 @@ class Position():
                 if isinstance(p['quantity'], str):
                     p['quantity'] = Decimal(p['quantity'])
 
-        Position.from_list(ret)
+        return Position.from_list(ret)
             
 
     def __add__(self, position):
