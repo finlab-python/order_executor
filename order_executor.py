@@ -360,6 +360,12 @@ class Position():
         for key in keys:
             value1 = position1.get(key, 0)
             value2 = position2.get(key, 0)
+
+            # convert to float if value1 or value2 is float or int
+            if (isinstance(value1, (float, int)) and value1 != 0)\
+                  or (isinstance(value2, (float, int)) and value2 != 0):
+                value1 = float(value1)
+                value2 = float(value2)
             
             if operator == "-":
                 result[key] = value1 - value2
@@ -456,7 +462,7 @@ class OrderExecutor():
             base_currency = self.account.base_currency
             for pp in target_position.position:
                 if pp['stock_id'][-len(base_currency):] == base_currency:
-                    pp['stock_id'] = pp['stock_id'][:len(base_currency)]
+                    pp['stock_id'] = pp['stock_id'][:-len(base_currency)]
                 else:
                     raise ValueError(f"Stock ID {pp['stock_id']} does not end with {base_currency}")
 
