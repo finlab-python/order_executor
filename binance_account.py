@@ -343,7 +343,7 @@ class BinanceAccount(Account):
             if o['status'] == 'CANCELED':
                 status = OrderStatus.CANCEL
 
-            ret[o['orderId']] = Order(order_id=o['orderId'], action=o['side'], price=o['price'], 
+            ret[o['stock_id']+'|'+o['orderId']] = Order(order_id=o['orderId'], action=o['side'], price=o['price'], 
                 quantity=o['origQty'], filled_quantity=o['executedQty'], status=status, 
                 time=datetime.datetime.fromtimestamp(int(o['transactTime'])), 
                 stock_id=o['symbol'], order_condition=OrderCondition.CASH, org_order=o)
