@@ -57,7 +57,7 @@ class FugleAccount(Account):
         self.trades = {}
         self.thread = None
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH, extra_bid_pct=0):
+    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
 
         if quantity <= 0:
             raise ValueError("quantity should be larger than zero")
@@ -79,12 +79,7 @@ class FugleAccount(Account):
                 price_flag = PriceFlag.LimitDown
             elif action == Action.SELL:
                 price_flag = PriceFlag.LimitUp
-        elif extra_bid_pct > 0:
-            last_close = data.get('price:收盤價').ffill().iloc[-1][stock_id]
-            up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, action)
-            price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
-            if (action == Action.BUY and price > up_down_limit) or (action == Action.SELL and price < up_down_limit):
-                price = up_down_limit
+
 
         order_cond = {
             OrderCondition.CASH: Trade.Cash,
@@ -291,7 +286,9 @@ def create_finlab_order(order):
     status = OrderStatus.NEW
     if order['org_qty'] == order['mat_qty']:
         status = OrderStatus.FILLED
-    elif order['org_qty'] > order['mat_qty'] and order['celable'] == '1' and order['mat_qty'] > 0:
+    elif order['mat_qty'] == 0 and order['celable'] == '1':
+        status = OrderStatus.NEW
+    elif order['org_qty'] > order['mat_qty'] + order['cel_qty'] and order['celable'] == '1' and order['mat_qty'] > 0:
         status = OrderStatus.PARTIALLY_FILLED
     elif order['cel_qty'] > 0 or order['err_code'] != '00000000' or order['celable'] == '2':
         status = OrderStatus.CANCEL

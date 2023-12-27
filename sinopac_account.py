@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
-from finlab.online.order_executor import calculate_price_with_extra_bid, Position
+from finlab.online.order_executor import Position
 
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
 
@@ -45,7 +45,7 @@ class SinopacAccount(Account):
             person_id=certificate_person_id,
         )
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH, extra_bid_pct=0):
+    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
 
         # contract = self.api.Contracts.Stocks.get(stock_id)
         contract = sj.contracts.Contract(security_type='STK', code=stock_id, exchange='TSE')
@@ -66,28 +66,16 @@ class SinopacAccount(Account):
         price_type = sj.constant.StockPriceType.LMT
 
         if market_order:
-            if odd_lot:
-                up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, action)
-                price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
-                if (action == Action.BUY and price > up_down_limit) or (action == Action.SELL and price < up_down_limit):
-                    price = up_down_limit
-            else: 
-                if action == Action.BUY:
-                    price = limitup
-                elif action == Action.SELL:
-                    price = limitdn
+            if action == Action.BUY:
+                price = limitup
+            elif action == Action.SELL:
+                price = limitdn
 
         elif best_price_limit:
             if action == Action.BUY:
                 price = limitdn
             elif action == Action.SELL:
                 price = limitup
-
-        elif extra_bid_pct > 0:
-            up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, action)
-            price = calculate_price_with_extra_bid(price, extra_bid_pct, action)
-            if (action == Action.BUY and price > up_down_limit) or (action == Action.SELL and price < up_down_limit):
-                price = up_down_limit
 
         if action == Action.BUY:
             action = 'Buy'
@@ -201,7 +189,7 @@ class SinopacAccount(Account):
         if position.position:
             stocks = self.get_stocks([i['stock_id'] for i in position.position])
             account_balance = sum(
-                [i['quantity'] * stocks[i['stock_id']].close * 1000 for i in position.position])
+                [float(i['quantity']) * stocks[i['stock_id']].close * 1000 for i in position.position])
         else:
             account_balance = 0
         return bank_balance + settlements + account_balance    

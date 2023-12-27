@@ -109,20 +109,27 @@ class Position():
 
         """
         ret = cls({})
-        ret.position = position
+        ret.position = ret._format_quantity(position)
         return ret
+    
+    def to_list(self):
+        ret = []
 
+        for p in self.position:
+            pp = p.copy()
+            if isinstance(pp['quantity'], Decimal):
+                pp['quantity'] = str(pp['quantity'])
+            ret.append(pp)
+
+        return ret
 
     @classmethod
     def from_dict(cls, position):
 
         logger.warning('This method is renamed and will be deprecated.'
-             ' Please replace `Position.from_dict()` to `Position.from_list().`',
-             DeprecationWarning, stacklevel=2)
+             ' Please replace `Position.from_dict()` to `Position.from_list().`')
 
-        ret = cls({})
-        ret.position = position
-        return ret
+        return cls.from_list(position)
 
     @classmethod
     def from_weight(cls, weights, fund, price=None, odd_lot=False, board_lot_size=1000, allocation=greedy_allocation, precision=None, **kwargs):
@@ -165,7 +172,7 @@ class Position():
             raise ValueError("The precision parameter is out of the valid range >= 0")
 
         if price is None:
-            price = data.get('price:收盤價').ffill().iloc[-1]
+            price = data.get('reference_price').set_index('stock_id')['收盤價'].to_dict()
 
         if isinstance(price, dict):
             price = pd.Series(price)
@@ -266,6 +273,7 @@ class Position():
             price = report.market_info.get_price('close', adj=False).iloc[-1].to_dict()
 
         return cls.from_weight(w, fund, price=price, **kwargs)
+    
 
     def to_json(self, path):
         """
@@ -288,6 +296,19 @@ class Position():
             
         with open(path, 'w') as f:
             json.dump(self.position, f, cls=DecimalEncoder)
+
+
+    @staticmethod
+    def _format_quantity(position):
+
+        ret = []
+        for p in position:
+            pp = p.copy()
+            if isinstance(pp['quantity'], str):
+                pp['quantity'] = Decimal(pp['quantity'])
+            ret.append(pp)
+        return ret
+            
     
     @classmethod
     def from_json(self, path):
@@ -301,14 +322,12 @@ class Position():
             None
         """
         
-
         with open(path, 'r') as f:
             ret = json.load(f)
-            for p in ret:
-                if isinstance(p['quantity'], str):
-                    p['quantity'] = Decimal(p['quantity'])
+            ret = self._format_quantity(ret)
 
         return Position.from_list(ret)
+
             
 
     def __add__(self, position):
@@ -471,14 +490,29 @@ class OrderExecutor():
         return orders
     
     def execute_orders(self, orders, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
+        """產生委託單，將部位同步成 self.target_position
+        預設以該商品最後一筆成交價設定為限價來下單
+        
+        Attributes:
+            orders (list): 欲下單的部位，通常是由 `self.generate_orders` 產生。
+            market_order (bool): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
+            best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
+            view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
+            extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想；
+                假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
+        """
 
         if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
             raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
-        if extra_bid_pct < 0 or extra_bid_pct > 0.1:
+        if extra_bid_pct < -0.1 or extra_bid_pct > 0.1:
             raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
 
         self.cancel_orders()
         stocks = self.account.get_stocks(list({o['stock_id'] for o in orders}))
+
+        pinfo = None
+        if hasattr(self.account, 'get_price_info'):
+            pinfo = self.account.get_price_info()
 
         # make orders
         for o in orders:
@@ -495,6 +529,17 @@ class OrderExecutor():
             price = stock.close if isinstance(stock.close, numbers.Number) else (
                     stock.bid_price if action == Action.BUY else stock.ask_price
                     )
+
+            if extra_bid_pct != 0:
+                price = calculate_price_with_extra_bid(price, extra_bid_pct if action == Action.BUY else -extra_bid_pct)
+
+            if pinfo and o['stock_id'] in pinfo:
+                limitup = float(pinfo[o['stock_id']]['漲停價'])
+                limitdn = float(pinfo[o['stock_id']]['跌停價'])
+                price = max(price, limitdn)
+                price = min(price, limitup)
+            else:
+                logger.warning('No price info for stock %s', o['stock_id'])
 
             if isinstance(price, Decimal):
                 price = format(price, 'f')
@@ -528,7 +573,7 @@ class OrderExecutor():
                                               order_cond=o['order_condition'],
                                               odd_lot=True,
                                               best_price_limit=best_price_limit,
-                                              extra_bid_pct=extra_bid_pct)
+                                              )
 
                 if board_lot_quantity != 0:
                     self.account.create_order(action=action,
@@ -537,7 +582,7 @@ class OrderExecutor():
                                               price=price, market_order=market_order,
                                               order_cond=o['order_condition'],
                                               best_price_limit=best_price_limit,
-                                              extra_bid_pct=extra_bid_pct)
+                                              )
             else:
                 self.account.create_order(action=action,
                                           stock_id=o['stock_id'],
@@ -545,7 +590,7 @@ class OrderExecutor():
                                           price=price, market_order=market_order,
                                           order_cond=o['order_condition'],
                                           best_price_limit=best_price_limit,
-                                          extra_bid_pct=extra_bid_pct)
+                                          )
                 
         return orders
 
@@ -560,7 +605,8 @@ class OrderExecutor():
             market_order (bool): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
             best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
             view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
-            extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.1 時，將以超出(低於)現價之10%價格下單，以漲停(跌停)價為限。參數有效範圍為 0 到 0.1 內
+            extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想；
+                假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
         """
 
         orders = self.generate_orders()
@@ -646,28 +692,41 @@ class OrderExecutor():
         Attributes:
             extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.1 時，將以超出(低於)現價之10%價格下單，以漲停(跌停)價為限。參數有效範圍為 0 到 0.1 內
             """
-        if extra_bid_pct < 0 or extra_bid_pct > 0.1:
+        if extra_bid_pct < -0.1 or extra_bid_pct > 0.1:
             raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
         orders = self.account.get_orders()
         sids = set([o.stock_id for i, o in orders.items()])
         stocks = self.account.get_stocks(sids)
+
+        pinfo = None
+        if hasattr(self.account, 'get_price_info'):
+            pinfo = self.account.get_price_info()
 
         for i, o in orders.items():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
 
                 price = stocks[o.stock_id].close
                 if extra_bid_pct > 0:
-                    last_close = data.get('price:收盤價').ffill().iloc[-1][o.stock_id]
-                    up_down_limit = calculate_price_with_extra_bid(last_close, 0.1, o.action)
-                    price = calculate_price_with_extra_bid(price, extra_bid_pct, o.action)
-                    if (o.action == Action.BUY and price > up_down_limit) or (o.action == Action.SELL and price < up_down_limit):
-                        price = up_down_limit
+
+                    price = calculate_price_with_extra_bid(price, extra_bid_pct if o.action == Action.BUY else -extra_bid_pct)
+
+                if pinfo and o.stock_id in pinfo:
+                    up_limit = float(pinfo[o.stock_id]['漲停價'])
+                    dn_limit = float(pinfo[o.stock_id]['跌停價'])
+                    price = max(price, dn_limit)
+                    price = min(price, up_limit)
+                else:
+                    logger.warning('No price info for stock %s', o.stock_id)
 
                 self.account.update_order(i, price=price)
                 
 
-def calculate_price_with_extra_bid(price, extra_bid_pct, action):
-    if action == Action.BUY:
+def calculate_price_with_extra_bid(price, extra_bid_pct):
+
+    if extra_bid_pct == 0:
+        return price
+
+    if extra_bid_pct > 0:
         result = price * (1 + extra_bid_pct)
         if result <= 10:
             result = math.floor(round(result, 3) * 100) / 100
@@ -681,8 +740,8 @@ def calculate_price_with_extra_bid(price, extra_bid_pct, action):
             result = math.floor(result)
         else:
             result = math.floor(result / 5) * 5
-    elif action == Action.SELL:
-        result = price * (1 - extra_bid_pct)
+    else:
+        result = price * (1 + extra_bid_pct)
         if result <= 10:
             result = math.ceil(round(result, 3) * 100) / 100
         elif result <= 50:
@@ -695,4 +754,5 @@ def calculate_price_with_extra_bid(price, extra_bid_pct, action):
             result = math.ceil(result)
         else:
             result = math.ceil(result / 5) * 5
+
     return result
