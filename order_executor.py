@@ -260,19 +260,24 @@ class Position():
             w.loc[sl_tp_index] = 0
 
         w = w.groupby(w.index).last()
-        if hasattr(report.market_info, 'get_reference_price'):
-            price = report.market_info.get_reference_price()
 
-            # find w.index not in price.keys()
-            for s in w.index:
-                if s.split(' ')[0] not in price:
-                    w = w.drop(s)
-                    logger.warning(f"Stock {s} is not in price data. It is dropped from the position.")
+        if 'price' not in kwargs:
+            if hasattr(report.market_info, 'get_reference_price'):
+                price = report.market_info.get_reference_price()
 
-        else:
-            price = report.market_info.get_price('close', adj=False).iloc[-1].to_dict()
+            else:
+                price = report.market_info.get_price('close', adj=False).iloc[-1].to_dict()
 
-        return cls.from_weight(w, fund, price=price, **kwargs)
+            kwargs['price'] = price
+
+        
+        # find w.index not in price.keys()
+        for s in w.index:
+            if s.split(' ')[0] not in kwargs['price']:
+                w = w.drop(s)
+                logger.warning(f"Stock {s} is not in price data. It is dropped from the position.")
+
+        return cls.from_weight(w, fund, **kwargs)
     
 
     def to_json(self, path):
