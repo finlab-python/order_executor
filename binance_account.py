@@ -212,7 +212,9 @@ class BinanceSimpleClient():
     
     pass_notional = self.pass_min_notional(symbol, quantity, market_type=market_type, price=price)
 
-    use_iceberg = (abs(quantity) * abs(price) > 1000) & (abs(icebergQty)*10 > abs(quantity))
+    min_notional_iceberg = 0.05 if symbol[-3:] == 'BTC' else 1000 if symbol[-4:] == 'USDT' else 1000
+
+    use_iceberg = (abs(quantity) * abs(price) > min_notional_iceberg) & (abs(icebergQty)*10 > abs(quantity))
     
     params = {
       'side':side,
@@ -222,7 +224,7 @@ class BinanceSimpleClient():
     }
     
     if use_iceberg and market_type == 'SPOT' and icebergQty != 0:
-      params['icebergQty'] = format(abs(icebergQty), 'f') if isinstance(icebergQty, Decimal) else abs(icebergQty),
+      params['icebergQty'] = format(abs(icebergQty), 'f') if isinstance(icebergQty, Decimal) else abs(icebergQty)
 
     if market_type == 'FUTURES' and side == SIDE_BUY:
       params['reduceOnly'] = 'true'
@@ -343,9 +345,9 @@ class BinanceAccount(Account):
             if o['status'] == 'CANCELED':
                 status = OrderStatus.CANCEL
 
-            ret[o['stock_id']+'|'+o['orderId']] = Order(order_id=o['orderId'], action=o['side'], price=o['price'], 
+            ret[str(o['symbol'])+'|'+str(o['orderId'])] = Order(order_id=o['orderId'], action=o['side'], price=o['price'], 
                 quantity=o['origQty'], filled_quantity=o['executedQty'], status=status, 
-                time=datetime.datetime.fromtimestamp(int(o['transactTime'])), 
+                time=datetime.datetime.fromtimestamp(int(o['time'])/1000), 
                 stock_id=o['symbol'], order_condition=OrderCondition.CASH, org_order=o)
         return ret
 
