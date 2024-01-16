@@ -84,29 +84,6 @@ class Stock():
         return {a: getattr(self, a) for a in Stock.attrs}
 
 
-@lru_cache(maxsize=1)
-def fetch_price_data(timestamp=None):
-
-    def replace_comma(arr):
-        return [a.replace(',', '') for a in arr]
-
-    def fetch_twe_data():
-        res = requests.get('https://www.twse.com.tw/rwd/zh/variation/TWT84U?response=json')
-        d = res.json()
-        return {s[0]: dict(zip(d['fields'], replace_comma(s))) for s in d['data']}
-
-    def fetch_otc_data():
-        res = requests.get('https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw')
-        return {a[0]: dict(zip(['收盤價', '漲停價', '跌停價'], replace_comma(a[-3:]))) for a in res.json()['aaData']}
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        twe_future = executor.submit(fetch_twe_data)
-        otc_future = executor.submit(fetch_otc_data)
-        twe_data = twe_future.result()
-        otc_data = otc_future.result()
-    return {**twe_data, **otc_data}
-
-
 class Account(ABC):
     """股票帳戶的 abstract class
     可以繼承此 Account，來實做券商的帳戶買賣動作，目前已經實做 SinopacAccount (永豐證券) 以及 FugleAccount (玉山富果)，來進行交易。可以用以下方式建構物件並用來交易：
@@ -162,10 +139,6 @@ class Account(ABC):
         if present_version > v:
             logger.warning(
                 f'Current {m}=={present_version} may not be compatable. You could using the following command to install the compatable version: pip install {m}=={v}')
-
-
-    def get_price_info(self):
-        return fetch_price_data(int(time.time() // 3600))
         
 
     @abstractmethod

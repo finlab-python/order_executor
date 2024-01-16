@@ -10,6 +10,7 @@ from decimal import Decimal
 from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
 from finlab.online.order_executor import Position
+from finlab import data
 
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
 
@@ -116,6 +117,10 @@ class SinopacAccount(Account):
 
         self.trades[trade.status.id] = trade
         return trade.status.id
+    
+    def get_price_info(self):
+        ref = data.get('reference_price')
+        return ref.set_index('stock_id').to_dict(orient='index')
 
     def update_trades(self):
         self.api.update_status(self.api.stock_account)
@@ -197,7 +202,6 @@ class SinopacAccount(Account):
 
     def sep_odd_lot_order(self):
         return True
-
 
 def trade_to_order(trade):
     """將 shioaji package 的委託單轉換成 finlab 格式"""

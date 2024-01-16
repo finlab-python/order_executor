@@ -4,7 +4,7 @@ from fugle_trade.order import OrderObject
 from fugle_trade.constant import Action as fugleAction
 from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
 
-from finlab.online.base_account import Account, Stock, Order
+from finlab.online.base_account import Account, Stock, Order, fetch_price_data
 from finlab.online.enums import *
 from finlab.online.order_executor import calculate_price_with_extra_bid, Position
 from finlab import data
@@ -278,6 +278,9 @@ class FugleAccount(Account):
 
     def sep_odd_lot_order(self):
         return True
+
+    def get_price_info(self):
+        return fetch_price_data(int(time.time() // 3600))
 
 
 def create_finlab_order(order):
