@@ -4,7 +4,7 @@ from fugle_trade.order import OrderObject
 from fugle_trade.constant import Action as fugleAction
 from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
 
-from finlab.online.base_account import Account, Stock, Order, fetch_price_data
+from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
 from finlab.online.order_executor import calculate_price_with_extra_bid, Position
 from finlab import data
@@ -280,7 +280,8 @@ class FugleAccount(Account):
         return True
 
     def get_price_info(self):
-        return fetch_price_data(int(time.time() // 3600))
+        ref = data.get('reference_price')
+        return ref.set_index('stock_id').to_dict(orient='index')
 
 
 def create_finlab_order(order):
