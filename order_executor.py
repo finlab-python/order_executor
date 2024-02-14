@@ -249,16 +249,33 @@ class Position():
             tz = datetime.timezone(datetime.timedelta(hours=8))
             next_trading_time = report.next_trading_date.tz_localize(tz) + datetime.timedelta(hours=16)
 
-        if datetime.datetime.now(tz=datetime.timezone.utc) >= next_trading_time:
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+
+        if now >= next_trading_time:
             w = report.next_weights.copy()
         else:
             w = report.weights.copy()
-        check_sl_tp = report.actions.isin(['sl_', 'tp_','sl', 'tp'])
 
-        if sum(check_sl_tp):
-            sl_tp_index = report.actions[check_sl_tp].index.intersection(w.index)
-            w.loc[sl_tp_index] = 0
+        ###################################
+        # handle stoploss and takeprofit
+        ###################################
 
+        is_sl_tp = report.actions.isin(['sl_', 'tp_','sl', 'tp'])
+
+        if sum(is_sl_tp):
+            exit_stocks = report.actions[is_sl_tp].index.intersection(w.index)
+            w.loc[exit_stocks] = 0
+
+        ######################################################
+        # handle exit now and enter in next trading date
+        ######################################################
+
+        is_exit_enter = report.actions.isin(['sl_enter', 'tp_enter'])
+        if sum(is_exit_enter) and now < next_trading_time:
+            exit_stocks = report.actions[is_exit_enter].index.intersection(w.index)
+            w.loc[exit_stocks] = 0
+
+        # todo: check if w.index is unique and remove this line if possible
         w = w.groupby(w.index).last()
 
         if 'price' not in kwargs:
