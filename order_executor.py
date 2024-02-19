@@ -276,7 +276,7 @@ class Position():
             w.loc[exit_stocks] = 0
 
         # todo: check if w.index is unique and remove this line if possible
-        w = w.groupby(w.index).last()
+        w = w.groupby(w.index.tolist()).last()
 
         if 'price' not in kwargs:
             if hasattr(report.market_info, 'get_reference_price'):
@@ -289,7 +289,8 @@ class Position():
 
         
         # find w.index not in price.keys()
-        for s in w.index:
+        # import pdb; pdb.set_trace()
+        for s in w.index.tolist():
             if s.split(' ')[0] not in kwargs['price']:
                 w = w.drop(s)
                 logger.warning(f"Stock {s} is not in price data. It is dropped from the position.")
