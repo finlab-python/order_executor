@@ -287,6 +287,8 @@ class Position():
 
             kwargs['price'] = price
 
+        if hasattr(report.market_info, 'get_board_lot_size'):
+            kwargs['board_lot_size'] = report.market_info.get_board_lot_size()
         
         # find w.index not in price.keys()
         # import pdb; pdb.set_trace()

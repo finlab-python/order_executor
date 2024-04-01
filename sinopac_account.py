@@ -182,12 +182,10 @@ class SinopacAccount(Account):
 
     def get_total_balance(self):
         # get bank balance
-        bank_balance = self.api.account_balance().acc_balance
+        bank_balance = self.get_cash()
 
         # get settlements
-        tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        settlements = self.api.settlements(self.api.stock_account)
-        settlements = sum(int(settlement.amount) for settlement in settlements if datetime.datetime.combine(settlement.date, datetime.time(10,0)) > tw_now)
+        settlements = self.get_settlement()
 
         # get position balance
         position = self.get_position()
@@ -197,7 +195,15 @@ class SinopacAccount(Account):
                 [float(i['quantity']) * stocks[i['stock_id']].close * 1000 for i in position.position])
         else:
             account_balance = 0
-        return bank_balance + settlements + account_balance    
+        return bank_balance + settlements + account_balance
+    
+    def get_cash(self):
+        return self.api.account_balance().acc_balance
+    
+    def get_settlement(self):
+        tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+        settlements = self.api.settlements(self.api.stock_account)
+        return sum(int(settlement.amount) for settlement in settlements if datetime.datetime.combine(settlement.date, datetime.time(10,0)) > tw_now)
 
 
     def sep_odd_lot_order(self):

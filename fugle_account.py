@@ -166,7 +166,23 @@ class FugleAccount(Account):
                 f"cancel_order: Cannot cancel order {order_id}: {e}")
 
     def get_orders(self):
-        orders = self.sdk.get_order_results()
+
+
+        success = False
+        fetch_count = 0
+
+        while not success:
+            try:
+                orders = self.sdk.get_order_results()
+                success = True
+            except:
+                logging.warning("get_orders: Cannot get orders, sleep for 1 minute")
+                fetch_count += 1
+                time.sleep(60)
+                if fetch_count > 5:
+                    logging.error("get_orders: Cannot get orders, try 5 times, raise error")
+                    raise Exception("Cannot get orders")
+
         ret = {}
         for o in orders:
             order_id = o['ord_no']
@@ -235,18 +251,25 @@ class FugleAccount(Account):
 
     def get_total_balance(self):
         # get bank balance
-        bank_balance = self.sdk.get_balance()['available_balance']
+        bank_balance = self.get_cash()
 
         # get settlements
-        tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        settlements = self.sdk.get_settlements()
-        settlements = sum(int(settlement['price']) for settlement in settlements if datetime.datetime.strptime(
-            settlement['c_date'] + ' 10:00', '%Y%m%d %H:%M') > tw_now)
+        settlements = self.get_settlement()
 
         # get position balance
         account_balance = sum(int(inv['value_mkt'])
                               for inv in self.sdk.get_inventories())
         return bank_balance + settlements + account_balance
+    
+    def get_cash(self):
+        return self.sdk.get_balance()['available_balance']
+    
+    def get_settlement(self):
+        tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+        settlements = self.sdk.get_settlements()
+        settlements = sum(int(settlement['price']) for settlement in settlements if datetime.datetime.strptime(
+            settlement['c_date'] + ' 10:00', '%Y%m%d %H:%M') > tw_now)
+        return settlements
 
     def support_day_trade_condition(self):
         return True

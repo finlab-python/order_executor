@@ -234,6 +234,16 @@ class Account(ABC):
         """拿到當前帳戶的股票部位淨值"""
         pass
 
+    @abstractmethod
+    def get_cash(self):
+        """拿到當前帳戶的現金"""
+        pass
+    
+    @abstractmethod
+    def get_settlement(self):
+        """拿到當前帳戶的結算資料"""
+        pass        
+
     def sep_odd_lot_order(self):
         return True
 
