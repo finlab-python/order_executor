@@ -293,7 +293,7 @@ class Position():
         # find w.index not in price.keys()
         # import pdb; pdb.set_trace()
         for s in w.index.tolist():
-            if s.split(' ')[0] not in kwargs['price']:
+            if s.split(' ')[0] not in kwargs['price'] or kwargs['price'][s.split(' ')[0]] != kwargs['price'][s.split(' ')[0]]:
                 w = w.drop(s)
                 logger.warning(f"Stock {s} is not in price data. It is dropped from the position.")
 
@@ -618,9 +618,7 @@ class OrderExecutor():
                                           )
                 
         return orders
-
-
-
+        
 
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
         """產生委託單，將部位同步成 self.target_position
@@ -637,79 +635,6 @@ class OrderExecutor():
         orders = self.generate_orders()
         return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct)
     
-        if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
-            raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
-        if extra_bid_pct < 0 or extra_bid_pct > 0.1:
-            raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
-
-        present_position = self.account.get_position()
-        orders = (self.target_position - present_position).position
-
-        if view_only:
-            return orders
-
-        self.cancel_orders()
-        stocks = self.account.get_stocks(list({o['stock_id'] for o in orders}))
-
-        # make orders
-        for o in orders:
-
-            if o['quantity'] == 0:
-                continue
-
-            stock = stocks[o['stock_id']]
-            action = Action.BUY if o['quantity'] > 0 else Action.SELL
-            price = stock.close if isinstance(stock.close, numbers.Number) else (
-                    stock.bid_price if action == Action.BUY else stock.ask_price
-                    )
-
-            if best_price_limit:
-                price_string = 'LOWEST' if action == Action.BUY else 'HIGHEST'
-            elif market_order:
-                price_string = 'HIGHEST' if action == Action.BUY else 'LOWEST'
-            else:
-                price_string = str(price)
-
-            extra_bid_text = ''
-            if extra_bid_pct > 0:
-                extra_bid_text = f'with extra bid {extra_bid_pct*100}%'
-
-            print('execute', action, o['stock_id'], 'X', abs(
-                o['quantity']), '@', price_string, extra_bid_text, o['order_condition'])
-
-            quantity = abs(o['quantity'])
-            board_lot_quantity = int(abs(quantity // 1))
-            odd_lot_quantity = int(abs(round(1000 * (quantity % 1))))
-
-            if self.account.sep_odd_lot_order():
-                if odd_lot_quantity != 0:
-                    self.account.create_order(action=action,
-                                              stock_id=o['stock_id'],
-                                              quantity=odd_lot_quantity,
-                                              price=price, market_order=market_order,
-                                              order_cond=o['order_condition'],
-                                              odd_lot=True,
-                                              best_price_limit=best_price_limit,
-                                              extra_bid_pct=extra_bid_pct)
-
-                if board_lot_quantity != 0:
-                    self.account.create_order(action=action,
-                                              stock_id=o['stock_id'],
-                                              quantity=board_lot_quantity,
-                                              price=price, market_order=market_order,
-                                              order_cond=o['order_condition'],
-                                              best_price_limit=best_price_limit,
-                                              extra_bid_pct=extra_bid_pct)
-            else:
-                self.account.create_order(action=action,
-                                          stock_id=o['stock_id'],
-                                          quantity=quantity,
-                                          price=price, market_order=market_order,
-                                          order_cond=o['order_condition'],
-                                          best_price_limit=best_price_limit,
-                                          extra_bid_pct=extra_bid_pct)
-                
-        return orders
     
     def update_order_price(self, extra_bid_pct=0):
         """更新委託單，將委託單的限價調整成當天最後一筆價格。
