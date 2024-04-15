@@ -390,4 +390,15 @@ class BinanceAccount(Account):
     
     def sep_odd_lot_order(self):
         return False
+
+    def get_cash(self):
+
+        position = self.get_position()
+        for p in position.position:
+            if p.stock_id == self.base_currency:
+                return p.quantity
+        return 0
+
+    def get_settlement(self):
+        return 0
       
