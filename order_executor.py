@@ -476,6 +476,7 @@ class OrderExecutor():
         if credit_sids.any():
             close = data.get('price:收盤價').ffill().iloc[-1]
             for sid in list(credit_sids.values):
+                quantity[sid] = float(quantity[sid])
                 if quantity[sid] > 0:
                     total_amount = quantity[sid]*close[sid]*1000*1.1
                     print(
@@ -618,7 +619,7 @@ class OrderExecutor():
                                           )
                 
         return orders
-        
+
 
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
         """產生委託單，將部位同步成 self.target_position
