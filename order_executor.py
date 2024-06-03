@@ -386,7 +386,6 @@ class Position():
             #         for sobj in p1 if sobj['order_condition'] == oc}
             # qty2 = {sobj['stock_id']: sobj['quantity']
             #         for sobj in p2 if sobj['order_condition'] == oc}
-
             ps = self.op(qty1, qty2, operator)
             ret += [{'stock_id': sid, 'quantity': qty,
                 'order_condition': oc} for sid, qty in ps.items()]
@@ -408,6 +407,11 @@ class Position():
             # convert to float if value1 or value2 is float or int
             if (isinstance(value1, (float, int)) and value1 != 0)\
                   or (isinstance(value2, (float, int)) and value2 != 0):
+                value1 = float(value1)
+                value2 = float(value2)
+
+            # fallback to float if value1 or value2 is Decimal
+            if type(value1) != type(value2):
                 value1 = float(value1)
                 value2 = float(value2)
             

@@ -137,7 +137,7 @@ class OrderPanel():
                     'quantity': grid[i, 2].children[1].value,
                     'order_condition': o['order_condition'],
                 })
-            self.oe.target_position = Position.from_dict(new_target_position)
+            self.oe.target_position = Position.from_list(new_target_position)
             self.start_creating_order(market_order=market_order)
 
         btn = widgets.Button(description='限價下單')
@@ -165,6 +165,9 @@ class OrderPanel():
             try:
                 self.oe.create_orders(market_order)
             except Exception as e:
+                # print traceback
+                import traceback
+                traceback.print_exc()
                 print(e)
                 print('錯誤，即時取消所有下單')
                 self.oe.cancel_orders()
@@ -194,7 +197,7 @@ class OrderPanel():
         def buy_at_market_price_btn_func(btn):
             self.oe.account.cancel_order(btn.oid)
             order = self.oe.account.get_orders()[btn.oid]
-            new_quantity = (order.quantity - order.filled_quantity)
+            new_quantity = (float(order.quantity) - float(order.filled_quantity))
             if new_quantity >= 1:
                 self.oe.account.create_order(
                     order.action, order.stock_id, 1, order_cond=order.order_condition, market_order=True)
