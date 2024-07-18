@@ -5,6 +5,7 @@ import os
 import re
 import math
 import logging
+import pandas as pd
 from decimal import Decimal
 
 from finlab.online.base_account import Account, Stock, Order
@@ -20,9 +21,9 @@ class SinopacAccount(Account):
     required_module = 'shioaji'
     module_version = '1.1.2'
 
-    def __init__(self, api_key=None, secret_key=None, 
-                 certificate_person_id=None, 
-                 certificate_password=None, 
+    def __init__(self, api_key=None, secret_key=None,
+                 certificate_person_id=None,
+                 certificate_password=None,
                  certificate_path=None):
 
         api_key = api_key or os.environ.get('SHIOAJI_API_KEY')
@@ -31,12 +32,13 @@ class SinopacAccount(Account):
         certificate_password = certificate_password or os.environ.get(
             'SHIOAJI_CERT_PASSWORD')
         certificate_path = certificate_path or os.environ.get(
-                'SHIOAJI_CERT_PATH')
+            'SHIOAJI_CERT_PATH')
         certificate_person_id = certificate_person_id or os.environ.get(
-                'SHIOAJI_CERT_PERSON_ID')
+            'SHIOAJI_CERT_PERSON_ID')
 
         self.api = sj.Shioaji()
-        self.accounts = self.api.login(api_key, secret_key, fetch_contract=False)
+        self.accounts = self.api.login(
+            api_key, secret_key, fetch_contract=False)
 
         self.trades = {}
 
@@ -49,7 +51,8 @@ class SinopacAccount(Account):
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
 
         # contract = self.api.Contracts.Stocks.get(stock_id)
-        contract = sj.contracts.Contract(security_type='STK', code=stock_id, exchange='TSE')
+        contract = sj.contracts.Contract(
+            security_type='STK', code=stock_id, exchange='TSE')
         pinfo = self.get_price_info()
         limitup = float(pinfo[stock_id]['漲停價'])
         limitdn = float(pinfo[stock_id]['跌停價'])
@@ -57,7 +60,7 @@ class SinopacAccount(Account):
 
         if stock_id not in pinfo:
             raise Exception(f"stock {stock_id} not in price info")
-        
+
         if quantity <= 0:
             raise Exception(f"quantity must be positive, got {quantity}")
 
@@ -97,9 +100,9 @@ class SinopacAccount(Account):
         order_lot = sj.constant.StockOrderLot.IntradayOdd\
             if odd_lot else sj.constant.StockOrderLot.Common
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        if datetime.time(13,40) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and odd_lot:
+        if datetime.time(13, 40) < datetime.time(now.hour, now.minute) and datetime.time(now.hour, now.minute) < datetime.time(14, 30) and odd_lot:
             order_lot = sj.constant.StockOrderLot.Odd
-        if datetime.time(14,00) < datetime.time(now.hour,now.minute) and datetime.time(now.hour,now.minute) < datetime.time(14,30) and not odd_lot:
+        if datetime.time(14, 00) < datetime.time(now.hour, now.minute) and datetime.time(now.hour, now.minute) < datetime.time(14, 30) and not odd_lot:
             order_lot = sj.constant.StockOrderLot.Fixing
 
         order = self.api.Order(price=price,
@@ -117,7 +120,7 @@ class SinopacAccount(Account):
 
         self.trades[trade.status.id] = trade
         return trade.status.id
-    
+
     def get_price_info(self):
         ref = data.get('reference_price')
         return ref.set_index('stock_id').to_dict(orient='index')
@@ -171,43 +174,50 @@ class SinopacAccount(Account):
 
     def get_stocks(self, stock_ids):
         try:
-            contracts = [sj.contracts.Contract(security_type='STK', code=s, exchange='TSE') for s in stock_ids]
+            contracts = [sj.contracts.Contract(
+                security_type='STK', code=s, exchange='TSE') for s in stock_ids]
             snapshots = self.api.snapshots(contracts)
         except:
             time.sleep(10)
-            contracts = [sj.contracts.Contract(security_type='STK', code=s, exchange='TSE') for s in stock_ids]
+            contracts = [sj.contracts.Contract(
+                security_type='STK', code=s, exchange='TSE') for s in stock_ids]
             snapshots = self.api.snapshots(contracts)
 
         return {s.code: snapshot_to_stock(s) for s in snapshots}
 
     def get_total_balance(self):
-        # get bank balance
-        bank_balance = self.get_cash()
-
-        # get settlements
-        settlements = self.get_settlement()
 
         # get position balance
-        position = self.get_position()
-        if position.position:
-            stocks = self.get_stocks([i['stock_id'] for i in position.position])
-            account_balance = sum(
-                [float(i['quantity']) * stocks[i['stock_id']].close * 1000 for i in position.position])
-        else:
-            account_balance = 0
-        return bank_balance + settlements + account_balance
-    
+        lp = self.api.list_positions()
+
+        ac_pos = pd.DataFrame([p.dict() for p in lp])
+
+        if len(ac_pos) == 0:
+            return self.get_settlement() + self.get_cash()
+
+        return ((ac_pos.last_price * ac_pos.quantity * 1000) * (1 - 1.425/1000) * (1 - 3/1000)  \
+                - ac_pos.get('margin_purchase_amount', 0) - ac_pos.get('interest', 0)).sum() \
+                + self.get_settlement() + self.get_cash()
+
     def get_cash(self):
         return self.api.account_balance().acc_balance
-    
+
     def get_settlement(self):
         tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         settlements = self.api.settlements(self.api.stock_account)
-        return sum(int(settlement.amount) for settlement in settlements if datetime.datetime.combine(settlement.date, datetime.time(10,0)) > tw_now)
 
+        # Monday settlement time is at 3:00 AM
+        # Other days settlement time is at 10:00 AM
+        def settlement_time(date): 
+            t = datetime.time(3, 0) if date.weekday() == 0 else datetime.time(10, 0)
+            return datetime.datetime.combine(date, t)
+
+        return sum(int(settlement.amount) for settlement in settlements 
+                   if settlement_time(settlement.date) > tw_now)
 
     def sep_odd_lot_order(self):
         return True
+
 
 def trade_to_order(trade):
     """將 shioaji package 的委託單轉換成 finlab 格式"""
@@ -219,21 +229,21 @@ def trade_to_order(trade):
         raise Exception('trader order action should be "Buy" or "Sell"')
 
     status = {
-            'PendingSubmit': OrderStatus.NEW,
-            'PreSubmitted': OrderStatus.NEW,
-            'Submitted': OrderStatus.NEW,
-            'Failed': OrderStatus.CANCEL,
-            'Cancelled': OrderStatus.CANCEL,
-            'Filled': OrderStatus.FILLED,
-            'Filling': OrderStatus.PARTIALLY_FILLED,
-            'PartFilled': OrderStatus.PARTIALLY_FILLED,
-            }[trade.status.status]
+        'PendingSubmit': OrderStatus.NEW,
+        'PreSubmitted': OrderStatus.NEW,
+        'Submitted': OrderStatus.NEW,
+        'Failed': OrderStatus.CANCEL,
+        'Cancelled': OrderStatus.CANCEL,
+        'Filled': OrderStatus.FILLED,
+        'Filling': OrderStatus.PARTIALLY_FILLED,
+        'PartFilled': OrderStatus.PARTIALLY_FILLED,
+    }[trade.status.status]
 
     order_condition = {
-            'Cash': OrderCondition.CASH,
-            'MarginTrading': OrderCondition.MARGIN_TRADING,
-            'ShortSelling': OrderCondition.SHORT_SELLING,
-            }[trade.order.order_cond]
+        'Cash': OrderCondition.CASH,
+        'MarginTrading': OrderCondition.MARGIN_TRADING,
+        'ShortSelling': OrderCondition.SHORT_SELLING,
+    }[trade.order.order_cond]
 
     # calculate quantity
     # calculate filled quantity
@@ -259,12 +269,11 @@ def trade_to_order(trade):
         'order_condition': order_condition,
         'time': trade.status.order_datetime,
         'org_order': trade
-        })
+    })
 
 
 def snapshot_to_stock(snapshot):
     """將 shioaji 股價行情轉換成 finlab 格式"""
     d = snapshot
     return Stock(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
-               bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
-
+                 bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
