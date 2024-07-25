@@ -3,6 +3,7 @@ from fugle_trade.sdk import SDK
 from fugle_trade.order import OrderObject
 from fugle_trade.constant import Action as fugleAction
 from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
+from fugle_trade.util import setup_keyring, set_password
 
 from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
@@ -47,6 +48,14 @@ class FugleAccount(Account):
         # 將設定檔內容寫至 SDK 中，並確認是否已設定密碼
         if not os.path.isfile(config_path):
             raise Exception('無法找到 config 檔案')
+        
+        if 'FUGLE_ACCOUNT_PASSWORD' in os.environ and 'FUGLE_CERT_PASSWORD' in os.environ:
+
+            setup_keyring(config['User']['Account'])
+            set_password("fugle_trade_sdk:account", config['User']['Account'], os.environ['FUGLE_ACCOUNT_PASSWORD'])
+            set_password("fugle_trade_sdk:cert", config['User']['Account'], os.environ['FUGLE_CERT_PASSWORD'])
+        else:
+            print('not found password in env')
 
         sdk = SDK(config)
         sdk.login()
