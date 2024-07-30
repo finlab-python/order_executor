@@ -587,7 +587,9 @@ class OrderExecutor():
 
             # logger.warning('%-11s %-6s X %-10s @ %-11s %s %s', action, o['stock_id'], abs(o['quantity']), price_string, extra_bid_text, o['order_condition'])
             # use print f-string format instead of logger
-            print(f'{action:<11} {o["stock_id"]:<6} X {abs(o["quantity"]):<10} @ {price_string:<11} {extra_bid_text} {o["order_condition"]}')
+            action_str = 'BUY' if action == Action.BUY else 'SELL'
+            order_condition_str = 'CASH' if o['order_condition'] == OrderCondition.CASH else 'MARGIN_TRADING' if o['order_condition'] == OrderCondition.MARGIN_TRADING else 'SHORT_SELLING' if o['order_condition'] == OrderCondition.SHORT_SELLING else 'DAY_TRADING_LONG' if o['order_condition'] == OrderCondition.DAY_TRADING_LONG else 'DAY_TRADING_SHORT' if o['order_condition'] == OrderCondition.DAY_TRADING_SHORT else 'UNKNOWN'
+            print(f'{action_str:<11} {o["stock_id"]:10} X {abs(o["quantity"]):<10} @ {price_string:<11} {extra_bid_text} {order_condition_str}')
 
 
             quantity = abs(o['quantity'])
