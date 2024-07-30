@@ -585,7 +585,10 @@ class OrderExecutor():
             if extra_bid_pct > 0:
                 extra_bid_text = f'with extra bid {extra_bid_pct*100}%'
 
-            logger.warning('%-11s %-6s X %-10s @ %-11s %s %s', action, o['stock_id'], abs(o['quantity']), price_string, extra_bid_text, o['order_condition'])
+            # logger.warning('%-11s %-6s X %-10s @ %-11s %s %s', action, o['stock_id'], abs(o['quantity']), price_string, extra_bid_text, o['order_condition'])
+            # use print f-string format instead of logger
+            print(f'{action:<11} {o["stock_id"]:<6} X {abs(o["quantity"]):<10} @ {price_string:<11} {extra_bid_text} {o["order_condition"]}')
+
 
             quantity = abs(o['quantity'])
             board_lot_quantity = int(abs(quantity // 1))
