@@ -54,8 +54,6 @@ class FugleAccount(Account):
             setup_keyring(config['User']['Account'])
             set_password("fugle_trade_sdk:account", config['User']['Account'], os.environ['FUGLE_ACCOUNT_PASSWORD'])
             set_password("fugle_trade_sdk:cert", config['User']['Account'], os.environ['FUGLE_CERT_PASSWORD'])
-        else:
-            print('not found password in env')
 
         sdk = SDK(config)
         sdk.login()
