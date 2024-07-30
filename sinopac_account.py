@@ -48,6 +48,13 @@ class SinopacAccount(Account):
             person_id=certificate_person_id,
         )
 
+    def __del__(self):
+        try:
+            self.api.logout()
+        except:
+            pass
+
+
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False, best_price_limit=False, order_cond=OrderCondition.CASH):
 
         # contract = self.api.Contracts.Stocks.get(stock_id)
