@@ -666,9 +666,7 @@ class OrderExecutor():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
 
                 price = stocks[o.stock_id].close
-                if extra_bid_pct > 0:
-
-                    price = calculate_price_with_extra_bid(price, extra_bid_pct if o.action == Action.BUY else -extra_bid_pct)
+                price = calculate_price_with_extra_bid(price, extra_bid_pct if o.action == Action.BUY else -extra_bid_pct)
 
                 if pinfo and o.stock_id in pinfo:
                     up_limit = float(pinfo[o.stock_id]['漲停價'])
