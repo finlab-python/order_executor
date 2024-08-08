@@ -1,6 +1,5 @@
 from finlab.online.utils import greedy_allocation
 from finlab.online.enums import *
-from finlab.portfolio.cloud_report import CloudReport
 from finlab import data
 from decimal import Decimal
 import pandas as pd
@@ -241,6 +240,7 @@ class Position():
             ```
         """
 
+        from finlab.portfolio.cloud_report import CloudReport
         if isinstance(report, CloudReport):
             position_schedulers = report.position_schedulers
             if isinstance(position_schedulers, dict):
