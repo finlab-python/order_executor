@@ -445,10 +445,15 @@ class Position():
         self.position = pos
 
     def __repr__(self):
-        ret = ''
-        for p in self.position:
-            ret += str(p) + '\n'
-        return ret
+
+        if len(self.position) == 0:
+            return 'empty position'
+
+        return pd.DataFrame(self.position)\
+            .pipe(lambda df: df.assign(
+                order_condition=df.order_condition\
+                    .map(lambda x: OrderCondition._member_names_[x])))\
+            .to_string(index=False)
 
 
 class OrderExecutor():
