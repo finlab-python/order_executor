@@ -213,10 +213,9 @@ class SinopacAccount(Account):
         tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         settlements = self.api.settlements(self.api.stock_account)
 
-        # Monday settlement time is at 3:00 AM
-        # Other days settlement time is at 10:00 AM
+        # Settlement time is at 3:00 AM
         def settlement_time(date): 
-            t = datetime.time(3, 0) if date.weekday() == 0 else datetime.time(10, 0)
+            t = datetime.time(3, 0)
             return datetime.datetime.combine(date, t)
 
         return sum(int(settlement.amount) for settlement in settlements 
@@ -225,17 +224,8 @@ class SinopacAccount(Account):
     def sep_odd_lot_order(self):
         return True
 
-
-def trade_to_order(trade):
-    """將 shioaji package 的委託單轉換成 finlab 格式"""
-    if trade.order.action == 'Buy':
-        action = Action.BUY
-    elif trade.order.action == 'Sell':
-        action = Action.SELL
-    else:
-        raise Exception('trader order action should be "Buy" or "Sell"')
-
-    status = {
+def map_trade_status(status):
+    return {
         'PendingSubmit': OrderStatus.NEW,
         'PreSubmitted': OrderStatus.NEW,
         'Submitted': OrderStatus.NEW,
@@ -244,13 +234,30 @@ def trade_to_order(trade):
         'Filled': OrderStatus.FILLED,
         'Filling': OrderStatus.PARTIALLY_FILLED,
         'PartFilled': OrderStatus.PARTIALLY_FILLED,
-    }[trade.status.status]
+    }[status]
 
-    order_condition = {
+def map_order_condition(order_condition):
+    return {
         'Cash': OrderCondition.CASH,
         'MarginTrading': OrderCondition.MARGIN_TRADING,
         'ShortSelling': OrderCondition.SHORT_SELLING,
-    }[trade.order.order_cond]
+    }[order_condition]
+
+def map_action(action):
+    return {
+        'Buy': Action.BUY,
+        'Sell': Action.SELL
+    }[action]
+
+def trade_to_order(trade):
+    """將 shioaji package 的委託單轉換成 finlab 格式"""
+    action = map_action(trade.order.action)
+    status = map_trade_status(trade.status.status)
+    order_condition = map_order_condition(trade.order.order_cond)
+
+    # calculate order condition
+    if trade.order.daytrade_short == True and order_condition == OrderCondition.CASH:
+        order_condition = OrderCondition.DAY_TRADING_SHORT
 
     # calculate quantity
     # calculate filled quantity
@@ -260,10 +267,6 @@ def trade_to_order(trade):
     if trade.order.order_lot == 'IntradayOdd':
         quantity /= 1000
         filled_quantity /= 1000
-
-    # calculate order condition
-    if trade.order.daytrade_short == True and order_condition == OrderCondition.CASH:
-        order_condition = OrderCondition.DAY_TRADING_SHORT
 
     return Order(**{
         'order_id': trade.status.id,
