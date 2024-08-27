@@ -452,7 +452,8 @@ class Position():
         return pd.DataFrame(self.position)\
             .pipe(lambda df: df.assign(
                 order_condition=df.order_condition\
-                    .map(lambda x: OrderCondition._member_names_[x])))\
+                    .map(lambda x: OrderCondition._member_names_[x-1])))\
+            .sort_values('stock_id')\
             .to_string(index=False)
 
 
