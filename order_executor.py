@@ -456,6 +456,8 @@ class Position():
             .sort_values('stock_id')\
             .to_string(index=False)
 
+    def __iter__(self):
+        return iter(self.position)
 
 class OrderExecutor():
 
