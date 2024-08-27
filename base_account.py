@@ -264,6 +264,9 @@ class Account(ABC):
                     f"Stock {sid} has no price to reference. Use latest close of previous trading day")
 
         return price
-
-    def on_trades(self, func):
+    
+    def get_market(self):
+        """拿到當前帳戶的市場"""
         pass
+        
+

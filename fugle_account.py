@@ -7,6 +7,7 @@ from fugle_trade.util import setup_keyring, set_password
 
 from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
+from finlab.market_info import TWMarketInfo
 from finlab.online.order_executor import calculate_price_with_extra_bid, Position
 from finlab import data
 
@@ -313,6 +314,8 @@ class FugleAccount(Account):
         ref = data.get('reference_price')
         return ref.set_index('stock_id').to_dict(orient='index')
 
+    def get_market(self):
+        return TWMarketInfo()
 
 def create_finlab_order(order):
     """將 fugle package 的委託單轉換成 finlab 格式"""
