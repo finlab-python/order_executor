@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import math
 
 def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
 
@@ -140,3 +141,56 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
     return allocation, available_funds
 
 
+
+def round_tw_price(price:float) -> float:
+    """Round tw price to the nearest tick size according to the following rules:
+    0.01 for price <= 10
+    0.05 for price <= 50
+    0.1 for price <= 100
+    0.5 for price <= 500
+    1 for price <= 1000
+    5 for price > 1000
+    """
+    result = price
+    if result <= 10:
+        result = math.floor(round(result, 3) * 100) / 100
+    elif result <= 50:
+        result = math.floor(result * 20) / 20
+    elif result <= 100:
+        result = math.floor(result * 10) / 10
+    elif result <= 500:
+        result = math.floor(result * 2) / 2
+    elif result <= 1000:
+        result = math.floor(result)
+    else:
+        result = math.floor(result / 5) * 5
+
+    result2 = price
+    if result2 <= 10:
+        result2 = math.ceil(round(result, 3) * 100) / 100
+    elif result2 <= 50:
+        result2 = math.ceil(result * 20) / 20
+    elif result2 <= 100:
+        result2 = math.ceil(result * 10) / 10
+    elif result2 <= 500:
+        result2 = math.ceil(result * 2) / 2
+    elif result2 <= 1000:
+        result2 = math.ceil(result)
+    else:
+        result2 = math.ceil(result / 5) * 5
+
+    assert result == result2
+    return result
+
+
+def estimate_stock_price(cost_per_quantity:float) -> float:
+
+    stock_price_org = cost_per_quantity / (1+1.425/1000) / 1000
+    stock_price_2 = (cost_per_quantity+1) / (1+1.425/1000) / 1000
+
+    c1 = round_tw_price(stock_price_org)
+    c2 = round_tw_price(stock_price_2)
+
+    if abs(stock_price_org - c1) > abs(stock_price_org - c2):
+        return c2
+    return c1

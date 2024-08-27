@@ -9,9 +9,11 @@ import pandas as pd
 from decimal import Decimal
 
 from finlab.online.base_account import Account, Stock, Order
+from finlab.online.utils import estimate_stock_price
 from finlab.online.enums import *
 from finlab.online.order_executor import Position
 from finlab import data
+from finlab.market_info import TWMarketInfo
 
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
 
@@ -221,8 +223,112 @@ class SinopacAccount(Account):
         return sum(int(settlement.amount) for settlement in settlements 
                    if settlement_time(settlement.date) > tw_now)
 
+
     def sep_odd_lot_order(self):
         return True
+    
+
+    def get_market(self):
+        return TWMarketInfo()
+    
+
+    @staticmethod
+    def _map_order_condition(order_condition):
+        return {
+            'Cash': OrderCondition.CASH,
+            'MarginTrading': OrderCondition.MARGIN_TRADING,
+            'ShortSelling': OrderCondition.SHORT_SELLING,
+        }[order_condition]
+    
+
+    def _get_sell_orders(self, start=None, end=None):
+
+        if start is None:
+            start = (datetime.datetime.now() - datetime.timedelta(days=90))
+
+        if end is None:
+            end = datetime.datetime.now()
+
+        if hasattr(start, 'strftime'):
+            start = start.strftime('%Y-%m-%d')
+
+        if hasattr(end, 'strftime'):
+            end = end.strftime('%Y-%m-%d')
+
+
+        profitloss = self.api.list_profit_loss(self.api.stock_account, start, end)
+        market = self.get_market()
+
+        sell_orders = []
+        for p in profitloss:
+            sell_orders.append(Order(
+                order_id=p.dseq,
+                stock_id=p.code,
+                action=Action.SELL,
+                price=p.price,
+                quantity=p.quantity,
+                filled_quantity=p.quantity,
+                status=OrderStatus.FILLED,
+                order_condition=self._map_order_condition(p.cond) \
+                    if hasattr(p, 'cond') else OrderCondition.CASH,
+                time=market.market_close_at_timestamp(
+                    datetime.datetime.strptime(p.date, '%Y-%m-%d'))\
+                        .to_pydatetime().replace(hour=13, minute=30),
+                org_order=p
+            ))
+        return sell_orders
+
+
+    def _get_buy_orders(self):
+
+        buy_orders = []
+        
+        market = self.get_market()
+        position = self.api.list_positions(self.api.stock_account)
+        
+        for i, p in enumerate(position):
+            position_detail = self.api.list_position_detail(self.api.stock_account, p.id)
+        
+            for pp in position_detail:
+        
+                buy_orders.append(Order(
+                    order_id=pp.dseq,
+                    stock_id=pp.code,
+                    action=Action.BUY,
+                    price=estimate_stock_price(pp.price / pp.quantity),
+                    quantity=pp.quantity,
+                    filled_quantity=pp.quantity,
+                    status=OrderStatus.FILLED,
+                    order_condition=map_order_condition(p.cond),
+                    time=market.market_close_at_timestamp(
+                        datetime.datetime.strptime(pp.date, '%Y-%m-%d'))\
+                            .to_pydatetime().replace(hour=13, minute=30),
+                    org_order=pp
+                ))
+        
+            if i % 20 == 19 and i != len(position) - 1:
+                time.sleep(5)
+
+        return buy_orders
+
+
+    def get_trades(self, start, end):
+
+        if isinstance(start, str):
+            start = datetime.datetime.fromisoformat(start)
+
+        if isinstance(end, str):
+            end = datetime.datetime.fromisoformat(end)
+
+        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        buy_orders = self._get_buy_orders()
+        sell_orders = sell_orders = self._get_sell_orders(start, end)
+        orders = buy_orders + sell_orders
+
+        return [o for o in orders if start <= o.time <= end]
+    
 
 def map_trade_status(status):
     return {
