@@ -199,6 +199,13 @@ class Position():
             else:
                 raise ValueError(
                     "The board_lot_size parameter is out of the valid range 1, 10, 100, 1000")
+            
+        for idx in weights.index:
+            stock_id = idx.split(' ')[0]
+            if stock_id not in price:
+                logger.warning(f"Stock {stock_id} is not in price data. It is dropped from the position.")
+
+        weights = weights[weights.index.str.split(' ').str[0].isin(price.index)]
 
         multiple = 10**precision
 
