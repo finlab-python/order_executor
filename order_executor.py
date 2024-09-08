@@ -204,7 +204,8 @@ class Position():
             stock_id = idx.split(' ')[0]
             if stock_id not in price:
                 logger.warning(f"Stock {stock_id} is not in price data. It is dropped from the position.")
-
+                
+        weights.index = weights.index.astype(str)
         weights = weights[weights.index.str.split(' ').str[0].isin(price.index)]
 
         multiple = 10**precision
