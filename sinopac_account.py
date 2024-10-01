@@ -164,6 +164,7 @@ class SinopacAccount(Account):
         self.api.cancel_order(self.trades[order_id])
 
     def get_position(self):
+
         position = self.api.list_positions(
             self.api.stock_account, unit=sj.constant.Unit.Share)
         order_conditions = {
@@ -319,6 +320,9 @@ class SinopacAccount(Account):
 
         if isinstance(end, str):
             end = datetime.datetime.fromisoformat(end)
+
+        start = TWMarketInfo().market_close_at_timestamp(start - datetime.timedelta(days=1))
+        end = TWMarketInfo().market_close_at_timestamp(end)
 
         start = start.replace(hour=0, minute=0, second=0, microsecond=0)
         end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
