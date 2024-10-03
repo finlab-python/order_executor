@@ -20,7 +20,7 @@ class Position():
 
     """
 
-    def __init__(self, stocks, margin_trading=False, short_selling=False, day_trading_long=False, day_trading_short=False):
+    def __init__(self, stocks, weights=None, margin_trading=False, short_selling=False, day_trading_long=False, day_trading_short=False):
         """建構股票部位
 
         Attributes:
@@ -82,8 +82,15 @@ class Position():
         self.position = []
         for s, a in stocks.items():
             if a != 0:
-                self.position.append(
-                    {'stock_id': s, 'quantity': a, 'order_condition': long_order_condition if a > 0 else short_order_condition})
+                new_position = {'stock_id': s, 
+                     'quantity': a, 
+                     'order_condition': long_order_condition if a > 0 else short_order_condition}
+                
+                if weights is not None and s in weights:
+                    new_position['weight'] = weights[s]
+
+                self.position.append(new_position)
+                
 
     @classmethod
     def from_list(cls, position):
@@ -220,7 +227,12 @@ class Position():
             for s, q in allocation.items():
                 allocation[s] = round(q)
 
-        return cls(allocation, **kwargs)
+        # fill zero quantity
+        for s in weights.index:
+            if s not in allocation:
+                allocation[s] = 0
+
+        return cls(allocation, weights=weights, **kwargs)
 
     @classmethod
     def from_report(cls, report, fund, **kwargs):
@@ -370,23 +382,51 @@ class Position():
 
         return Position.from_list(ret)
 
-            
-
     def __add__(self, position):
         return self.for_each_trading_condition(self.position, position.position, "+")
 
     def __sub__(self, position):
         return self.for_each_trading_condition(self.position, position.position, "-")
+    
+    def __eq__(self, position):
+        return self.position == position.position
+    
+    def __mul__(self, scalar):
 
-    def sum_stock_quantity(self, stocks, oc):
+        if self.has_weight(self.position):
+            return Position.from_list([{**p, 'quantity': p['quantity']*scalar,
+                                       'weight': p['weight']*scalar} for p in self.position])
+        
+        return Position.from_list([{**p, 'quantity': p['quantity']*scalar,
+                                    } for p in self.position])
+    
+    def __rmul__(self, scalar):
+        return self.__mul__(scalar)
+    
+    def __truediv__(self, scalar):
+        return self.__mul__(1/scalar)
+    
+    def __rtruediv__(self, scalar):
+        return self.__truediv__(scalar)
+
+    def sum_stock_quantity(self, stocks, oc, attr='quantity'):
 
         qty = {}
         for s in stocks:
             if s['order_condition'] == oc:
                 q = qty.get(s['stock_id'], 0)
-                qty[s['stock_id']] = q + s['quantity']
+                qty[s['stock_id']] = q + s.get(attr, 0)
 
         return qty
+    
+    @staticmethod
+    def has_weight(position:list) -> bool:
+        if len(position) == 0:
+            return True
+        for p in position:
+            if 'weight' in p:
+                return True
+        return False
 
     def for_each_trading_condition(self, p1, p2, operator):
         ret = []
@@ -399,13 +439,19 @@ class Position():
             qty1 = self.sum_stock_quantity(p1, oc)
             qty2 = self.sum_stock_quantity(p2, oc)
 
-            # qty1 = {sobj['stock_id']: sobj['quantity']
-            #         for sobj in p1 if sobj['order_condition'] == oc}
-            # qty2 = {sobj['stock_id']: sobj['quantity']
-            #         for sobj in p2 if sobj['order_condition'] == oc}
             ps = self.op(qty1, qty2, operator)
-            ret += [{'stock_id': sid, 'quantity': qty,
+            new_pos = [{'stock_id': sid, 'quantity': qty,
                 'order_condition': oc} for sid, qty in ps.items()]
+            
+            if self.has_weight(p1) and self.has_weight(p2):
+
+                w1 = self.sum_stock_quantity(p1, oc, attr='weight')
+                w2 = self.sum_stock_quantity(p2, oc, attr='weight')
+                ws = self.op(w1, w2, operator)
+                for p in new_pos:
+                    p['weight'] = ws.get(p['stock_id'], 0)
+
+            ret += new_pos
 
         return Position.from_list(ret)
 
@@ -452,17 +498,19 @@ class Position():
             })
         self.position = pos
 
+    def to_df(self):
+        return pd.DataFrame(self.position)\
+            .pipe(lambda df: df.assign(
+                order_condition=df.order_condition\
+                    .map(lambda x: OrderCondition._member_names_[x-1])))\
+            .sort_values('stock_id')
+
     def __repr__(self):
 
         if len(self.position) == 0:
             return 'empty position'
 
-        return pd.DataFrame(self.position)\
-            .pipe(lambda df: df.assign(
-                order_condition=df.order_condition\
-                    .map(lambda x: OrderCondition._member_names_[x-1])))\
-            .sort_values('stock_id')\
-            .to_string(index=False)
+        return self.to_df().to_string(index=False)
 
     def __iter__(self):
         return iter(self.position)
