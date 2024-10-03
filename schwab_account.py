@@ -360,7 +360,7 @@ def map_trade_status(status):
     }[status]
 
 
-def map_order_condition():
+def map_order_condition(action):
     """將 schwab 的訂單條件轉換成 finlab 的訂單條件
     函數目前回傳固定的訂單條件值 `OrderCondition.CASH`。
 
@@ -374,7 +374,16 @@ def map_order_condition():
         Schwab 的訂單條件 在 finlab 中沒有對應的概念，因此固定回傳 `OrderCondition.CASH`
         訂單之現股//融資//融券 在 instruction 中有定義，因此不需要在 order_condition 中定義
     """
-    return OrderCondition.CASH
+    return {
+        'BUY': OrderCondition.CASH,
+        'SELL': OrderCondition.CASH,
+        'BUY_TO_COVER': OrderCondition.CASH,
+        'SELL_SHORT': OrderCondition.SHORT_SELLING,
+        'BUY_TO_OPEN': OrderCondition.CASH,
+        'BUY_TO_CLOSE': OrderCondition.CASH,
+        'SELL_TO_OPEN': OrderCondition.CASH,
+        'SELL_TO_CLOSE': OrderCondition.CASH,
+    }[action]
 
 
 def map_action(action):
@@ -389,7 +398,16 @@ def map_action(action):
     Notes:
         Pass
     """
-    return {'BUY': Action.BUY, 'SELL': Action.SELL}[action]
+    return {
+        'BUY': Action.BUY,
+        'SELL': Action.SELL,
+        'BUY_TO_COVER': Action.BUY,
+        'SELL_SHORT': Action.SELL,
+        'BUY_TO_OPEN': Action.BUY,
+        'BUY_TO_CLOSE': Action.BUY,
+        'SELL_TO_OPEN': Action.SELL,
+        'SELL_TO_CLOSE': Action.SELL,
+    }[action]
 
 
 def trade_to_order(trade):
@@ -406,7 +424,7 @@ def trade_to_order(trade):
     """
     action = map_action(trade.get('orderLegCollection')[0].get('instruction'))
     status = map_trade_status(trade.get('status'))
-    order_condition = map_order_condition()
+    order_condition = map_order_condition(trade.get('orderLegCollection')[0].get('instruction'))
     quantity = Decimal(trade.get('quantity')) / 1000
     filled_quantity = Decimal(trade.get('filledQuantity'))
 
