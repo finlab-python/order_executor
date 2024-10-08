@@ -39,15 +39,23 @@ class SchwabAccount(Account):
     def __init__(
         self, token_path=None, api_key=None, app_secret=None, asyncio=False, enforce_enums=True
     ):
-        api_key = api_key or os.environ.get('SCHWAB_API_KEY')
-        app_secret = app_secret or os.environ.get('SCHWAB_SECRET_KEY')
-        token_path = token_path or os.environ.get('SCHWAB_TOKEN_PATH')
+        self.api_key = api_key or os.environ.get('SCHWAB_API_KEY')
+        self.app_secret = app_secret or os.environ.get('SCHWAB_SECRET_KEY')
+        self.token_path = token_path or os.environ.get('SCHWAB_TOKEN_PATH')
 
-        self.client = client_from_token_file(
-            token_path=token_path,
-            api_key=api_key,
-            app_secret=app_secret,
-        )
+        if not all([self.api_key, self.app_secret, self.token_path]):
+            raise ValueError('API 金鑰、應用程式密鑰和令牌路徑都必須提供')
+
+        try:
+            self.client = client_from_token_file(
+                token_path=self.token_path,
+                api_key=self.api_key,
+                app_secret=self.app_secret,
+            )
+        except Exception as e:
+            logging.error(f'無法初始化 Schwab 客戶端: {e}')
+            raise
+
         self.account_hash = self.client.get_account_numbers().json()[0].get('hashValue')
         self.trades = {}
 
