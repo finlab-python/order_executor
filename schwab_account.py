@@ -123,43 +123,30 @@ class SchwabAccount(Account):
             action = 'SELL'
 
         # 假如 market_order or best_price_limit 任一為 True, 則使用市價單
-        if market_order or best_price_limit:
-            order = {
-                'session': 'NORMAL',  # 美股 Normal Order 美東時間 09:30～16:00
-                'duration': 'DAY',  # 只下當天有效單
-                'orderType': 'MARKET',
-                'orderLegCollection': [
-                    {
-                        'instruction': action,
-                        'instrument': {'assetType': 'EQUITY', 'symbol': stock_id},
-                        'quantity': quantity,
-                    }
-                ],
-                'orderStrategyType': 'SINGLE',
-            }
-        else:
-            order = {
-                'session': 'NORMAL',  # 美股 Normal Order 美東時間 09:30～16:00
-                'duration': 'DAY',  # 只下當天有效單
-                'orderType': 'LIMIT',  # 統一為限價單
-                'price': price,
-                'orderLegCollection': [
-                    {
-                        'instruction': action,
-                        'instrument': {'assetType': 'EQUITY', 'symbol': stock_id},
-                        'quantity': quantity,
-                    }
-                ],
-                'orderStrategyType': 'SINGLE',
-            }
+        order = {
+            'session': 'NORMAL',  # 美股 Normal Order 美東時間 09:30～16:00
+            'duration': 'DAY',  # 只下當天有效單
+            'orderType': 'MARKET' if market_order or best_price_limit else 'LIMIT',
+            'orderLegCollection': [
+                {
+                    'instruction': action,
+                    'instrument': {'assetType': 'EQUITY', 'symbol': stock_id},
+                    'quantity': quantity,  # 使用 math.floor() 進行無條件捨去
+                }
+            ],
+            'orderStrategyType': 'SINGLE',
+        }
 
-        # Empty response body if an order was successfully placed/created.
+        if not (market_order or best_price_limit):
+            order['price'] = price
+
         try:
             trade = self.client.place_order(self.account_hash, order)
-            if trade.text == '':
+            if trade.status_code == 201:
                 print(f'API: create order, {order}')
             else:
-                logging.warning(f'API: cannot create order: {trade.text}')
+                logging.warning(f'API: cannot create order: {trade.status_code}: {trade.text}')
+
         except Exception as e:
             logging.warning(f'API: cannot create order: {e}')
 
@@ -241,7 +228,9 @@ class SchwabAccount(Account):
             self.trades = self.get_orders()
 
         try:
-            self.client.cancel_order(order_id, self.account_hash)
+            response = self.client.cancel_order(order_id, self.account_hash)
+            if response.status_code == 200:
+                print(f'API: cancel order {order_id}')
         except Exception as e:
             logging.warning(f'API: cannot cancel order {order_id}: {e}')
 
