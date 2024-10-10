@@ -1,10 +1,11 @@
 """
 Schwab 帳戶操作模組
 """
+
 import logging
 import os
 from decimal import Decimal
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 from finlab.market_info import USAllMarketInfo
 from finlab.online.base_account import Account, Order, Stock
@@ -13,6 +14,7 @@ from finlab.online.order_executor import Position
 from schwab.auth import client_from_token_file
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 class SchwabAccount(Account):
     """Schwab 帳戶操作類
@@ -38,7 +40,7 @@ class SchwabAccount(Account):
         api_key: Optional[str] = None,
         app_secret: Optional[str] = None,
         asyncio: bool = False,
-        enforce_enums: bool = True
+        enforce_enums: bool = True,
     ):
         """初始化 SchwabAccount 實例
 
@@ -132,7 +134,9 @@ class SchwabAccount(Account):
             if trade_response.status_code == 201:
                 logging.info(f'API: 成功創建訂單, {order}')
             else:
-                logging.warning(f'API: 無法創建訂單: {trade_response.status_code}: {trade_response.text}')
+                logging.warning(
+                    f'API: 無法創建訂單: {trade_response.status_code}: {trade_response.text}'
+                )
 
         except Exception as e:
             logging.error(f'API: 創建訂單時發生錯誤: {e}')
@@ -158,7 +162,9 @@ class SchwabAccount(Account):
                 stock_ids, fields=self.client.Quote.Fields.QUOTE
             )
             if quote_response.status_code != 200:
-                logging.error(f'API: 獲取報價失敗: {quote_response.status_code}: {quote_response.text}')
+                logging.error(
+                    f'API: 獲取報價失敗: {quote_response.status_code}: {quote_response.text}'
+                )
                 return {}
 
             quote_json = quote_response.json()
@@ -191,7 +197,7 @@ class SchwabAccount(Account):
 
         Raises:
             ValueError: 如果訂單無法更新
-        
+
         Note:
             美股為零股，finlab order's quantity 單位 1 張，所以 quantity 要乘以 1000
         """
@@ -224,7 +230,9 @@ class SchwabAccount(Account):
             if response.status_code == 200:
                 logging.info(f'API: 成功取消訂單 {order_id}')
             else:
-                logging.warning(f'API: 無法取消訂單 {order_id}: {response.status_code}: {response.text}')
+                logging.warning(
+                    f'API: 無法取消訂單 {order_id}: {response.status_code}: {response.text}'
+                )
         except Exception as e:
             logging.error(f'API: 取消訂單 {order_id} 時發生錯誤: {e}')
 
@@ -235,9 +243,13 @@ class SchwabAccount(Account):
             Position: 當前持倉資訊
         """
         try:
-            position_response = self.client.get_accounts(fields=self.client.Account.Fields.POSITIONS)
+            position_response = self.client.get_accounts(
+                fields=self.client.Account.Fields.POSITIONS
+            )
             if position_response.status_code != 200:
-                logging.error(f'API: 獲取持倉失敗: {position_response.status_code}: {position_response.text}')
+                logging.error(
+                    f'API: 獲取持倉失敗: {position_response.status_code}: {position_response.text}'
+                )
                 return Position.from_list([])
 
             position = position_response.json()[0].get('securitiesAccount', {}).get('positions', [])
@@ -247,7 +259,8 @@ class SchwabAccount(Account):
                 [
                     {
                         'stock_id': p.get('instrument', {}).get('symbol'),
-                        'quantity': Decimal(p.get('longQuantity', 0)) / 1000, # TODO 在永豐的寫法，要判斷 BUY or SELL, 待確認原因
+                        'quantity': Decimal(p.get('longQuantity', 0))
+                        / 1000,  # TODO 在永豐的寫法，要判斷 BUY or SELL, 待確認原因
                         'order_condition': order_conditions,
                     }
                     for p in position
@@ -266,7 +279,9 @@ class SchwabAccount(Account):
         try:
             orders_response = self.client.get_orders_for_all_linked_accounts()
             if orders_response.status_code != 200:
-                logging.error(f'API: 獲取訂單失敗: {orders_response.status_code}: {orders_response.text}')
+                logging.error(
+                    f'API: 獲取訂單失敗: {orders_response.status_code}: {orders_response.text}'
+                )
                 return {}
 
             orders = orders_response.json()
@@ -294,7 +309,9 @@ class SchwabAccount(Account):
                 stock_ids, fields=self.client.Quote.Fields.QUOTE
             )
             if quote_response.status_code != 200:
-                logging.error(f'API: 獲取股票資訊失敗: {quote_response.status_code}: {quote_response.text}')
+                logging.error(
+                    f'API: 獲取股票資訊失敗: {quote_response.status_code}: {quote_response.text}'
+                )
                 return {}
 
             json_response = quote_response.json()
@@ -320,7 +337,9 @@ class SchwabAccount(Account):
         try:
             balance_response = self.client.get_accounts()
             if balance_response.status_code != 200:
-                logging.error(f'API: 獲取總資產餘額失敗: {balance_response.status_code}: {balance_response.text}')
+                logging.error(
+                    f'API: 獲取總資產餘額失敗: {balance_response.status_code}: {balance_response.text}'
+                )
                 return 0
 
             return float(
@@ -341,7 +360,9 @@ class SchwabAccount(Account):
         try:
             cash_response = self.client.get_accounts()
             if cash_response.status_code != 200:
-                logging.error(f'API: 獲取現金餘額失敗: {cash_response.status_code}: {cash_response.text}')
+                logging.error(
+                    f'API: 獲取現金餘額失敗: {cash_response.status_code}: {cash_response.text}'
+                )
                 return 0
 
             return float(
@@ -426,14 +447,14 @@ def map_order_condition(action: str) -> OrderCondition:
         OrderCondition: FinLab 的訂單條件
     """
     condition_map = {
-        'BUY': OrderCondition.CASH, # EQUITY (Stocks and ETFs)
-        'SELL': OrderCondition.CASH, # EQUITY (Stocks and ETFs)
-        'BUY_TO_COVER': OrderCondition.CASH, # EQUITY (Stocks and ETFs)
-        'SELL_SHORT': OrderCondition.SHORT_SELLING, # EQUITY (Stocks and ETFs)
-        'BUY_TO_OPEN': OrderCondition.CASH, # Option
-        'BUY_TO_CLOSE': OrderCondition.CASH, # Option
-        'SELL_TO_OPEN': OrderCondition.CASH, # Option
-        'SELL_TO_CLOSE': OrderCondition.CASH, # Option
+        'BUY': OrderCondition.CASH,  # EQUITY (Stocks and ETFs)
+        'SELL': OrderCondition.CASH,  # EQUITY (Stocks and ETFs)
+        'BUY_TO_COVER': OrderCondition.CASH,  # EQUITY (Stocks and ETFs)
+        'SELL_SHORT': OrderCondition.SHORT_SELLING,  # EQUITY (Stocks and ETFs)
+        'BUY_TO_OPEN': OrderCondition.CASH,  # Option
+        'BUY_TO_CLOSE': OrderCondition.CASH,  # Option
+        'SELL_TO_OPEN': OrderCondition.CASH,  # Option
+        'SELL_TO_CLOSE': OrderCondition.CASH,  # Option
     }
     if action not in condition_map:
         raise ValueError(f'無效的操作: {action}')
@@ -450,14 +471,14 @@ def map_action(action: str) -> Action:
         Action: FinLab 的買賣方向
     """
     action_map = {
-        'BUY': Action.BUY, # EQUITY (Stocks and ETFs)
-        'SELL': Action.SELL, # EQUITY (Stocks and ETFs)
-        'BUY_TO_COVER': Action.BUY, # EQUITY (Stocks and ETFs)
-        'SELL_SHORT': Action.SELL, # EQUITY (Stocks and ETFs)
-        'BUY_TO_OPEN': Action.BUY, # Option
-        'BUY_TO_CLOSE': Action.BUY, # Option
-        'SELL_TO_OPEN': Action.SELL, # Option
-        'SELL_TO_CLOSE': Action.SELL, # Option
+        'BUY': Action.BUY,  # EQUITY (Stocks and ETFs)
+        'SELL': Action.SELL,  # EQUITY (Stocks and ETFs)
+        'BUY_TO_COVER': Action.BUY,  # EQUITY (Stocks and ETFs)
+        'SELL_SHORT': Action.SELL,  # EQUITY (Stocks and ETFs)
+        'BUY_TO_OPEN': Action.BUY,  # Option
+        'BUY_TO_CLOSE': Action.BUY,  # Option
+        'SELL_TO_OPEN': Action.SELL,  # Option
+        'SELL_TO_CLOSE': Action.SELL,  # Option
     }
     if action not in action_map:
         raise ValueError(f'無效的操作: {action}')
@@ -475,7 +496,9 @@ def trade_to_order(trade: Dict[str, Any]) -> Order:
     """
     action = map_action(trade.get('orderLegCollection', [{}])[0].get('instruction', ''))
     status = map_trade_status(trade.get('status', ''))
-    order_condition = map_order_condition(trade.get('orderLegCollection', [{}])[0].get('instruction', ''))
+    order_condition = map_order_condition(
+        trade.get('orderLegCollection', [{}])[0].get('instruction', '')
+    )
     quantity = Decimal(trade.get('quantity', '0')) / 1000
     filled_quantity = Decimal(trade.get('filledQuantity', '0'))
 
