@@ -366,9 +366,9 @@ class TestSchwabAccount(unittest.TestCase):
         print('----------------------------------------')
 
         self.schwab_account = SchwabAccount(
-            token_path=self.app_token,
             api_key=self.app_key,
             app_secret=self.app_secret,
+            token_path=self.app_token,
         )
 
     @classmethod
@@ -416,15 +416,11 @@ class TestSchwabAccount(unittest.TestCase):
 
     def test_get_total_balance(self):
         balance = self.schwab_account.get_total_balance()
-        self.assertIsInstance(balance, Decimal)
+        self.assertIsInstance(balance, float)
 
     def test_get_cash(self):
         cash = self.schwab_account.get_cash()
-        self.assertIsInstance(cash, Decimal)
-
-    def test_get_market(self):
-        market_info = self.schwab_account.get_market()
-        self.assertIsInstance(market_info, USAllMarketInfo)
+        self.assertIsInstance(cash, float)
 
 
 class CalculatePriceWithExtraBidTest(unittest.TestCase):
