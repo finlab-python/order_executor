@@ -253,7 +253,6 @@ class SchwabAccount(Account):
                 return Position.from_list([])
 
             position = position_response.json()[0]['securitiesAccount']['positions']
-            order_conditions = OrderCondition.CASH
 
             return Position.from_list(
                 # 計算 quantity，需要考慮 longQuantity 和 shortQuantity
