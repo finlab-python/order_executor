@@ -501,7 +501,7 @@ def trade_to_order(trade: Dict[str, Any]) -> Order:
         order_id=trade['orderId'],
         stock_id=trade['orderLegCollection'][0]['instrument']['symbol'],
         action=action,
-        price=trade['price'],
+        price=trade['price'] if trade['orderType'] == "LIMIT" else None,
         quantity=quantity,
         filled_quantity=filled_quantity,
         status=status,
