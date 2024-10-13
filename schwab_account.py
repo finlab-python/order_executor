@@ -54,9 +54,9 @@ class SchwabAccount(Account):
         Raises:
             ValueError: 當必要的參數缺失時
         """
-        self.api_key = api_key or os.environ.get('SCHWAB_API_KEY')
-        self.app_secret = app_secret or os.environ.get('SCHWAB_SECRET')
-        self.token_path = token_path or os.environ.get('SCHWAB_TOKEN_PATH')
+        self.api_key = api_key or os.environ['SCHWAB_API_KEY']
+        self.app_secret = app_secret or os.environ['SCHWAB_SECRET']
+        self.token_path = token_path or os.environ['SCHWAB_TOKEN_PATH']
 
         if not all([self.api_key, self.app_secret, self.token_path]):
             raise ValueError('API 金鑰、應用程式密鑰和令牌路徑都必須提供')
@@ -71,7 +71,7 @@ class SchwabAccount(Account):
             logging.error(f'無法初始化 Schwab 客戶端: {e}')
             raise
 
-        self.account_hash = self.client.get_account_numbers().json()[0].get('hashValue')
+        self.account_hash = self.client.get_account_numbers().json()[0]['hashValue']
         self.trades = {}
 
     def create_order(
@@ -172,11 +172,11 @@ class SchwabAccount(Account):
             ref = {}
             for s in stock_ids:
                 try:
-                    quote = quote_json.get(s, {}).get('quote', {})
+                    quote = quote_json[s]['quote']
                     ref[s] = {
-                        '收盤價': quote.get('closePrice'),
-                        '漲停價': quote.get('52WeekHigh'),
-                        '跌停價': quote.get('52WeekLow'),
+                        '收盤價': quote['closePrice'],
+                        '漲停價': quote['52WeekHigh'],
+                        '跌停價': quote['52WeekLow'],
                     }
                 except Exception as e:
                     logging.warning(f'API: 無法獲取股票 {s} 的資訊: {e}')
@@ -252,16 +252,16 @@ class SchwabAccount(Account):
                 )
                 return Position.from_list([])
 
-            position = position_response.json()[0].get('securitiesAccount', {}).get('positions', [])
+            position = position_response.json()[0]['securitiesAccount']['positions']
             order_conditions = OrderCondition.CASH
 
             return Position.from_list(
+                # 計算 quantity，需要考慮 longQuantity 和 shortQuantity
                 [
                     {
-                        'stock_id': p.get('instrument', {}).get('symbol'),
-                        'quantity': Decimal(p.get('longQuantity', 0))
-                        / 1000,  # TODO 在永豐的寫法，要判斷 BUY or SELL, 待確認原因
-                        'order_condition': order_conditions,
+                        'stock_id': p['instrument']['symbol'],
+                        'quantity': (float(p['longQuantity']) - float(p['shortQuantity'])) / 1000,
+                        'order_condition': OrderCondition.SHORT_SELLING if p['shortQuantity'] > 0 else OrderCondition.CASH,
                     }
                     for p in position
                 ]
@@ -343,9 +343,7 @@ class SchwabAccount(Account):
                 return 0
 
             return float(
-                balance_response.json()[0]
-                .get('aggregatedBalance', {})
-                .get('currentLiquidationValue', '0')
+                balance_response.json()[0]['aggregatedBalance']['currentLiquidationValue']
             )
         except Exception as e:
             logging.error(f'API: 獲取總資產餘額時發生錯誤: {e}')
@@ -366,10 +364,7 @@ class SchwabAccount(Account):
                 return 0
 
             return float(
-                cash_response.json()[0]
-                .get('securitiesAccount', {})
-                .get('currentBalances', {})
-                .get('cashBalance', '0')
+                cash_response.json()[0]['securitiesAccount']['currentBalances']['cashBalance']
             )
         except Exception as e:
             logging.error(f'API: 獲取現金餘額時發生錯誤: {e}')
@@ -494,24 +489,24 @@ def trade_to_order(trade: Dict[str, Any]) -> Order:
     Returns:
         Order: FinLab 格式的委託單, finlab 的 quantity 是 1 張, 所以 Schwab 的 quantity 要除以 1000
     """
-    action = map_action(trade.get('orderLegCollection', [{}])[0].get('instruction', ''))
-    status = map_trade_status(trade.get('status', ''))
+    action = map_action(trade['orderLegCollection'][0]['instruction'])
+    status = map_trade_status(trade['status'])
     order_condition = map_order_condition(
-        trade.get('orderLegCollection', [{}])[0].get('instruction', '')
+        trade['orderLegCollection'][0]['instruction']
     )
-    quantity = Decimal(trade.get('quantity', '0')) / 1000
-    filled_quantity = Decimal(trade.get('filledQuantity', '0'))
+    quantity = float(trade['quantity']) / 1000
+    filled_quantity = float(trade['filledQuantity'])
 
     return Order(
-        order_id=trade.get('orderId'),
-        stock_id=trade.get('orderLegCollection', [{}])[0].get('instrument', {}).get('symbol'),
+        order_id=trade['orderId'],
+        stock_id=trade['orderLegCollection'][0]['instrument']['symbol'],
         action=action,
-        price=trade.get('price'),
+        price=trade['price'],
         quantity=quantity,
         filled_quantity=filled_quantity,
         status=status,
         order_condition=order_condition,
-        time=trade.get('enteredTime'),
+        time=trade['enteredTime'],
         org_order=trade,
     )
 
@@ -525,15 +520,15 @@ def quote_to_stock(json_response: Dict[str, Any]) -> Stock:
     Returns:
         Stock: FinLab 格式的股價行情
     """
-    quote = json_response.get('quote', {})
+    quote = json_response['quote']
     return Stock(
-        stock_id=json_response.get('symbol'),
-        open=quote.get('openPrice'),
-        high=quote.get('highPrice'),
-        low=quote.get('lowPrice'),
-        close=quote.get('closePrice'),
-        bid_price=quote.get('bidPrice'),
-        ask_price=quote.get('askPrice'),
-        bid_volume=quote.get('bidSize'),
-        ask_volume=quote.get('askSize'),
+        stock_id=json_response['symbol'],
+        open=quote['openPrice'],
+        high=quote['highPrice'],
+        low=quote['lowPrice'],
+        close=quote['closePrice'],
+        bid_price=quote['bidPrice'],
+        ask_price=quote['askPrice'],
+        bid_volume=quote['bidSize'],
+        ask_volume=quote['askSize'],
     )
