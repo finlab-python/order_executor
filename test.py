@@ -336,6 +336,93 @@ class TestSinopacAccount(unittest.TestCase):
             assert True
 
 
+class TestSchwabAccount(unittest.TestCase):
+    """測試 finlab 的 SchwabAccount 類別
+    Args:
+        unittest (_type_): _description_
+    Notes:
+        - 測試案例需要環境變數:
+            - SCHWAB_API_KEY: Schwab API Key
+            - SCHWAB_SECRET: Schwab API Secret
+            - SCHWAB_TOKEN_PATH: 存放 Schwab Token 的路徑
+        - 測試案例
+            - 回傳值是否符合預期(如回傳值型態、回傳值內容)
+    """
+
+    @classmethod
+    def setUpClass(self):
+        """開始測試時執行的動作"""
+
+        from schwab_account import SchwabAccount
+
+        self.app_key = os.getenv('SCHWAB_API_KEY')
+        self.app_secret = os.getenv('SCHWAB_SECRET')
+        self.app_token = os.getenv('SCHWAB_TOKEN_PATH')
+
+        print('----------------------------------------')
+        print('SCHWAB_API_KEY: ' + self.app_key)
+        print('SCHWAB_SECRET: ' + self.app_secret)
+        print('SCHWAB_TOKEN_PATH: ' + self.app_token)
+        print('----------------------------------------')
+
+        self.schwab_account = SchwabAccount(
+            api_key=self.app_key,
+            app_secret=self.app_secret,
+            token_path=self.app_token,
+        )
+
+    @classmethod
+    def tearDownClass(self):
+        """結束測試時執行的動作"""
+        oe = OrderExecutor(Position({}), self.schwab_account)
+        oe.cancel_orders()
+
+    def setUp(self):
+        pass
+
+    def tearDown(self):
+        pass
+
+    def test_create_order(self):
+        self.schwab_account.create_order(
+            action=Action.BUY,
+            stock_id='AAPL',
+            quantity=1,
+            price=30.0,
+            odd_lot=True,
+            market_order=False,
+            best_price_limit=False,
+            order_cond=OrderCondition.CASH,
+        )
+
+    def test_get_price_info(self):
+        price_info = self.schwab_account.get_price_info(['AAPL'])
+        self.assertIn('AAPL', price_info)
+        self.assertIn('收盤價', price_info['AAPL'])
+        self.assertIn('漲停價', price_info['AAPL'])
+        self.assertIn('跌停價', price_info['AAPL'])
+
+    def test_get_position(self):
+        positions = self.schwab_account.get_position()
+        self.assertIsInstance(positions, Position)
+
+    def test_get_orders(self):
+        orders = self.schwab_account.get_orders()
+        self.assertIsInstance(orders, dict)
+
+    def test_get_stocks(self):
+        stocks = self.schwab_account.get_stocks(['AAPL'])
+        self.assertIn('AAPL', stocks)
+
+    def test_get_total_balance(self):
+        balance = self.schwab_account.get_total_balance()
+        self.assertIsInstance(balance, float)
+
+    def test_get_cash(self):
+        cash = self.schwab_account.get_cash()
+        self.assertIsInstance(cash, float)
+
+
 class CalculatePriceWithExtraBidTest(unittest.TestCase):
     def test_calculate_price_with_extra_bid(self):
         from finlab.online.order_executor import calculate_price_with_extra_bid
