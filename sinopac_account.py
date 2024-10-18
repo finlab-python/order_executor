@@ -63,6 +63,12 @@ class SinopacAccount(Account):
         contract = sj.contracts.Contract(
             security_type='STK', code=stock_id, exchange='TSE')
         pinfo = self.get_price_info()
+
+        if stock_id not in pinfo:
+            # warning
+            logging.warning(f"stock {stock_id} not in price info")
+            return
+        
         limitup = float(pinfo[stock_id]['漲停價'])
         limitdn = float(pinfo[stock_id]['跌停價'])
         last_close = float(pinfo[stock_id]['收盤價'])
@@ -291,6 +297,9 @@ class SinopacAccount(Account):
             position_detail = self.api.list_position_detail(self.api.stock_account, p.id)
         
             for pp in position_detail:
+
+                if pp.quantity == 0:
+                    continue
         
                 buy_orders.append(Order(
                     order_id=pp.dseq,
