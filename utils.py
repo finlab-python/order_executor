@@ -38,7 +38,7 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
 
     # If portfolio contains shorts
     if weights[-1][1] < 0:
-        longs = {t: w for t, w in weights if w >= 0}
+        longs = {t: w for t, w in weights if w > 0}
         shorts = {t: -w for t, w in weights if w < 0}
 
         # Make them sum to one
