@@ -29,7 +29,7 @@ class SinopacAccount(Account):
                  certificate_path=None):
 
         api_key = api_key or os.environ.get('SHIOAJI_API_KEY')
-        secret_key = secret_key or os.environ.get('SHIOAJI_SECRET_KEY')
+        secret_key = secret_key or os.environ.get('SHIOAJI_SECRET_KEY') or os.environ.get('SHIOAJI_API_SECRET')
 
         certificate_password = certificate_password or os.environ.get(
             'SHIOAJI_CERT_PASSWORD')
@@ -204,14 +204,16 @@ class SinopacAccount(Account):
     def get_total_balance(self):
 
         # get position balance
-        lp = self.api.list_positions()
+        # lp = self.api.list_positions()
+        lp = self.api.list_positions(
+            self.api.stock_account, unit=sj.constant.Unit.Share)
 
         ac_pos = pd.DataFrame([p.dict() for p in lp])
 
         if len(ac_pos) == 0:
             return self.get_settlement() + self.get_cash()
 
-        return ((ac_pos.last_price * ac_pos.quantity * 1000) * (1 - 1.425/1000) * (1 - 3/1000)  \
+        return ((ac_pos.last_price * ac_pos.quantity) * (1 - 1.425/1000) * (1 - 3/1000)  \
                 - ac_pos.get('margin_purchase_amount', 0) - ac_pos.get('interest', 0)).sum() \
                 + self.get_settlement() + self.get_cash()
 
