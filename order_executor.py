@@ -570,7 +570,7 @@ class OrderExecutor():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
                 self.account.cancel_order(oid)
 
-    def generate_orders(self):
+    def generate_orders(self, progress=1, progress_precision=0):
         """
         Generate orders based on the difference between target position and present position.
         
@@ -589,10 +589,18 @@ class OrderExecutor():
                     raise ValueError(f"Stock ID {pp['stock_id']} does not end with {base_currency}")
 
         present_position = self.account.get_position()
-        orders = (target_position - present_position).position
-        return orders
+        orders = (target_position - present_position)
+        if progress != 1:
+            if not (progress >= 0 and progress <= 1):
+                raise ValueError("progress should be in the range of 0 to 1")
+            if progress_precision is None:
+                raise ValueError("progress_precision should be set when progress is not 1")
+            
+            orders = Position.from_list([{**o, 'quantity': round(o['quantity']*progress, progress_precision)} for o in orders.position])
+
+        return orders.position
     
-    def execute_orders(self, orders, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
+    def execute_orders(self, orders, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, cancel_orders=True):
         """產生委託單，將部位同步成 self.target_position
         預設以該商品最後一筆成交價設定為限價來下單
         
@@ -610,7 +618,9 @@ class OrderExecutor():
         if extra_bid_pct < -0.1 or extra_bid_pct > 0.1:
             raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
 
-        self.cancel_orders()
+        if cancel_orders:
+            self.cancel_orders()
+
         stocks = self.account.get_stocks(list({o['stock_id'] for o in orders}))
 
         pinfo = None
@@ -703,7 +713,7 @@ class OrderExecutor():
         return orders
 
 
-    def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0):
+    def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, progress=1, progress_precision=0):
         """產生委託單，將部位同步成 self.target_position
         預設以該商品最後一筆成交價設定為限價來下單
         
@@ -713,10 +723,12 @@ class OrderExecutor():
             view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
             extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想；
                 假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
+            progress (float): 進度，預設為 1，即全部下單。若設定為 0.5，則只下一半的單。
+            progress_precision (int): 進度的精度，預設為 0，即只下整數張。若設定為 1，則下到 0.1 張。
         """
-
-        orders = self.generate_orders()
-        return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct)
+        self.cancel_orders()
+        orders = self.generate_orders(progress, progress_precision)
+        return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct, cancel_orders=False)
     
     
     def update_order_price(self, extra_bid_pct=0):
@@ -739,6 +751,10 @@ class OrderExecutor():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
 
                 price = stocks[o.stock_id].close
+
+                if o.price == price:
+                    continue
+                
                 price = calculate_price_with_extra_bid(price, extra_bid_pct if o.action == Action.BUY else -extra_bid_pct)
 
                 if pinfo and o.stock_id in pinfo:
@@ -750,6 +766,47 @@ class OrderExecutor():
                     logger.warning('No price info for stock %s', o.stock_id)
 
                 self.account.update_order(i, price=price)
+
+
+    def get_order_info(self):
+
+        def calc_order_info(oe):
+            target = oe.target_position
+            current = oe.account.get_position()
+            return {
+                'target': target.to_list(),
+                'current': current.to_list(),
+                'orders': (target - current).to_list()
+            }
+
+        def get_symbols(orders):
+            return [(o['stock_id'], str(o['order_condition'])) for o in orders]
+
+
+        def find_symbols(orders, symbol):
+            ret = [o for o in orders if o['stock_id'] == symbol]
+            if len(ret) == 0:
+                return {'quantity': 0, 'symbol': symbol[0], 'order_condition': symbol[1]}
+            return ret[0]
+
+        orders = calc_order_info(self)
+        symbols = sorted(list(set(get_symbols(orders['target']) + get_symbols(orders['current']))))
+        stocks = self.account.get_stocks(list(set([s[0] for s in symbols])))
+
+        order_info = []
+        for s in symbols:
+            pqty = float(find_symbols(orders['current'], s[0])['quantity'])
+            tqty = float(find_symbols(orders['target'], s[0])['quantity'])
+            order_info.append({
+                'price': stocks[s[0]].close,
+                'current_qty': pqty,
+                'target_qty': tqty,
+                'order_qty': tqty - pqty,
+                'symbol': s[0],
+                'order_condition': s[1],
+                })
+                
+        return sorted(order_info, key=lambda x: x['order_qty'] * x['price'], reverse=True)
                 
 
 def calculate_price_with_extra_bid(price, extra_bid_pct):
