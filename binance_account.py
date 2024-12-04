@@ -62,7 +62,7 @@ class BinanceHelper(object):
     spot_tickers = BinanceHelper.get_spot_asset_price(client)
     spot_tickers['USDTUSDT'] = 1
     spot_tickers = pd.Series(spot_tickers)
-    return (spot_tickers.loc[spot_account_balance.index.intersection(spot_tickers.index)] * spot_account_balance).sum()
+    return (spot_tickers.loc[spot_account_balance.index.intersection(spot_tickers.index)].astype(float) * spot_account_balance).sum()
   
   @staticmethod
   def get_futures_balance(client):
