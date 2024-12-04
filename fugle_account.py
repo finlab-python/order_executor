@@ -22,11 +22,14 @@ import copy
 import time
 import os
 
+trades = {}
+threads = {}
+callbacks = {}
 
 class FugleAccount(Account):
 
     required_module = 'fugle_trade'
-    module_version = '0.4.0'
+    module_version = '1.2.0'
 
     def __init__(self, config_path='./config.ini.example', market_api_key=None):
 
@@ -59,11 +62,32 @@ class FugleAccount(Account):
         sdk = SDK(config)
         sdk.login()
         self.sdk = sdk
-
         self.market_api_key = market_api_key
+        self.user_account = config['User']['Account']
 
-        self.trades = {}
-        self.thread = None
+        global trades, threads
+        trades[self.user_account] = {}
+
+        # 註冊接收委託回報的 callback
+        @self.sdk.on('order')
+        def on_order(order):
+
+            try:
+                order_id = self.get_org_order_id(order)
+                global trades, callbacks
+                trades[self.user_account][order_id] = create_finlab_order(order)
+                if self.user_account + order_id in callbacks:
+                    finish = callbacks[self.user_account + order_id](trades[self.user_account][order_id])
+                    if finish:
+                        del callbacks[self.user_account + order_id]
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                logging.warning(f"on_order: Cannot process order {order}: {e}")
+
+        if self.user_account not in threads:
+            self.thread = Thread(target=lambda: self.sdk.connect_websocket())
+            self.thread.start()
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
 
@@ -123,59 +147,78 @@ class FugleAccount(Account):
             logging.warning(
                 f"create_order: Cannot create order of {params}: {e}")
             return
-
-        ord_no = ret['ord_no']
-        if ord_no == '':
-            ord_no = ret['pre_ord_no']
-        self.trades[ord_no] = ret
-        return ord_no
+        
+        order_id = self.get_org_order_id(ret)
+        return order_id
 
     def update_order(self, order_id, price=None):
+
+        global trades, callbacks
 
         if isinstance(price, int):
             price = float(price)
 
-        if order_id not in self.trades:
+        if order_id not in trades[self.user_account] or trades[self.user_account][order_id].org_order.get('kind', '') == 'ACK':
             self.get_orders()
 
-        if order_id not in self.trades:
+        if order_id not in trades[self.user_account]:
             logging.warning(
                 f"update_order: Order id {order_id} not found, cannot update the price.")
 
         if price is not None:
             try:
-                if self.trades[order_id].org_order['ap_code'] == '5':
-                    fugle_order = self.trades[order_id].org_order
+                if trades[self.user_account][order_id].org_order['ap_code'] == '5':
+                    fugle_order = trades[self.user_account][order_id].org_order
                     action = Action.BUY if fugle_order['buy_sell'] == 'B' else Action.SELL
                     stock_id = fugle_order['stock_no']
-                    q = fugle_order['org_qty_share'] - \
-                        fugle_order['mat_qty_share'] - \
-                        fugle_order['cel_qty_share']
+                    user_cancel_orders = fugle_order['cel_qty']
+                    # q = fugle_order['org_qty_share'] - \
+                    #     fugle_order['mat_qty_share'] - \
+                    #     fugle_order['cel_qty_share']
 
                     self.cancel_order(order_id)
-                    self.create_order(
-                        action=action, stock_id=stock_id, quantity=q, price=price, odd_lot=True)
+
+                    def callback(order):
+                        if order.status == OrderStatus.CANCEL:
+                            all_canceled_orders = float(trades[self.user_account][order_id].org_order['cel_qty'])
+                            quantity = int((all_canceled_orders - user_cancel_orders))
+                            self.create_order(
+                                action=action, stock_id=stock_id, quantity=quantity, price=price, odd_lot=True)
+                            return True
+                        return False
+                            
+                    callbacks[self.user_account + order_id] = callback
                 else:
                     self.sdk.modify_price(
-                        self.trades[order_id].org_order, price)
+                        trades[self.user_account][order_id].org_order, price)
             except ValueError as ve:
                 logging.warning(
                     f"update_order: Cannot update price of order {order_id}: {ve}")
 
 
     def cancel_order(self, order_id):
-        if not order_id in self.trades:
-            self.trades = self.get_orders()
+
+        global trades
+        if not order_id in trades[self.user_account] or trades[self.user_account][order_id].org_order.get('kind', '') == 'ACK':
+            trades[self.user_account] = self.get_orders()
 
         try:
-            self.sdk.cancel_order(self.trades[order_id].org_order)
+            self.sdk.cancel_order(trades[self.user_account][order_id].org_order)
         except Exception as e:
             logging.warning(
                 f"cancel_order: Cannot cancel order {order_id}: {e}")
+            
+
+    def get_org_order_id(self, org_order):
+        order_id = org_order['ord_no']
+        if order_id == '':
+            order_id = org_order['pre_ord_no']
+        return order_id
+
 
     def get_orders(self):
 
-
+        global trades
         success = False
         fetch_count = 0
 
@@ -193,12 +236,10 @@ class FugleAccount(Account):
 
         ret = {}
         for o in orders:
-            order_id = o['ord_no']
-            if order_id == '':
-                order_id = o['pre_ord_no']
-
+            order_id = self.get_org_order_id(o)
             ret[order_id] = create_finlab_order(o)
-        self.trades = ret
+        trades[self.user_account] = ret
+
         return copy.deepcopy(ret)
 
     def get_stocks(self, stock_ids):
@@ -317,15 +358,25 @@ class FugleAccount(Account):
     def get_market(self):
         return TWMarketInfo()
 
+
 def create_finlab_order(order):
     """將 fugle package 的委託單轉換成 finlab 格式"""
+
+
+    # deepcopy order
+    org_order = order
+    order = copy.deepcopy(order)
+
+    order['org_qty'] = float(order['org_qty'])
+    order['mat_qty'] = float(order['mat_qty'])
+    order['cel_qty'] = float(order['cel_qty'])
 
     status = OrderStatus.NEW
     if order['org_qty'] == order['mat_qty']:
         status = OrderStatus.FILLED
-    elif order['mat_qty'] == 0 and order['celable'] == '1':
+    elif order['mat_qty'] == 0 and order['cel_qty'] == 0 and order.get('celable', '1') == '1':
         status = OrderStatus.NEW
-    elif order['org_qty'] > order['mat_qty'] + order['cel_qty'] and order['celable'] == '1' and order['mat_qty'] > 0:
+    elif order['org_qty'] > order['mat_qty'] + order['cel_qty'] and order.get('celable', '1') == '1' and order['mat_qty'] > 0:
         status = OrderStatus.PARTIALLY_FILLED
     elif order['cel_qty'] > 0 or order['err_code'] != '00000000' or order['celable'] == '2':
         status = OrderStatus.CANCEL
@@ -344,18 +395,24 @@ def create_finlab_order(order):
     if order_id == '':
         order_id = order['pre_ord_no']
 
+    if 'ord_date' in order:
+        order_time = datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f')
+    else:
+        order_time = datetime.datetime.strptime(order['ret_date'] + order['ret_time'], '%Y%m%d%H%M%S%f')
+
     return Order(**{
         'order_id': order_id,
         'stock_id': order['stock_no'],
         'action': Action.BUY if order['buy_sell'] == 'B' else Action.SELL,
-        'price': order.get('od_price', order['avg_price']),
-        'quantity': order['org_qty'],
+        'price': order.get('od_price', 0),
+        'quantity': order['org_qty'] - order['cel_qty'],
         'filled_quantity': filled_quantity,
         'status': status,
         'order_condition': order_condition,
-        'time': datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f'),
-        'org_order': order
+        'time': order_time,#datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f'),
+        'org_order': org_order
     })
+
 
 
 def to_finlab_stock(json_response):
