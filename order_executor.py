@@ -596,7 +596,7 @@ class OrderExecutor():
             if progress_precision is None:
                 raise ValueError("progress_precision should be set when progress is not 1")
             
-            orders = Position.from_list([{**o, 'quantity': round(o['quantity']*progress, progress_precision)} for o in orders.position])
+            orders = Position.from_list([{**o, 'quantity': round(float(o['quantity'])*progress, progress_precision)} for o in orders.position])
 
         return orders.position
     
