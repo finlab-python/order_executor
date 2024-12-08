@@ -271,8 +271,8 @@ class Position():
 
         # next trading date arrived
 
-        if hasattr(report.market_info, 'market_close_at_timestamp'):
-            next_trading_time = report.market_info.market_close_at_timestamp(report.next_trading_date)
+        if hasattr(report.market, 'market_close_at_timestamp'):
+            next_trading_time = report.market.market_close_at_timestamp(report.next_trading_date)
         else:
             # tw stock only
             tz = datetime.timezone(datetime.timedelta(hours=8))
@@ -308,16 +308,16 @@ class Position():
         w = w.groupby(w.index.tolist()).last()
 
         if 'price' not in kwargs:
-            if hasattr(report.market_info, 'get_reference_price'):
-                price = report.market_info.get_reference_price()
+            if hasattr(report.market, 'get_reference_price'):
+                price = report.market.get_reference_price()
 
             else:
-                price = report.market_info.get_price('close', adj=False).iloc[-1].to_dict()
+                price = report.market.get_price('close', adj=False).iloc[-1].to_dict()
 
             kwargs['price'] = price
 
-        if hasattr(report.market_info, 'get_board_lot_size'):
-            kwargs['board_lot_size'] = report.market_info.get_board_lot_size()
+        if hasattr(report.market, 'get_board_lot_size'):
+            kwargs['board_lot_size'] = report.market.get_board_lot_size()
         
         # find w.index not in price.keys()
         # import pdb; pdb.set_trace()

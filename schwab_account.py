@@ -7,7 +7,7 @@ import os
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from finlab.market_info import USAllMarketInfo
+from finlab.markets.us import USMarket
 from finlab.online.base_account import Account, Order, Stock
 from finlab.online.enums import Action, OrderCondition, OrderStatus
 from finlab.online.order_executor import Position
@@ -385,13 +385,13 @@ class SchwabAccount(Account):
         """
         return True
 
-    def get_market(self) -> USAllMarketInfo:
+    def get_market(self) -> USMarket:
         """獲取市場資訊
 
         Returns:
-            USAllMarketInfo: 美國市場資訊實例
+            USMarket: 美國市場資訊實例
         """
-        return USAllMarketInfo()
+        return USMarket()
 
 
 def map_trade_status(status: str) -> OrderStatus:

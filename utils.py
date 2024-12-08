@@ -13,8 +13,13 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
 
     weights.index = weights.index.to_series().astype(str)\
             .str.split(' ').str[0]
+    latest_prices = pd.Series(latest_prices)
+    latest_prices.index = latest_prices.index.to_series().astype(str)\
+            .str.split(' ').str[0]
+    
+    weights = weights.loc[weights.index.isin(latest_prices.index)]
+    weights = weights.loc[latest_prices.loc[weights.index].replace([np.inf, -np.inf, 0], np.nan).notna()]
     weights = list(weights.items())
-    latest_prices = latest_prices
 
     if len(weights) == 0:
         return {}, total_portfolio_value

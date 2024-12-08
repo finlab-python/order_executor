@@ -13,7 +13,7 @@ from finlab.online.utils import estimate_stock_price
 from finlab.online.enums import *
 from finlab.online.order_executor import Position
 from finlab import data
-from finlab.market_info import TWMarketInfo
+from finlab.markets.tw import TWMarket
 
 pattern = re.compile(r'(?<!^)(?=[A-Z])')
 
@@ -238,7 +238,7 @@ class SinopacAccount(Account):
     
 
     def get_market(self):
-        return TWMarketInfo()
+        return TWMarket()
     
 
     @staticmethod
@@ -332,8 +332,8 @@ class SinopacAccount(Account):
         if isinstance(end, str):
             end = datetime.datetime.fromisoformat(end)
 
-        start = TWMarketInfo().market_close_at_timestamp(start - datetime.timedelta(days=1))
-        end = TWMarketInfo().market_close_at_timestamp(end)
+        start = TWMarket().market_close_at_timestamp(start - datetime.timedelta(days=1))
+        end = TWMarket().market_close_at_timestamp(end)
 
         start = start.replace(hour=0, minute=0, second=0, microsecond=0)
         end = end.replace(hour=23, minute=59, second=59, microsecond=999999)

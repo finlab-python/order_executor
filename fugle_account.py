@@ -7,8 +7,8 @@ from fugle_trade.util import setup_keyring, set_password
 
 from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
-from finlab.market_info import TWMarketInfo
-from finlab.online.order_executor import calculate_price_with_extra_bid, Position
+from finlab.markets.tw import TWMarket
+from finlab.online.order_executor import Position
 from finlab import data
 
 from threading import Thread
@@ -356,7 +356,7 @@ class FugleAccount(Account):
         return ref.set_index('stock_id').to_dict(orient='index')
 
     def get_market(self):
-        return TWMarketInfo()
+        return TWMarket()
 
 
 def create_finlab_order(order):
