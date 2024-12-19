@@ -273,6 +273,10 @@ class Position():
 
         if hasattr(report.market, 'market_close_at_timestamp'):
             next_trading_time = report.market.market_close_at_timestamp(report.next_trading_date)
+
+            # check next_trading_time is tz aware
+            if next_trading_time.tzinfo is None:
+                raise ValueError("Output from market.market_close_at_timestamp should be timezone aware datetime object.")
         else:
             # tw stock only
             tz = datetime.timezone(datetime.timedelta(hours=8))
