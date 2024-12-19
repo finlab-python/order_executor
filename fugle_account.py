@@ -87,6 +87,7 @@ class FugleAccount(Account):
 
         if self.user_account not in threads:
             self.thread = Thread(target=lambda: self.sdk.connect_websocket())
+            self.thread.daemon = True
             self.thread.start()
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
