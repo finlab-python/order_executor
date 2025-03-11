@@ -604,7 +604,7 @@ class OrderExecutor():
 
         return orders.position
     
-    def execute_orders(self, orders, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, cancel_orders=True):
+    def execute_orders(self, orders, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, cancel_orders=True, buy_only=False, sell_only=False):
         """產生委託單，將部位同步成 self.target_position
         預設以該商品最後一筆成交價設定為限價來下單
         
@@ -615,6 +615,8 @@ class OrderExecutor():
             view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
             extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想；
                 假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
+            buy_only (bool): 若設為 True，只下買單
+            sell_only (bool): 若設為 True，只下賣單
         """
 
         if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
@@ -637,12 +639,19 @@ class OrderExecutor():
             if o['quantity'] == 0:
                 continue
 
+            action = Action.BUY if o['quantity'] > 0 else Action.SELL
+            
+            if buy_only and action == Action.SELL:
+                continue
+
+            if sell_only and action == Action.BUY:
+                continue
+            
             if o['stock_id'] not in stocks:
                 logging.warning(o['stock_id'] + 'not in stocks... skipped!')
                 continue
 
             stock = stocks[o['stock_id']]
-            action = Action.BUY if o['quantity'] > 0 else Action.SELL
             price = stock.close if isinstance(stock.close, numbers.Number) else (
                     stock.bid_price if action == Action.BUY else stock.ask_price
                     )
@@ -717,7 +726,7 @@ class OrderExecutor():
         return orders
 
 
-    def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, progress=1, progress_precision=0):
+    def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, progress=1, progress_precision=0, buy_only=False, sell_only=False):
         """產生委託單，將部位同步成 self.target_position
         預設以該商品最後一筆成交價設定為限價來下單
         
@@ -729,10 +738,12 @@ class OrderExecutor():
                 假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
             progress (float): 進度，預設為 1，即全部下單。若設定為 0.5，則只下一半的單。
             progress_precision (int): 進度的精度，預設為 0，即只下整數張。若設定為 1，則下到 0.1 張。
+            buy_only (bool): 若設為 True，只下買單
+            sell_only (bool): 若設為 True，只下賣單
         """
         self.cancel_orders()
         orders = self.generate_orders(progress, progress_precision)
-        return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct, cancel_orders=False)
+        return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct, cancel_orders=False, buy_only=False, sell_only=False)
     
     
     def update_order_price(self, extra_bid_pct=0):
