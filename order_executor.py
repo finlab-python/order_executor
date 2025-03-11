@@ -623,6 +623,8 @@ class OrderExecutor():
             raise ValueError("Only one of 'market_order', 'best_price_limit', or 'extra_bid_pct' can be set.")
         if extra_bid_pct < -0.1 or extra_bid_pct > 0.1:
             raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
+        if buy_only and sell_only:
+            raise ValueError("The buy_only and sell_only parameters cannot be set to True at the same time.")
 
         if cancel_orders:
             self.cancel_orders()
