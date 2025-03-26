@@ -745,7 +745,7 @@ class OrderExecutor():
         """
         self.cancel_orders()
         orders = self.generate_orders(progress, progress_precision)
-        return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct, cancel_orders=False, buy_only=False, sell_only=False)
+        return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct, cancel_orders=False, buy_only=buy_only, sell_only=sell_only)
     
     
     def update_order_price(self, extra_bid_pct=0):
