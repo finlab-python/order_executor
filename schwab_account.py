@@ -525,7 +525,7 @@ def quote_to_stock(json_response: Dict[str, Any]) -> Stock:
         open=quote['openPrice'],
         high=quote['highPrice'],
         low=quote['lowPrice'],
-        close=quote['closePrice'],
+        close=quote['lastPrice'],
         bid_price=quote['bidPrice'],
         ask_price=quote['askPrice'],
         bid_volume=quote['bidSize'],
