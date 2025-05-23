@@ -4,8 +4,8 @@ Schwab 帳戶操作模組
 
 import logging
 import os
-from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, List, Optional, Union
 
 from finlab.markets.us import USMarket
 from finlab.online.base_account import Account, Order, Stock
@@ -104,6 +104,9 @@ class SchwabAccount(Account):
         """
         try:
             pinfo = self.get_price_info([stock_id])
+            limitup = float(pinfo[stock_id]['漲停價'])
+            limitdn = float(pinfo[stock_id]['跌停價'])
+            last_close = float(pinfo[stock_id]['收盤價'])
 
             if stock_id not in pinfo:
                 raise ValueError(f'股票 {stock_id} 不在價格資訊中')
@@ -116,19 +119,29 @@ class SchwabAccount(Account):
             order = {
                 'session': 'NORMAL',
                 'duration': 'DAY',
-                'orderType': 'MARKET' if market_order or best_price_limit else 'LIMIT',
                 'orderLegCollection': [
                     {
                         'instruction': action_str,
                         'instrument': {'assetType': 'EQUITY', 'symbol': stock_id},
-                        'quantity': quantity,
+                        'quantity': format_quantity(quantity),
                     }
                 ],
                 'orderStrategyType': 'SINGLE',
             }
 
-            if not (market_order or best_price_limit):
-                order['price'] = price
+            if market_order:
+                order['orderType'] = 'MARKET'
+            elif best_price_limit:
+                order['orderType'] = 'LIMIT'
+                if action == Action.BUY:
+                    order['price'] = format_price(limitdn)
+                elif action == Action.SELL:
+                    order['price'] = format_price(limitup)
+            else:
+                if price is None:
+                    raise ValueError("限價單必須提供價格 (price 不能為 None)")
+                order['orderType'] = 'LIMIT'
+                order['price'] = format_price(price)
 
             trade_response = self.client.place_order(self.account_hash, order)
             if trade_response.status_code == 201:
@@ -210,7 +223,7 @@ class SchwabAccount(Account):
 
             self.cancel_order(order_id)
             self.create_order(
-                action=action, stock_id=stock_id, quantity=quantity, price=price, odd_lot=True
+                action=action, stock_id=stock_id, quantity=quantity, price=price,
             )
         except Exception as e:
             logging.error(f'更新訂單 {order_id} 時發生錯誤: {e}')
@@ -531,3 +544,58 @@ def quote_to_stock(json_response: Dict[str, Any]) -> Stock:
         bid_volume=quote['bidSize'],
         ask_volume=quote['askSize'],
     )
+
+
+def format_price(price: Union[float, int, str]) -> str:
+    """
+    將價格格式化為字串，根據價格大小限制小數位數。
+
+    Args:
+        price (float | int | str): 價格
+
+    Returns:
+        str: 格式化後的價格字串
+
+    Raises:
+        ValueError: 當價格無法轉換為 Decimal 時
+    
+    Note:
+        Schwab 的規定：價格大於 1 美元時，小數點後最多只能有 2 位；價格小於 1 美元時，小數點後最多只能有 4 位。
+    """
+    try:
+        price_decimal = Decimal(str(price))
+    except (ValueError, TypeError, InvalidOperation):
+        raise ValueError(f"無法將價格 {price} 轉換為 Decimal 格式")
+    
+    if price_decimal >= 1:
+        formatted_price = price_decimal.quantize(Decimal('0.01'), rounding='ROUND_DOWN')
+    else:
+        formatted_price = price_decimal.quantize(Decimal('0.0001'), rounding='ROUND_DOWN')
+    
+    return str(formatted_price)
+
+
+def format_quantity(quantity: Union[float, int, str]) -> str:
+    """
+    將數量格式化為字串，根據數量大小限制小數位數。
+
+    Args:
+        quantity (float | int | str): 數量
+
+    Returns:
+        str: 格式化後的數量字串
+
+    Raises:
+        ValueError: 當數量無法轉換為 Decimal 時
+    
+    Note:
+        股票的數量最多只能有 3 位小數
+    """
+    try:
+        quantity_decimal = Decimal(str(quantity))
+    except (ValueError, TypeError, InvalidOperation):
+        raise ValueError(f"無法將數量 {quantity} 轉換為 Decimal 格式")
+    
+    formatted_quantity = quantity_decimal.quantize(Decimal('0.001'), rounding='ROUND_HALF_UP')
+    
+    return str(formatted_quantity)
