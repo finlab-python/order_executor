@@ -1,26 +1,37 @@
+from typing import Any, Union, Dict, Optional
+from dataclasses import dataclass, asdict
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any
-
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
-import pkg_resources
-import pandas as pd
-import numpy as np
-import importlib
-import requests
+from decimal import Decimal
+import importlib.util
 import datetime
 import numbers
-import time
-import os
+import logging
 
-from finlab import logger
+from finlab.config import get_default_market
+from finlab.online.position import Position
 from finlab.online.enums import *
+from finlab.market import Market
+from finlab import data
 
+logger = logging.getLogger(__name__)
+
+Number = Union[int, float, Decimal]
+
+def typesafe_op(a: Number, b: Number, op: str) -> Number:
+    if isinstance(a, Decimal) and isinstance(b, Decimal):
+        if op == '+':
+            return a + b
+        elif op == '-':
+            return a - b
+    elif isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        if op == '+':
+            return a + b
+        elif op == '-':
+            return a - b
+    raise TypeError(f"Unsupported types for operation {op}: {type(a)}, {type(b)}")
 
 @dataclass
-class Order():
-
+class Order:
     """
     Order status
 
@@ -30,9 +41,9 @@ class Order():
         order_id (str): 委託單的 id，與券商 API 所提供的 id 一致
         stock_id (str): 股票代號 ex: '2330'
         action (Action): 買賣方向，通常為 'BUY' 或是 'SELL'
-        price (numbers.Number): 股票買賣的價格(限價單)
-        quantity (numbers.Number): 委託股票的總數量（張數），允許小數點
-        filled_quantity (numbers.Number): 以成交股票的數量（張數），允許小數點
+        price (Number): 股票買賣的價格(限價單)
+        quantity (Number): 委託股票的總數量（張數），允許小數點
+        filled_quantity (Number): 以成交股票的數量（張數），允許小數點
         status (OrderStatus): 委託狀態，可以設定為：'NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCEL'
         time (datetime.datetime): 委託時間
         org_order (Any = None): 券商所提供的委託物件格式
@@ -41,9 +52,9 @@ class Order():
     order_id: str
     stock_id: str
     action: Action
-    price: numbers.Number
-    quantity: numbers.Number
-    filled_quantity: numbers.Number
+    price: Number
+    quantity: Number
+    filled_quantity: Number
     status: OrderStatus
     order_condition: OrderCondition
     time: datetime.datetime
@@ -51,8 +62,7 @@ class Order():
 
 
 @dataclass
-class Stock():
-
+class Stock:
     """
     Stock
 
@@ -60,31 +70,36 @@ class Stock():
 
     Attributes:
         stock_id (str): 股票代號
-        open (numbers.Number): 開盤價
-        high (numbers.Number): 最高價
-        low (numbers.Number): 最低價
-        close (numbers.Number): 收盤價
-        bid_price (numbers.Number): 買方第一檔價格
-        bid_volume (numbers.Number): 買方第一檔量
-        ask_price (numbers.Number): 賣方第一檔價格
-        ask_volume (numbers.Number: 賣方第一檔量
+        open (Number): 開盤價
+        high (Number): 最高價
+        low (Number): 最低價
+        close (Number): 收盤價
+        bid_price (Number): 買方第一檔價格
+        bid_volume (Number): 買方第一檔量
+        ask_price (Number): 賣方第一檔價格
+        ask_volume (Number): 賣方第一檔量
     """
 
     stock_id: str
-    open: numbers.Number
-    high: numbers.Number
-    low: numbers.Number
-    close: numbers.Number
-    bid_price: numbers.Number
-    bid_volume: numbers.Number
-    ask_price: numbers.Number
-    ask_volume: numbers.Number
+    open: Number
+    high: Number
+    low: Number
+    close: Number
+    bid_price: Number
+    bid_volume: Number
+    ask_price: Number
+    ask_volume: Number
 
     def to_dict(self):
-        return {a: getattr(self, a) for a in Stock.attrs}
+        return asdict(self)
 
 
 class Account(ABC):
+
+    # Required module name and version for the account implementation
+    required_module: str = ""
+    module_version: str = ""
+
     """股票帳戶的 abstract class
     可以繼承此 Account，來實做券商的帳戶買賣動作，目前已經實做 SinopacAccount (永豐證券) 以及 FugleAccount (玉山富果)，來進行交易。可以用以下方式建構物件並用來交易：
 
@@ -124,25 +139,27 @@ class Account(ABC):
     """
 
     @classmethod
-    def check_version(self):
+    def check_version(cls) -> None:
 
-        m = self.required_module
-        v = self.module_version
+        m = cls.required_module
+        v = cls.module_version
 
         # check module installed
         if importlib.util.find_spec(m) is None:
-            raise Exception(
-                f"Please install {m} using the following script: pip install {m}=={v}.")
-
-        # check module version
-        present_version = pkg_resources.get_distribution(m).version
-        if present_version > v:
-            logger.warning(
-                f'Current {m}=={present_version} may not be compatable. You could using the following command to install the compatable version: pip install {m}=={v}')
-        
+            logger.error(f"Module {m} is not installed. Please install it using pip.")
 
     @abstractmethod
-    def create_order(self, action, stock_id, quantity, price=None, force=False, wait_for_best_price=False):
+    def create_order(
+        self,
+        action: Action,
+        stock_id: str,
+        quantity: Number,
+        price: Optional[Number] = None,
+        odd_lot: bool = False,
+        market_order: bool = False,
+        best_price_limit: Optional[Number] = None,
+        order_cond: OrderCondition = OrderCondition.CASH,
+    ) -> str:
         """產生新的委託單
 
         Args:
@@ -150,9 +167,9 @@ class Account(ABC):
 
             stock_id (str): 股票代號 ex: '2330'
 
-            quantity (numbers.Number): 委託股票的總數量（張數），允許小數點
+            quantity (Number): 委託股票的總數量（張數），允許小數點
 
-            price (numbers.Number, optional): 股票買賣的價格(限價單)
+            price (Number, optional): 股票買賣的價格(限價單)
 
             force (bool): 是否用最差之價格（長跌停）強制成交? 當成交量足夠時，可以比較快成交，然而當成交量低時，容易有大的滑價
 
@@ -164,13 +181,18 @@ class Account(ABC):
         pass
 
     @abstractmethod
-    def update_order(self, order_id, price=None, quantity=None):
+    def update_order(
+        self,
+        order_id,
+        price: Optional[Number] = None,
+        quantity: Optional[Number] = None,
+    ) -> None:
         """產生新的委託單
 
         Attributes:
             order_id (str): 券商所提供的委託單 ID
-            price (numbers.Number, optional): 更新的限價
-            quantity (numbers.Number, optional): 更新的待成交量
+            price (Number, optional): 更新的限價
+            quantity (Number, optional): 更新的待成交量
 
         Returns:
             (None): 無跳出 erorr 代表成功更新委託單
@@ -196,9 +218,9 @@ class Account(ABC):
         pass
 
     @abstractmethod
-    def get_orders(self):
+    def get_orders(self) -> Dict[str, Order]:
         """拿到現在所有委託單
-        
+
         Returns:
             (Dict[str, Order]): 所有委託單 id 與委託單資料
                 !!! example
@@ -207,12 +229,12 @@ class Account(ABC):
         pass
 
     @abstractmethod
-    def get_stocks(self, stock_ids):
+    def get_stocks(self, stock_ids) -> Dict[str, Stock]:
         """拿到現在股票報價
 
         Attributes:
             stock_ids (`list` of `str`): 一次拿取所有股票的報價，ex: ['1101', '2330']
-        
+
         Returns:
             (dict): 報價資料，
                 !!! example
@@ -221,7 +243,7 @@ class Account(ABC):
         pass
 
     @abstractmethod
-    def get_position(self):
+    def get_position(self) -> Position:
         """拿到當前帳戶的股票部位
 
         Returns:
@@ -230,19 +252,19 @@ class Account(ABC):
         pass
 
     @abstractmethod
-    def get_total_balance(self):
+    def get_total_balance(self) -> int:
         """拿到當前帳戶的股票部位淨值"""
         pass
 
     @abstractmethod
-    def get_cash(self):
+    def get_cash(self) -> int:
         """拿到當前帳戶的現金"""
         pass
-    
+
     @abstractmethod
-    def get_settlement(self):
+    def get_settlement(self) -> int:
         """拿到當前帳戶的結算資料"""
-        pass        
+        pass
 
     def sep_odd_lot_order(self):
         return True
@@ -255,18 +277,22 @@ class Account(ABC):
 
         for sid, p in price.items():
             if p == 0:
-                bid_price = s[sid].bid_price if s[sid].bid_price != 0 else s[sid].ask_price
-                ask_price = s[sid].ask_price if s[sid].ask_price != 0 else s[sid].bid_price
-                price[sid] = (bid_price + ask_price)/2
+                bid_price = (
+                    s[sid].bid_price if s[sid].bid_price != 0 else s[sid].ask_price
+                )
+                ask_price = (
+                    s[sid].ask_price if s[sid].ask_price != 0 else s[sid].bid_price
+                )
+
+                price[sid] = typesafe_op(bid_price, ask_price, '+') / 2
 
             if price[sid] == 0:
                 raise Exception(
-                    f"Stock {sid} has no price to reference. Use latest close of previous trading day")
+                    f"Stock {sid} has no price to reference. Use latest close of previous trading day"
+                )
 
         return price
-    
-    def get_market(self):
-        """拿到當前帳戶的市場"""
-        pass
-        
 
+    def get_market(self) -> Market:
+        """拿到當前帳戶的市場"""
+        return get_default_market()
