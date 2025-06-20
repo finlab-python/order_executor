@@ -834,7 +834,7 @@ class FubonAccount(Account):
                         logging.warning(f"update_order: 修改價格時發生錯誤: {e}")
 
             # 更新數量
-            if quantity is not None:
+            if quantity:
                 try:
                     order_record = order.org_order
                     # 根據市場類型確定數量單位
