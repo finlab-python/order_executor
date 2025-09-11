@@ -77,9 +77,9 @@ class FugleAccount(Account):
                 global trades, callbacks
                 trades[self.user_account][order_id] = create_finlab_order(order)
                 if self.user_account + order_id in callbacks:
-                    finish = callbacks[self.user_account + order_id](trades[self.user_account][order_id])
-                    if finish:
-                        del callbacks[self.user_account + order_id]
+                    callback_func = callbacks[self.user_account + order_id]
+                    del callbacks[self.user_account + order_id]
+                    callback_func(trades[self.user_account][order_id])
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -173,9 +173,9 @@ class FugleAccount(Account):
                     action = Action.BUY if fugle_order['buy_sell'] == 'B' else Action.SELL
                     stock_id = fugle_order['stock_no']
                     user_cancel_orders = fugle_order['cel_qty']
-                    # q = fugle_order['org_qty_share'] - \
-                    #     fugle_order['mat_qty_share'] - \
-                    #     fugle_order['cel_qty_share']
+                    q = fugle_order['org_qty_share'] - \
+                        fugle_order['mat_qty_share'] - \
+                        fugle_order['cel_qty_share']
 
                     self.cancel_order(order_id)
 
