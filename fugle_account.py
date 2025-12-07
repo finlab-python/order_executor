@@ -1,9 +1,9 @@
 from configparser import ConfigParser
-from fugle_trade.sdk import SDK
-from fugle_trade.order import OrderObject
-from fugle_trade.constant import Action as fugleAction
-from fugle_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
-from fugle_trade.util import setup_keyring, set_password
+from esun_trade.sdk import SDK
+from esun_trade.order import OrderObject
+from esun_trade.constant import Action as fugleAction
+from esun_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
+from esun_trade.util import setup_keyring, set_password
 
 from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
@@ -28,8 +28,7 @@ callbacks = {}
 
 class FugleAccount(Account):
 
-    required_module = 'fugle_trade'
-    module_version = '1.2.0'
+    required_module = 'esun_trade'
 
     def __init__(self, config_path='./config.ini.example', market_api_key=None):
 
@@ -38,10 +37,15 @@ class FugleAccount(Account):
 
         self.market_api_key = market_api_key
 
-        if 'FUGLE_CONFIG_PATH' in os.environ:
+        # Support both ESUN_* (new) and FUGLE_* (legacy) environment variables
+        if 'ESUN_CONFIG_PATH' in os.environ:
+            config_path = os.environ['ESUN_CONFIG_PATH']
+        elif 'FUGLE_CONFIG_PATH' in os.environ:
             config_path = os.environ['FUGLE_CONFIG_PATH']
 
-        if 'FUGLE_MARKET_API_KEY' in os.environ:
+        if 'ESUN_MARKET_API_KEY' in os.environ:
+            market_api_key = os.environ['ESUN_MARKET_API_KEY']
+        elif 'FUGLE_MARKET_API_KEY' in os.environ:
             market_api_key = os.environ['FUGLE_MARKET_API_KEY']
 
         self.timestamp_for_get_position = datetime.datetime(2021, 1, 1)
@@ -53,11 +57,15 @@ class FugleAccount(Account):
         if not os.path.isfile(config_path):
             raise Exception('無法找到 config 檔案')
         
-        if 'FUGLE_ACCOUNT_PASSWORD' in os.environ and 'FUGLE_CERT_PASSWORD' in os.environ:
+        # Support both ESUN_* (new) and FUGLE_* (legacy) environment variables for passwords
+        account_password = os.environ.get('ESUN_ACCOUNT_PASSWORD') or os.environ.get('FUGLE_ACCOUNT_PASSWORD')
+        cert_password = os.environ.get('ESUN_CERT_PASSWORD') or os.environ.get('FUGLE_CERT_PASSWORD')
+        
+        if account_password and cert_password:
 
             setup_keyring(config['User']['Account'])
-            set_password("fugle_trade_sdk:account", config['User']['Account'], os.environ['FUGLE_ACCOUNT_PASSWORD'])
-            set_password("fugle_trade_sdk:cert", config['User']['Account'], os.environ['FUGLE_CERT_PASSWORD'])
+            set_password("esun_trade_sdk:account", config['User']['Account'], account_password)
+            set_password("esun_trade_sdk:cert", config['User']['Account'], cert_password)
 
         sdk = SDK(config)
         sdk.login()
@@ -361,7 +369,7 @@ class FugleAccount(Account):
 
 
 def create_finlab_order(order):
-    """將 fugle package 的委託單轉換成 finlab 格式"""
+    """將 esun_trade package 的委託單轉換成 finlab 格式"""
 
 
     # deepcopy order

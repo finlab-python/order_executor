@@ -12,6 +12,26 @@ import imp
 imp.reload(order_executor)
 
 
+def get_strategy_display_name(strategies, strategy_id):
+    sd = strategies.get(strategy_id)
+    if isinstance(sd, dict):
+        data_obj = sd.get('data')
+        if isinstance(data_obj, dict):
+            name = data_obj.get('name')
+            if isinstance(name, str) and name:
+                return name
+    return str(strategy_id)
+
+
+def get_strategy_positions(strategies, strategy_id):
+    sd = strategies.get(strategy_id)
+    if isinstance(sd, dict):
+        pos = sd.get('positions')
+        if isinstance(pos, dict):
+            return pos
+    return {}
+
+
 class StrategySelector(object):
 
     def __init__(self, strategies):
@@ -19,12 +39,14 @@ class StrategySelector(object):
         self.strategy_out = widgets.Output()
         self.strategy_allocation = []
         self.callback = None
+        self.strategies = strategies
 
-        snames = list(strategies.keys())
+        # options: show human-friendly strategy name, value is uuid (strategy id)
+        snames = [(get_strategy_display_name(strategies, sid), sid) for sid in strategies.keys()]
         self.dropdown = widgets.Dropdown(
             description='策略:',
             options=snames,
-            value=snames[0],
+            value=snames[0][1] if len(snames) else None,
             disabled=False,
         )
         self.allocation = widgets.IntText(value=300000, description='金額:')
@@ -45,8 +67,10 @@ class StrategySelector(object):
             cancel_btn = widgets.Button(description=f'刪除')
             cancel_btn.ith = i
             cancel_btn.on_click(lambda btn: self.cancel_strategy(btn.ith))
-            boxes.append(widgets.HBox(
-                [cancel_btn, widgets.Label(value=f'策略名稱：{s}，部位：{a} 元')]))
+            boxes.append(widgets.HBox([
+                cancel_btn,
+                widgets.Label(value=f"策略名稱：{get_strategy_display_name(self.strategies, s)}，部位：{a} 元")
+            ]))
 
         self.strategy_out.clear_output()
         with self.strategy_out:
@@ -295,12 +319,12 @@ def order_panel(account):
         total_position = Position({})
 
         for (strategy, allocation) in allocations:
-            p = strategies[strategy]['positions']
-            if 'position' in p:
+            p = get_strategy_positions(strategies, strategy)
+            if 'position' in p and isinstance(p.get('position'), dict):
                 p = p['position']
 
             weights = {pname.split(' ')[0]: pp['next_weight']
-                       for pname, pp in p.items() if isinstance(pp, dict)}
+                       for pname, pp in p.items() if isinstance(pp, dict) and 'next_weight' in pp}
 
             price = account.get_price([s.split(' ')[0] for s in weights])
 
@@ -329,9 +353,12 @@ def order_panel(account):
     def position_check(strategy_selector,  odd_lot=False):
         with strategy_selector.strategy_out:
             pos = calc_position(strategy_selector.strategy_allocation, odd_lot)
-            strategy_stocks = {s: [i.split(' ')[0] for i in strategies[s]['positions'].keys()
-                                   if isinstance(strategies[s]['positions'][i], dict)]
-                               for (s, a) in strategy_selector.strategy_allocation}
+            strategy_stocks = {
+                get_strategy_display_name(strategies, s):
+                    [i.split(' ')[0] for i in get_strategy_positions(strategies, s).keys()
+                     if isinstance(get_strategy_positions(strategies, s).get(i), dict)]
+                for (s, a) in strategy_selector.strategy_allocation
+            }
             op.set_strategy_stocks(strategy_stocks)
             op.set_position(pos, account)
 
