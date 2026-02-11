@@ -127,6 +127,7 @@ class OrderExecutor():
         if hasattr(self.account, 'get_price_info'):
             pinfo = self.account.get_price_info()
 
+        executed_orders = []
         # make orders
         for o in orders:
 
@@ -216,8 +217,9 @@ class OrderExecutor():
                                           order_cond=o['order_condition'],
                                           best_price_limit=best_price_limit,
                                           )
+            executed_orders.append(o)
                 
-        return orders
+        return executed_orders
 
 
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, progress=1, progress_precision=0, buy_only=False, sell_only=False):
