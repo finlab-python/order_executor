@@ -127,6 +127,7 @@ class OrderExecutor():
         if hasattr(self.account, 'get_price_info'):
             pinfo = self.account.get_price_info()
 
+        executed_orders = []
         # make orders
         for o in orders:
 
@@ -181,6 +182,8 @@ class OrderExecutor():
             order_condition_str = 'CASH' if o['order_condition'] == OrderCondition.CASH else 'MARGIN_TRADING' if o['order_condition'] == OrderCondition.MARGIN_TRADING else 'SHORT_SELLING' if o['order_condition'] == OrderCondition.SHORT_SELLING else 'DAY_TRADING_LONG' if o['order_condition'] == OrderCondition.DAY_TRADING_LONG else 'DAY_TRADING_SHORT' if o['order_condition'] == OrderCondition.DAY_TRADING_SHORT else 'UNKNOWN'
             print(f'{action_str:<11} {o["stock_id"]:10} X {round(abs(o["quantity"]), 3):<10} @ {price_string:<11} {extra_bid_text} {order_condition_str}')
 
+            # Record orders that passed all filters (before view_only check)
+            executed_orders.append(o)
 
             quantity = abs(o['quantity'])
             board_lot_quantity = int(abs(quantity // 1))
@@ -216,8 +219,8 @@ class OrderExecutor():
                                           order_cond=o['order_condition'],
                                           best_price_limit=best_price_limit,
                                           )
-                
-        return orders
+
+        return executed_orders
 
 
     def create_orders(self, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, progress=1, progress_precision=0, buy_only=False, sell_only=False):
