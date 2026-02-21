@@ -39,7 +39,7 @@ class Order:
 
     Attributes:
         order_id (str): 委託單的 id，與券商 API 所提供的 id 一致
-        stock_id (str): 股票代號 ex: '2330'
+        stock_id (str): 股票代號 ex: '2330' (亦可透過 symbol 屬性存取)
         action (Action): 買賣方向，通常為 'BUY' 或是 'SELL'
         price (Number): 股票買賣的價格(限價單)
         quantity (Number): 委託股票的總數量（張數），允許小數點
@@ -60,6 +60,14 @@ class Order:
     time: datetime.datetime
     org_order: Any = None
 
+    @property
+    def symbol(self) -> str:
+        return self.stock_id
+
+    @symbol.setter
+    def symbol(self, value: str):
+        self.stock_id = value
+
 
 @dataclass
 class Stock:
@@ -69,7 +77,7 @@ class Stock:
     即時股票資料
 
     Attributes:
-        stock_id (str): 股票代號
+        stock_id (str): 股票代號 (亦可透過 symbol 屬性存取)
         open (Number): 開盤價
         high (Number): 最高價
         low (Number): 最低價
@@ -89,6 +97,14 @@ class Stock:
     bid_volume: Number
     ask_price: Number
     ask_volume: Number
+
+    @property
+    def symbol(self) -> str:
+        return self.stock_id
+
+    @symbol.setter
+    def symbol(self, value: str):
+        self.stock_id = value
 
     def to_dict(self):
         return asdict(self)

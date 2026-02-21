@@ -33,17 +33,17 @@ class OrderExecutor():
         present_position = self.account.get_position()
         new_orders = (self.target_position - present_position).position
 
-        stock_ids = [o['stock_id'] for o in new_orders]
-        quantity = {o['stock_id']: o['quantity'] for o in new_orders}
+        symbols = [o.get('symbol') or o['stock_id'] for o in new_orders]
+        quantity = {(o.get('symbol') or o['stock_id']): o['quantity'] for o in new_orders}
 
         res = requests.get('https://www.sinotrade.com.tw/Stock/Stock_3_8_3')
         dfs = pd.read_html(res.text)
-        credit_sids = dfs[0][dfs[0]['股票代碼'].astype(str).isin(stock_ids)]['股票代碼']
+        credit_sids = dfs[0][dfs[0]['股票代碼'].astype(str).isin(symbols)]['股票代碼']
 
         res = requests.get('https://www.sinotrade.com.tw/Stock/Stock_3_8_1')
         dfs = pd.read_html(res.text)
         credit_sids = pd.concat(
-            [credit_sids, dfs[0][dfs[0]['股票代碼'].astype(str).isin(stock_ids)]['股票代碼'].astype(str)])
+            [credit_sids, dfs[0][dfs[0]['股票代碼'].astype(str).isin(symbols)]['股票代碼'].astype(str)])
         credit_sids.name = None
 
         if credit_sids.any():
@@ -79,10 +79,12 @@ class OrderExecutor():
         if hasattr(self.account, 'base_currency'):
             base_currency = self.account.base_currency
             for pp in target_position.position:
-                if pp['stock_id'][-len(base_currency):] == base_currency:
-                    pp['stock_id'] = pp['stock_id'][:-len(base_currency)]
+                sid = pp.get('symbol') or pp['stock_id']
+                if sid[-len(base_currency):] == base_currency:
+                    pp['symbol'] = sid[:-len(base_currency)]
+                    pp['stock_id'] = pp['symbol']
                 else:
-                    raise ValueError(f"Stock ID {pp['stock_id']} does not end with {base_currency}")
+                    raise ValueError(f"Stock ID {sid} does not end with {base_currency}")
 
         present_position = self.account.get_position()
         orders = (target_position - present_position)
@@ -121,7 +123,7 @@ class OrderExecutor():
         if cancel_orders:
             self.cancel_orders()
 
-        stocks = self.account.get_stocks(list({o['stock_id'] for o in orders}))
+        stocks = self.account.get_stocks(list({o.get('symbol') or o['stock_id'] for o in orders}))
 
         pinfo = None
         if hasattr(self.account, 'get_price_info'):
@@ -134,19 +136,20 @@ class OrderExecutor():
             if o['quantity'] == 0:
                 continue
 
+            sid = o.get('symbol') or o['stock_id']
             action = Action.BUY if o['quantity'] > 0 else Action.SELL
-            
+
             if buy_only and action == Action.SELL:
                 continue
 
             if sell_only and action == Action.BUY:
                 continue
-            
-            if o['stock_id'] not in stocks:
-                logging.warning(o['stock_id'] + 'not in stocks... skipped!')
+
+            if sid not in stocks:
+                logging.warning(sid + 'not in stocks... skipped!')
                 continue
 
-            stock = stocks[o['stock_id']]
+            stock = stocks[sid]
             price: float = stock.close if isinstance(stock.close, numbers.Number) else (
                     stock.bid_price if action == Action.BUY else stock.ask_price
                     )
@@ -154,13 +157,13 @@ class OrderExecutor():
             if extra_bid_pct != 0:
                 price = calculate_price_with_extra_bid(price, extra_bid_pct if action == Action.BUY else -extra_bid_pct)
 
-            if pinfo and o['stock_id'] in pinfo:
-                limitup = float(pinfo[o['stock_id']]['漲停價'])
-                limitdn = float(pinfo[o['stock_id']]['跌停價'])
+            if pinfo and sid in pinfo:
+                limitup = float(pinfo[sid]['漲停價'])
+                limitdn = float(pinfo[sid]['跌停價'])
                 price = max(price, limitdn)
                 price = min(price, limitup)
             else:
-                logger.warning('No price info for stock %s', o['stock_id'])
+                logger.warning('No price info for stock %s', sid)
 
             if isinstance(price, Decimal):
                 price = format(price, 'f')
@@ -180,7 +183,7 @@ class OrderExecutor():
             # use print f-string format instead of logger
             action_str = 'BUY' if action == Action.BUY else 'SELL'
             order_condition_str = 'CASH' if o['order_condition'] == OrderCondition.CASH else 'MARGIN_TRADING' if o['order_condition'] == OrderCondition.MARGIN_TRADING else 'SHORT_SELLING' if o['order_condition'] == OrderCondition.SHORT_SELLING else 'DAY_TRADING_LONG' if o['order_condition'] == OrderCondition.DAY_TRADING_LONG else 'DAY_TRADING_SHORT' if o['order_condition'] == OrderCondition.DAY_TRADING_SHORT else 'UNKNOWN'
-            print(f'{action_str:<11} {o["stock_id"]:10} X {round(abs(o["quantity"]), 3):<10} @ {price_string:<11} {extra_bid_text} {order_condition_str}')
+            print(f'{action_str:<11} {sid:10} X {round(abs(o["quantity"]), 3):<10} @ {price_string:<11} {extra_bid_text} {order_condition_str}')
 
             # Record orders that passed all filters (before view_only check)
             executed_orders.append(o)
@@ -195,7 +198,7 @@ class OrderExecutor():
             if self.account.sep_odd_lot_order():
                 if odd_lot_quantity != 0:
                     self.account.create_order(action=action,
-                                              stock_id=o['stock_id'],
+                                              stock_id=sid,
                                               quantity=odd_lot_quantity,
                                               price=price, market_order=market_order,
                                               order_cond=o['order_condition'],
@@ -205,7 +208,7 @@ class OrderExecutor():
 
                 if board_lot_quantity != 0:
                     self.account.create_order(action=action,
-                                              stock_id=o['stock_id'],
+                                              stock_id=sid,
                                               quantity=board_lot_quantity,
                                               price=price, market_order=market_order,
                                               order_cond=o['order_condition'],
@@ -213,7 +216,7 @@ class OrderExecutor():
                                               )
             else:
                 self.account.create_order(action=action,
-                                          stock_id=o['stock_id'],
+                                          stock_id=sid,
                                           quantity=quantity,
                                           price=price, market_order=market_order,
                                           order_cond=o['order_condition'],
@@ -292,11 +295,11 @@ class OrderExecutor():
             }
 
         def get_symbols(orders):
-            return [(o['stock_id'], str(o['order_condition'])) for o in orders]
+            return [((o.get('symbol') or o['stock_id']), str(o['order_condition'])) for o in orders]
 
 
         def find_symbols(orders, symbol):
-            ret = [o for o in orders if o['stock_id'] == symbol]
+            ret = [o for o in orders if (o.get('symbol') or o['stock_id']) == symbol]
             if len(ret) == 0:
                 return {'quantity': 0, 'symbol': symbol[0], 'order_condition': symbol[1]}
             return ret[0]

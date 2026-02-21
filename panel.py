@@ -131,12 +131,12 @@ class OrderPanel():
         delta = target_position - current_position
 
         stocks = self.oe.account.get_stocks(
-            [o['stock_id'] for o in delta.position])
+            [o.get('symbol') or o['stock_id'] for o in delta.position])
 
         grid = widgets.GridspecLayout(max(1, len(delta.position)), 5)
 
         for i, o in enumerate(delta.position):
-            sid = o['stock_id']
+            sid = o.get('symbol') or o['stock_id']
             org_quantity = self.get_quantity(
                 current_position.position, sid, o['order_condition'])
             target_quantity = self.get_quantity(
@@ -156,8 +156,10 @@ class OrderPanel():
             new_target_position = []
             for i, o in enumerate(delta.position):
 
+                o_sid = o.get('symbol') or o['stock_id']
                 new_target_position.append({
-                    'stock_id': o['stock_id'],
+                    'symbol': o_sid,
+                    'stock_id': o_sid,
                     'quantity': grid[i, 2].children[1].value,
                     'order_condition': o['order_condition'],
                 })
@@ -178,9 +180,11 @@ class OrderPanel():
             display(widgets.HBox([btn, btn2]))
 
     @staticmethod
-    def get_quantity(position_list, stock_id, order_condition):
+    def get_quantity(position_list, stock_id=None, order_condition=None, *, symbol=None):
+        sid = symbol or stock_id
         for o in position_list:
-            if o['stock_id'] == stock_id and o['order_condition'] == order_condition:
+            o_sid = o.get('symbol') or o['stock_id']
+            if o_sid == sid and o['order_condition'] == order_condition:
                 return o['quantity']
         return 0
 
@@ -257,7 +261,7 @@ class OrderPanel():
 
         for i, order in enumerate(active_orders):
 
-            s = f'股票代號 {order.stock_id}'
+            s = f'股票代號 {order.symbol}'
             name_label = widgets.Label(
                 value=s, layout=widgets.Layout(width='300px'))
             s = f'{str(order.action).split(".")[-1]} {order.filled_quantity} / {order.quantity}'
@@ -289,7 +293,7 @@ class OrderPanel():
                 buy_at_market_price_btn
             ])
 
-        keys = ['stock_id', 'action', 'price', 'quantity',
+        keys = ['symbol', 'action', 'price', 'quantity',
                 'filled_quantity', 'status', 'order_condition']
         df = (pd.DataFrame({oid: {k: getattr(order, k) for k in keys} for oid, order in orders.items()}).transpose()
               .pipe(lambda df: df[df.filled_quantity != 0])

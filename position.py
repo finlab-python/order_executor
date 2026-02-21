@@ -1,5 +1,6 @@
 from finlab.online.utils import greedy_allocation
 from finlab.online.enums import *
+from finlab.compat import normalize_position_dict
 from decimal import Decimal
 from typing import Union
 from finlab import config
@@ -11,6 +12,18 @@ import math
 import json
 
 logger = logging.getLogger(__name__)
+
+
+def _make_entry(sid, quantity, order_condition, **extra):
+    """Create a position entry dict with both 'symbol' and 'stock_id' keys."""
+    d = {
+        "symbol": sid,
+        "stock_id": sid,
+        "quantity": quantity,
+        "order_condition": order_condition,
+    }
+    d.update(extra)
+    return d
 
 
 class Position:
@@ -86,18 +99,11 @@ class Position:
         self.position = []
         for s, a in stocks.items():
             if a != 0:
-                new_position = {
-                    "stock_id": s,
-                    "quantity": a,
-                    "order_condition": (
-                        long_order_condition if a > 0 else short_order_condition
-                    ),
-                }
-
+                oc = long_order_condition if a > 0 else short_order_condition
+                extra = {}
                 if weights is not None and s in weights:
-                    new_position["weight"] = weights[s]
-
-                self.position.append(new_position)
+                    extra["weight"] = weights[s]
+                self.position.append(_make_entry(s, a, oc, **extra))
 
     @classmethod
     def from_list(cls, position):
@@ -123,14 +129,14 @@ class Position:
 
         """
         ret = cls({})
-        ret.position = ret._format_quantity(position)
+        ret.position = [normalize_position_dict(p) for p in ret._format_quantity(position)]
         return ret
 
     def to_list(self):
         ret = []
 
         for p in self.position:
-            pp = p.copy()
+            pp = normalize_position_dict(p.copy())
             if isinstance(pp["quantity"], Decimal):
                 pp["quantity"] = str(pp["quantity"])
             ret.append(pp)
@@ -304,7 +310,7 @@ class Position:
         orig = position.to_list()
         rows = []
         for p in orig:
-            sid = p["stock_id"]
+            sid = p.get("symbol") or p["stock_id"]
             qty = Decimal(p["quantity"])
             if qty <= 0:
                 continue
@@ -313,6 +319,7 @@ class Position:
             value = float(qty) * board_lot_size * float(last_px[sid])
             rows.append(
                 {
+                    "symbol": sid,
                     "stock_id": sid,
                     "quantity": qty,
                     "value": value,
@@ -329,10 +336,11 @@ class Position:
         finance_remaining = target_finance
         new_entries = []
         for _, row in df.iterrows():
-            sid = row.stock_id
+            sid = row.symbol
             qty = row.quantity
             value = row.value
             base_entry = {
+                "symbol": sid,
                 "stock_id": sid,
                 "weight": row.weight,
             }
@@ -603,8 +611,9 @@ class Position:
         qty = {}
         for s in stocks:
             if s["order_condition"] == oc:
-                q = qty.get(s["stock_id"], 0)
-                qty[s["stock_id"]] = q + s.get(attr, 0)
+                sid = s.get("symbol") or s["stock_id"]
+                q = qty.get(sid, 0)
+                qty[sid] = q + s.get(attr, 0)
 
         return qty
 
@@ -632,7 +641,7 @@ class Position:
 
             ps = self.op(qty1, qty2, operator)
             new_pos = [
-                {"stock_id": sid, "quantity": qty, "order_condition": oc}
+                _make_entry(sid, qty, oc)
                 for sid, qty in ps.items()
             ]
 
@@ -642,7 +651,7 @@ class Position:
                 w2 = self.sum_stock_quantity(p2, oc, attr="weight")
                 ws = self.op(w1, w2, operator)
                 for p in new_pos:
-                    p["weight"] = ws.get(p["stock_id"], 0)
+                    p["weight"] = ws.get(p["symbol"], 0)
 
             ret += new_pos
 
@@ -685,21 +694,17 @@ class Position:
     def fall_back_cash(self):
         pos = []
         for p in self.position:
-            pos.append(
-                {
-                    "stock_id": p["stock_id"],
-                    "quantity": p["quantity"],
-                    "order_condition": (
-                        OrderCondition.CASH
-                        if p["order_condition"]
-                        in [
-                            OrderCondition.DAY_TRADING_LONG,
-                            OrderCondition.DAY_TRADING_SHORT,
-                        ]
-                        else p["order_condition"]
-                    ),
-                }
+            sid = p.get("symbol") or p["stock_id"]
+            oc = (
+                OrderCondition.CASH
+                if p["order_condition"]
+                in [
+                    OrderCondition.DAY_TRADING_LONG,
+                    OrderCondition.DAY_TRADING_SHORT,
+                ]
+                else p["order_condition"]
             )
+            pos.append(_make_entry(sid, p["quantity"], oc))
         self.position = pos
 
     def to_df(self):
@@ -712,7 +717,7 @@ class Position:
                     )
                 )
             )
-            .sort_values("stock_id")
+            .sort_values("symbol")
         )
 
     def __repr__(self):
