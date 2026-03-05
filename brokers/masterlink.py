@@ -5,6 +5,7 @@ MasterlinkAccount 模組
 """
 
 import datetime
+import json
 import logging
 import time
 import os
@@ -13,13 +14,17 @@ from decimal import Decimal
 from finlab.online.core.account import Account, Stock, Order
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
+from finlab.online.core.realtime import (
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+    get_field_value, get_first_valid_float, to_optional_float,
+)
 from finlab import data
 from finlab.markets.tw import TWMarket
 from masterlink_sdk import MasterlinkSDK, Order as MLOrder, Account as MLAccount, BSAction, MarketType, PriceType, \
     TimeInForce, OrderType
 
 
-class MasterlinkAccount(Account):
+class MasterlinkAccount(Account, RealtimeProvider):
     """
     元富證券賬戶類
     實現與元富證券 API 的交互
@@ -60,6 +65,7 @@ class MasterlinkAccount(Account):
         # 初始化市場和時間戳
         self.market = 'tw_stock'
         self.order_records = {}
+        self._tick_pct_change_cache = {}
 
         # 初始化 SDK 和帳戶
         logging.info("初始化元富 SDK...")
@@ -105,6 +111,289 @@ class MasterlinkAccount(Account):
             logging.info("初始化行情元件成功")
         except Exception as e:
             logging.warning(f"初始化行情元件失敗: {e}")
+        self._init_realtime()
+
+    # ── RealtimeProvider implementation ──────────────────────────────
+
+    @staticmethod
+    def _parse_event_time(payload):
+        time_value = get_field_value(payload, "time")
+        if time_value is None:
+            time_value = get_field_value(payload, "closeTime")
+        if time_value is None:
+            time_value = get_field_value(payload, "lastUpdated")
+        parsed = to_optional_float(time_value)
+        if parsed is None:
+            return datetime.datetime.now()
+
+        raw = int(parsed)
+        try:
+            if raw >= 10 ** 14:
+                return datetime.datetime.fromtimestamp(raw / 1_000_000)
+            if raw >= 10 ** 11:
+                return datetime.datetime.fromtimestamp(raw / 1_000)
+            return datetime.datetime.fromtimestamp(raw)
+        except (OSError, OverflowError, ValueError):
+            return datetime.datetime.now()
+
+    @staticmethod
+    def _map_buy_sell_action(value):
+        if value is None:
+            return Action.SELL
+        text = str(value).upper()
+        return Action.BUY if text in ("B", "BUY", "BSACTION.BUY") else Action.SELL
+
+    @staticmethod
+    def _order_time_from_payload(data):
+        order_datetime = get_field_value(data, "order_datetime")
+        if isinstance(order_datetime, datetime.datetime):
+            return order_datetime
+
+        order_date = get_field_value(data, "order_date")
+        order_time = get_field_value(data, "order_time")
+        if order_date and order_time:
+            try:
+                return datetime.datetime.strptime(f"{order_date}{order_time}", "%Y%m%d%H%M%S%f")
+            except ValueError:
+                pass
+
+        return datetime.datetime.now()
+
+    def connect_realtime(self) -> None:
+        if self._realtime_connected:
+            return
+
+        def _extract_payload(message):
+            if isinstance(message, str):
+                try:
+                    message = json.loads(message)
+                except ValueError:
+                    return {}
+
+            payload = message
+            nested_data = get_field_value(payload, "data")
+            if nested_data is not None and get_field_value(payload, "symbol") is None:
+                payload = nested_data
+            return payload
+
+        def _emit_tick_from_payload(payload):
+            symbol = get_field_value(payload, "symbol")
+            if not symbol:
+                return
+            symbol = str(symbol)
+
+            native_pct_change = get_first_valid_float(
+                payload,
+                "changePercent",
+                "pct_change",
+                "pctChange",
+                "change_percent",
+                "change_rate",
+            )
+            if native_pct_change is not None:
+                self._tick_pct_change_cache[symbol] = native_pct_change
+            else:
+                native_pct_change = self._tick_pct_change_cache.get(symbol)
+
+            price = get_first_valid_float(
+                payload,
+                "price",
+                "closePrice",
+                "close_price",
+                "lastPrice",
+            )
+            volume = get_first_valid_float(payload, "size", "lastSize")
+            total_volume = get_first_valid_float(payload, "volume")
+            if total_volume is None:
+                total_obj = get_field_value(payload, "total")
+                total_volume = get_first_valid_float(total_obj, "tradeVolume")
+
+            open_price = get_first_valid_float(payload, "openPrice", "open", "open_price")
+            high_price = get_first_valid_float(payload, "highPrice", "high", "high_price")
+            low_price = get_first_valid_float(payload, "lowPrice", "low", "low_price")
+            avg_price = get_first_valid_float(payload, "avgPrice", "avg_price")
+
+            self._emit_tick(Tick(
+                stock_id=symbol,
+                price=price if price is not None else 0.0,
+                volume=int(volume or 0),
+                total_volume=int(total_volume or 0),
+                time=self._parse_event_time(payload),
+                open=open_price if open_price is not None else 0.0,
+                high=high_price if high_price is not None else 0.0,
+                low=low_price if low_price is not None else 0.0,
+                avg_price=avg_price if avg_price is not None else 0.0,
+                pct_change=native_pct_change,
+            ))
+
+        def _on_message(message):
+            try:
+                payload = _extract_payload(message)
+
+                # Books channel payload can still arrive via generic "message" event.
+                bids = get_field_value(payload, "bids")
+                asks = get_field_value(payload, "asks")
+                if bids is not None or asks is not None:
+                    bids = bids or []
+                    asks = asks or []
+                    stock_id = get_field_value(payload, "symbol")
+                    if stock_id:
+                        self._emit_bidask(BidAsk(
+                            stock_id=str(stock_id),
+                            bid_prices=[float(get_field_value(b, "price") or 0.0) for b in bids],
+                            bid_volumes=[int(get_field_value(b, "size") or 0) for b in bids],
+                            ask_prices=[float(get_field_value(a, "price") or 0.0) for a in asks],
+                            ask_volumes=[int(get_field_value(a, "size") or 0) for a in asks],
+                            time=self._parse_event_time(payload),
+                        ))
+
+                trade_like = (
+                    get_field_value(payload, "price") is not None
+                    or get_field_value(payload, "size") is not None
+                    or get_field_value(payload, "closePrice") is not None
+                    or get_field_value(payload, "lastPrice") is not None
+                )
+                if trade_like:
+                    _emit_tick_from_payload(payload)
+            except Exception:
+                logging.exception("Error in Masterlink tick handler")
+
+        def _on_book_message(message):
+            try:
+                payload = _extract_payload(message)
+                stock_id = get_field_value(payload, "symbol")
+                if not stock_id:
+                    return
+                bids = get_field_value(payload, "bids") or []
+                asks = get_field_value(payload, "asks") or []
+                self._emit_bidask(BidAsk(
+                    stock_id=str(stock_id),
+                    bid_prices=[float(get_field_value(b, "price") or 0.0) for b in bids],
+                    bid_volumes=[int(get_field_value(b, "size") or 0) for b in bids],
+                    ask_prices=[float(get_field_value(a, "price") or 0.0) for a in asks],
+                    ask_volumes=[int(get_field_value(a, "size") or 0) for a in asks],
+                    time=self._parse_event_time(payload),
+                ))
+            except Exception:
+                logging.exception("Error in Masterlink bidask handler")
+
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        ws_client.connect()
+        ws_client.on('message', _on_message)
+        ws_client.on('book', _on_book_message)
+
+        def _on_order(data):
+            try:
+                self._emit_order_update(OrderUpdate(
+                    order_id=str(
+                        get_field_value(data, "order_no")
+                        or get_field_value(data, "orderNo")
+                        or get_field_value(data, "seq_no")
+                        or get_field_value(data, "seqNo")
+                        or get_field_value(data, "id")
+                        or ""
+                    ),
+                    stock_id=str(
+                        get_field_value(data, "stock_no")
+                        or get_field_value(data, "symbol")
+                        or get_field_value(data, "code")
+                        or ""
+                    ),
+                    action=self._map_buy_sell_action(
+                        get_field_value(data, "buy_sell") or get_field_value(data, "action")
+                    ),
+                    price=float(
+                        get_first_valid_float(data, "od_price", "order_price", "price") or 0.0
+                    ),
+                    quantity=float(
+                        get_first_valid_float(data, "org_qty", "quantity", "qty") or 0.0
+                    ),
+                    filled_quantity=float(
+                        get_first_valid_float(data, "filled_qty", "mat_qty", "deal_quantity") or 0.0
+                    ),
+                    status=OrderStatus.NEW,
+                    order_condition=OrderCondition.CASH,
+                    time=self._order_time_from_payload(data),
+                    org_event=data,
+                ))
+            except Exception:
+                logging.exception("Error in Masterlink order handler")
+
+        def _on_filled(data):
+            try:
+                self._emit_fill(Fill(
+                    order_id=str(
+                        get_field_value(data, "order_no")
+                        or get_field_value(data, "orderNo")
+                        or get_field_value(data, "ord_no")
+                        or get_field_value(data, "seq_no")
+                        or ""
+                    ),
+                    stock_id=str(
+                        get_field_value(data, "stock_no")
+                        or get_field_value(data, "symbol")
+                        or get_field_value(data, "code")
+                        or ""
+                    ),
+                    action=self._map_buy_sell_action(
+                        get_field_value(data, "buy_sell") or get_field_value(data, "action")
+                    ),
+                    price=float(
+                        get_first_valid_float(data, "filled_price", "mat_price", "price") or 0.0
+                    ),
+                    quantity=float(
+                        get_first_valid_float(data, "filled_qty", "mat_qty", "quantity", "qty") or 0.0
+                    ),
+                    time=self._order_time_from_payload(data),
+                    org_event=data,
+                ))
+            except Exception:
+                logging.exception("Error in Masterlink fill handler")
+
+        self.sdk.set_on_order(_on_order)
+        self.sdk.set_on_filled(_on_filled)
+        self.sdk.connect_websocket()
+
+        self._realtime_connected = True
+        self._emit_connection(ConnectionState.CONNECTED)
+        logging.info("Masterlink realtime connected")
+
+    def disconnect_realtime(self) -> None:
+        if not self._realtime_connected:
+            return
+        try:
+            ws_client = self.sdk.marketdata.websocket_client.stock
+            ws_client.disconnect()
+        except Exception:
+            logging.exception("Error disconnecting Masterlink websocket")
+        self._realtime_connected = False
+        self._emit_connection(ConnectionState.DISCONNECTED)
+        logging.info("Masterlink realtime disconnected")
+
+    def subscribe_ticks(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.subscribe({'channel': 'trades', 'symbol': sid})
+            ws_client.subscribe({'channel': 'aggregates', 'symbol': sid})
+
+    def unsubscribe_ticks(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.unsubscribe({'channel': 'trades', 'symbol': sid})
+            ws_client.unsubscribe({'channel': 'aggregates', 'symbol': sid})
+            self._tick_pct_change_cache.pop(sid, None)
+
+    def subscribe_bidask(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.subscribe({'channel': 'books', 'symbol': sid})
+
+    def unsubscribe_bidask(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.unsubscribe({'channel': 'books', 'symbol': sid})
+
+    # ── End RealtimeProvider ──────────────────────────────────────
 
     def __del__(self):
         """

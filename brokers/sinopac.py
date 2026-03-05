@@ -27,6 +27,7 @@ from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime import (
     RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+    get_first_valid_float,
 )
 from finlab import data
 from finlab.markets.tw import TWMarket
@@ -95,6 +96,20 @@ class SinopacAccount(Account, RealtimeProvider):
 
         @self.api.on_tick_stk_v1()
         def _on_tick(exchange, tick):
+            native_pct_change = get_first_valid_float(
+                tick,
+                "pct_chg",
+                "pct_change",
+                "change_percent",
+                "change_pct",
+            )
+            prev_close = get_first_valid_float(
+                tick,
+                "prev_close",
+                "reference",
+                "reference_price",
+                "yesterday_close",
+            )
             self._emit_tick(Tick(
                 stock_id=tick.code,
                 price=tick.close,
@@ -106,6 +121,8 @@ class SinopacAccount(Account, RealtimeProvider):
                 low=tick.low,
                 avg_price=tick.avg_price,
                 tick_type=tick.tick_type,
+                prev_close=prev_close,
+                pct_change=native_pct_change,
             ))
 
         @self.api.on_bidask_stk_v1()

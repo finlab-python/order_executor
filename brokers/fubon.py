@@ -16,6 +16,7 @@ from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime import (
     RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+    get_field_value, get_first_valid_float, to_optional_float,
 )
 from finlab import data
 from finlab.markets.tw import TWMarket
@@ -83,6 +84,7 @@ class FubonAccount(Account, RealtimeProvider):
         self.market = 'tw_stock'
         self.order_records = {}
         self.timestamp_for_get_position = datetime.datetime(2021, 1, 1)
+        self._tick_pct_change_cache = {}
 
         # 初始化 SDK 和帳戶
         logging.info("初始化富邦 SDK...")
@@ -133,16 +135,57 @@ class FubonAccount(Account, RealtimeProvider):
         # Quote websocket: tick (trades channel)
         def _on_message(message):
             try:
-                if hasattr(message, 'symbol'):
+                payload = message
+                nested_data = get_field_value(message, 'data')
+                if nested_data is not None and get_field_value(message, 'symbol') is None:
+                    payload = nested_data
+
+                symbol = get_field_value(payload, 'symbol')
+                if symbol:
+                    symbol = str(symbol)
+                    native_pct_change = get_first_valid_float(
+                        payload,
+                        'pct_change',
+                        'pctChange',
+                        'change_percent',
+                        'changePercent',
+                        'change_rate',
+                    )
+                    if native_pct_change is not None:
+                        self._tick_pct_change_cache[symbol] = native_pct_change
+
+                    trade_like = (
+                        get_field_value(payload, 'price') is not None
+                        or get_field_value(payload, 'size') is not None
+                    )
+                    if not trade_like:
+                        return
+
+                    price = get_first_valid_float(
+                        payload, 'price', 'close', 'close_price', 'closePrice', 'lastPrice'
+                    )
+                    volume = int(to_optional_float(get_field_value(payload, 'size')) or 0)
+                    total_volume_value = get_field_value(payload, 'total_volume')
+                    if total_volume_value is None:
+                        total_volume_value = get_field_value(payload, 'totalVolume')
+                    total_volume = int(
+                        to_optional_float(total_volume_value) or 0
+                    )
+                    open_price = get_first_valid_float(payload, 'open', 'open_price', 'openPrice')
+                    high_price = get_first_valid_float(payload, 'high', 'high_price', 'highPrice')
+                    low_price = get_first_valid_float(payload, 'low', 'low_price', 'lowPrice')
+                    if native_pct_change is None:
+                        native_pct_change = self._tick_pct_change_cache.get(symbol)
                     self._emit_tick(Tick(
-                        stock_id=message.symbol,
-                        price=getattr(message, 'price', 0.0),
-                        volume=getattr(message, 'size', 0),
-                        total_volume=getattr(message, 'total_volume', 0),
-                        time=getattr(message, 'time', datetime.datetime.now()),
-                        open=getattr(message, 'open', 0.0),
-                        high=getattr(message, 'high', 0.0),
-                        low=getattr(message, 'low', 0.0),
+                        stock_id=symbol,
+                        price=price if price is not None else 0.0,
+                        volume=volume,
+                        total_volume=total_volume,
+                        time=get_field_value(payload, 'time') or datetime.datetime.now(),
+                        open=open_price if open_price is not None else 0.0,
+                        high=high_price if high_price is not None else 0.0,
+                        low=low_price if low_price is not None else 0.0,
+                        pct_change=native_pct_change,
                     ))
             except Exception:
                 logging.exception("Error in Fubon tick handler")
@@ -222,11 +265,15 @@ class FubonAccount(Account, RealtimeProvider):
         ws_client = self.sdk.marketdata.websocket_client.stock
         for sid in stock_ids:
             ws_client.subscribe({'channel': 'trades', 'symbol': sid})
+            # Fubon stock pct change is documented in aggregates.changePercent.
+            ws_client.subscribe({'channel': 'aggregates', 'symbol': sid})
 
     def unsubscribe_ticks(self, stock_ids):
         ws_client = self.sdk.marketdata.websocket_client.stock
         for sid in stock_ids:
             ws_client.unsubscribe({'channel': 'trades', 'symbol': sid})
+            ws_client.unsubscribe({'channel': 'aggregates', 'symbol': sid})
+            self._tick_pct_change_cache.pop(sid, None)
 
     def subscribe_bidask(self, stock_ids):
         ws_client = self.sdk.marketdata.websocket_client.stock

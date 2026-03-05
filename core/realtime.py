@@ -6,12 +6,13 @@ Defines the abstract RealtimeProvider mixin and unified event dataclasses
 Brokers that support streaming inherit RealtimeProvider alongside Account.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Optional
 from enum import Enum
 import datetime
 import logging
+import math
 
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
 
@@ -20,9 +21,60 @@ logger = logging.getLogger(__name__)
 
 # ── Unified event dataclasses ────────────────────────────────────────
 
+
+def to_optional_float(value: Any) -> Optional[float]:
+    """Convert values from broker payloads to finite float, else None."""
+    if value is None:
+        return None
+    try:
+        converted = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(converted):
+        return None
+    return converted
+
+
+def get_field_value(source: Any, field_name: str) -> Any:
+    """Read a field from either dict-like or object-like broker payloads."""
+    if isinstance(source, dict):
+        return source.get(field_name)
+    return getattr(source, field_name, None)
+
+
+def get_first_valid_float(source: Any, *field_names: str) -> Optional[float]:
+    """Return first field that can be parsed as a finite float."""
+    for name in field_names:
+        value = get_field_value(source, name)
+        converted = to_optional_float(value)
+        if converted is not None:
+            return converted
+    return None
+
+
+def calculate_tick_pct_change(
+    price: Any,
+    prev_close: Any = None,
+) -> Optional[float]:
+    """Resolve tick pct change by priority: prev_close only."""
+    p = to_optional_float(price)
+    if p is None:
+        return None
+
+    prev = to_optional_float(prev_close)
+    if prev not in (None, 0):
+        return (p / prev - 1) * 100
+
+    return None
+
+
 @dataclass
 class Tick:
-    """A single trade tick from the exchange."""
+    """A single trade tick from the exchange.
+
+    `pct_change` is today's percent change.
+    Priority: broker native value > (price/prev_close-1)*100.
+    """
     stock_id: str
     price: float
     volume: int
@@ -33,6 +85,20 @@ class Tick:
     low: float = 0.0
     avg_price: float = 0.0
     tick_type: int = 0  # 1=buy, 2=sell, 0=unknown
+    prev_close: Optional[float] = None
+    pct_change: Optional[float] = None
+
+    def __post_init__(self):
+        self.prev_close = to_optional_float(self.prev_close)
+        native_pct_change = to_optional_float(self.pct_change)
+        self.pct_change = (
+            native_pct_change
+            if native_pct_change is not None
+            else calculate_tick_pct_change(
+                price=self.price,
+                prev_close=self.prev_close,
+            )
+        )
 
 
 @dataclass
