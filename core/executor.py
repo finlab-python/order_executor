@@ -100,7 +100,6 @@ class OrderExecutor():
             entries.append(
                 OrderEntry(
                     symbol=sid,
-                    stock_id=sid,
                     quantity=quantity,
                     order_condition=payload['order_condition'],
                 )
