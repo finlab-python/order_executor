@@ -132,6 +132,30 @@ class Position:
         ret.position = [normalize_position_dict(p) for p in ret._format_quantity(position)]
         return ret
 
+    @staticmethod
+    def _entry_to_position_dict(entry):
+        if isinstance(entry, dict):
+            d = entry.copy()
+        else:
+            if not hasattr(entry, "to_dict"):
+                raise TypeError(f"entry should be dict or schema object with to_dict(), got {type(entry)}")
+            d = entry.to_dict()
+        return normalize_position_dict(d)
+
+    @staticmethod
+    def _position_dict_to_entry(position_dict):
+        from finlab.schemas import PositionEntry
+
+        return PositionEntry.from_dict(position_dict)
+
+    @classmethod
+    def from_entries(cls, entries):
+        """Build Position from schema entries (e.g. finlab.schemas.PositionEntry)."""
+        ret = cls({})
+        normalized = [ret._entry_to_position_dict(e) for e in entries]
+        ret.position = [normalize_position_dict(p) for p in ret._format_quantity(normalized)]
+        return ret
+
     def to_list(self):
         ret = []
 
@@ -142,6 +166,13 @@ class Position:
             ret.append(pp)
 
         return ret
+
+    def to_entries(self):
+        """Convert Position internal payload to schema entries."""
+        return [
+            self._position_dict_to_entry(normalize_position_dict(p.copy()))
+            for p in self.position
+        ]
 
     @classmethod
     def from_dict(cls, position):
