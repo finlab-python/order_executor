@@ -14,11 +14,15 @@ from functools import wraps
 from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
 from finlab.online.order_executor import Position
+from finlab.online.realtime import (
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+)
 from finlab import data
 from finlab.markets.tw import TWMarket
 from fubon_neo.sdk import FubonSDK, Order as FBOrder
 from fubon_neo.constant import TimeInForce, OrderType, PriceType, MarketType, BSAction
 
+logger = logging.getLogger(__name__)
 
 # 常數定義
 STOCK_LOT_SIZE = 1000  # 一張股票的股數
@@ -38,7 +42,7 @@ def handle_exceptions(default_return=None, log_prefix=""):
     return decorator
 
 
-class FubonAccount(Account):
+class FubonAccount(Account, RealtimeProvider):
     """
     富邦證券賬戶類
     實現與富邦證券 API 的交互
@@ -64,6 +68,8 @@ class FubonAccount(Account):
             cert_path (str, optional): 憑證路徑。預設從環境變數獲取。
             cert_pass (str, optional): 憑證密碼。預設從環境變數獲取。
         """
+        self._init_realtime()
+
         # 從參數或環境變數獲取登錄信息
         self.base_url = base_url or os.environ.get('FUBON_BASE_URL')
         self.national_id = national_id or os.environ.get('FUBON_NATIONAL_ID')
@@ -118,6 +124,153 @@ class FubonAccount(Account):
             logging.info("初始化行情元件成功")
         except Exception as e:
             logging.warning(f"初始化行情元件失敗: {e}")
+
+    # ── RealtimeProvider implementation ─────────────────────────
+
+    def connect_realtime(self) -> None:
+        if self._realtime_connected:
+            return
+
+        if not hasattr(self.sdk, 'marketdata') or not hasattr(self.sdk.marketdata, 'websocket_client'):
+            self.sdk.init_realtime()
+
+        self._ws_stock = self.sdk.marketdata.websocket_client.stock
+        self._ws_subscriptions = {}
+
+        def _handle_message(message):
+            if not isinstance(message, dict):
+                return
+            event = message.get('event')
+            if event in ('authenticated', 'subscribed', 'unsubscribed', 'heartbeat', 'pong'):
+                return
+            data = message.get('data', message)
+            channel = message.get('channel', '')
+            symbol = data.get('symbol', '')
+            if channel == 'trades':
+                self._emit_tick(Tick(
+                    stock_id=symbol,
+                    price=float(data.get('price', 0)),
+                    volume=int(data.get('size', 0)),
+                    total_volume=int(data.get('volume', 0)),
+                    time=datetime.datetime.fromisoformat(data['time']) if 'time' in data else datetime.datetime.now(),
+                    open=float(data.get('open', 0)),
+                    high=float(data.get('high', 0)),
+                    low=float(data.get('low', 0)),
+                ))
+            elif channel == 'books':
+                bids = data.get('bids', [])
+                asks = data.get('asks', [])
+                self._emit_bidask(BidAsk(
+                    stock_id=symbol,
+                    bid_prices=[float(b.get('price', 0)) for b in bids],
+                    bid_volumes=[int(b.get('size', 0)) for b in bids],
+                    ask_prices=[float(a.get('price', 0)) for a in asks],
+                    ask_volumes=[int(a.get('size', 0)) for a in asks],
+                    time=datetime.datetime.fromisoformat(data['time']) if 'time' in data else datetime.datetime.now(),
+                ))
+
+        def _handle_connect():
+            self._emit_connection(ConnectionState.CONNECTED, "Fubon websocket connected")
+
+        def _handle_disconnect(code, message):
+            self._emit_connection(ConnectionState.DISCONNECTED, f"code={code} {message}")
+
+        def _handle_error(error):
+            self._emit_connection(ConnectionState.ERROR, str(error))
+
+        self._ws_stock.on('message', _handle_message)
+        self._ws_stock.on('connect', _handle_connect)
+        self._ws_stock.on('disconnect', _handle_disconnect)
+        self._ws_stock.on('error', _handle_error)
+        self._ws_stock.connect()
+
+        # Order/fill callbacks
+        def _on_order(code, content):
+            try:
+                order = self._create_finlab_order(content)
+                self._emit_order_update(OrderUpdate(
+                    order_id=order.order_id,
+                    stock_id=order.stock_id,
+                    action=order.action,
+                    price=order.price,
+                    quantity=order.quantity,
+                    filled_quantity=order.filled_quantity,
+                    status=order.status,
+                    order_condition=order.order_condition,
+                    time=order.time,
+                    operation='new',
+                    org_event=content,
+                ))
+            except Exception:
+                logger.exception("Error processing Fubon order callback")
+
+        def _on_order_changed(code, content):
+            try:
+                order = self._create_finlab_order(content)
+                self._emit_order_update(OrderUpdate(
+                    order_id=order.order_id,
+                    stock_id=order.stock_id,
+                    action=order.action,
+                    price=order.price,
+                    quantity=order.quantity,
+                    filled_quantity=order.filled_quantity,
+                    status=order.status,
+                    order_condition=order.order_condition,
+                    time=order.time,
+                    operation='update',
+                    org_event=content,
+                ))
+            except Exception:
+                logger.exception("Error processing Fubon order_changed callback")
+
+        def _on_filled(code, content):
+            try:
+                stock_id = getattr(content, 'stock_no', '')
+                buy_sell = getattr(content, 'buy_sell', None)
+                action = Action.BUY if buy_sell == BSAction.Buy else Action.SELL
+                self._emit_fill(Fill(
+                    order_id=getattr(content, 'order_no', ''),
+                    stock_id=stock_id,
+                    action=action,
+                    price=float(getattr(content, 'filled_price', 0)),
+                    quantity=float(getattr(content, 'filled_qty', 0)) / STOCK_LOT_SIZE,
+                    time=datetime.datetime.now(),
+                    org_event=content,
+                ))
+            except Exception:
+                logger.exception("Error processing Fubon filled callback")
+
+        self.sdk.set_on_order(_on_order)
+        self.sdk.set_on_order_changed(_on_order_changed)
+        self.sdk.set_on_filled(_on_filled)
+
+        self._realtime_connected = True
+
+    def disconnect_realtime(self) -> None:
+        if hasattr(self, '_ws_stock'):
+            try:
+                self._ws_stock.disconnect()
+            except Exception:
+                pass
+        self._realtime_connected = False
+
+    def subscribe_ticks(self, stock_ids):
+        for sid in stock_ids:
+            self._ws_stock.subscribe({'channel': 'trades', 'symbol': sid})
+
+    def unsubscribe_ticks(self, stock_ids):
+        for sid in stock_ids:
+            self._ws_stock.unsubscribe({'channel': 'trades', 'symbol': sid})
+
+    def subscribe_bidask(self, stock_ids):
+        for sid in stock_ids:
+            self._ws_stock.subscribe({'channel': 'books', 'symbol': sid})
+
+    def unsubscribe_bidask(self, stock_ids):
+        for sid in stock_ids:
+            self._ws_stock.unsubscribe({'channel': 'books', 'symbol': sid})
+
+    # ── End RealtimeProvider ─────────────────────────────────
 
     def __del__(self):
         """

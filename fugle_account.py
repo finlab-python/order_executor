@@ -9,6 +9,9 @@ from finlab.online.base_account import Account, Stock, Order
 from finlab.online.enums import *
 from finlab.markets.tw import TWMarket
 from finlab.online.order_executor import Position
+from finlab.online.realtime import (
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+)
 from finlab import data
 
 from threading import Thread
@@ -26,11 +29,15 @@ trades = {}
 threads = {}
 callbacks = {}
 
-class FugleAccount(Account):
+logger = logging.getLogger(__name__)
+
+
+class FugleAccount(Account, RealtimeProvider):
 
     required_module = 'esun_trade'
 
     def __init__(self, config_path='./config.ini.example', market_api_key=None):
+        self._init_realtime()
 
         self.check_version()
         self.market = 'tw_stock'
@@ -331,6 +338,89 @@ class FugleAccount(Account):
 
     def support_day_trade_condition(self):
         return True
+
+    # ── RealtimeProvider implementation ─────────────────────────
+
+    _FUGLE_ORDER_CONDITIONS = {
+        '0': OrderCondition.CASH,
+        '3': OrderCondition.MARGIN_TRADING,
+        '4': OrderCondition.SHORT_SELLING,
+        '9': OrderCondition.DAY_TRADING_LONG,
+        'A': OrderCondition.DAY_TRADING_SHORT,
+    }
+
+    def connect_realtime(self) -> None:
+        if self._realtime_connected:
+            return
+
+        @self.sdk.on('order')
+        def _on_order(order):
+            try:
+                finlab_order = create_finlab_order(order)
+                self._emit_order_update(OrderUpdate(
+                    order_id=finlab_order.order_id,
+                    stock_id=finlab_order.stock_id,
+                    action=finlab_order.action,
+                    price=finlab_order.price,
+                    quantity=finlab_order.quantity,
+                    filled_quantity=finlab_order.filled_quantity,
+                    status=finlab_order.status,
+                    order_condition=finlab_order.order_condition,
+                    time=finlab_order.time,
+                    org_event=order,
+                ))
+            except Exception:
+                logger.exception("Error processing Fugle order callback")
+
+        @self.sdk.on('dealt')
+        def _on_dealt(data):
+            try:
+                if not isinstance(data, dict):
+                    return
+                tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+                mat_time = data.get('mat_time', '')
+                deal_time = datetime.datetime.strptime(
+                    f"{tw_now.date()} {mat_time}", "%Y-%m-%d %H%M%S%f"
+                ) if mat_time else datetime.datetime.now()
+
+                action = Action.BUY if data.get('buy_sell') == 'B' else Action.SELL
+                self._emit_fill(Fill(
+                    order_id=data.get('ord_no', ''),
+                    stock_id=data.get('stock_no', ''),
+                    action=action,
+                    price=float(data.get('mat_price', 0)),
+                    quantity=float(data.get('mat_qty', 0)),
+                    time=deal_time,
+                    org_event=data,
+                ))
+            except Exception:
+                logger.exception("Error processing Fugle dealt callback")
+
+        if self.user_account not in threads:
+            t = Thread(target=lambda: self.sdk.connect_websocket())
+            t.daemon = True
+            t.start()
+            threads[self.user_account] = t
+
+        self._emit_connection(ConnectionState.CONNECTED, "Fugle websocket connected")
+        self._realtime_connected = True
+
+    def disconnect_realtime(self) -> None:
+        self._realtime_connected = False
+
+    def subscribe_ticks(self, stock_ids):
+        raise NotImplementedError("FugleAccount does not support tick streaming")
+
+    def unsubscribe_ticks(self, stock_ids):
+        raise NotImplementedError("FugleAccount does not support tick streaming")
+
+    def subscribe_bidask(self, stock_ids):
+        raise NotImplementedError("FugleAccount does not support bidask streaming")
+
+    def unsubscribe_bidask(self, stock_ids):
+        raise NotImplementedError("FugleAccount does not support bidask streaming")
+
+    # ── End RealtimeProvider ─────────────────────────────────
 
     def on_trades(self, func):
 
