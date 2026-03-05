@@ -25,12 +25,15 @@ from finlab.online.core.account import Account, Stock, Order, typesafe_op
 from finlab.online.core.utils import estimate_stock_price
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
+from finlab.online.core.realtime import (
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+)
 from finlab import data
 from finlab.markets.tw import TWMarket
 
 logger = logging.getLogger(__name__)
 
-class SinopacAccount(Account):
+class SinopacAccount(Account, RealtimeProvider):
 
     required_module = "shioaji"
     module_version = "1.2.5"
@@ -81,6 +84,126 @@ class SinopacAccount(Account):
             ca_passwd=certificate_password,
             person_id=certificate_person_id,
         )
+
+        self._init_realtime()
+
+    # ── RealtimeProvider implementation ──────────────────────────────
+
+    def connect_realtime(self) -> None:
+        if self._realtime_connected:
+            return
+
+        @self.api.on_tick_stk_v1()
+        def _on_tick(exchange, tick):
+            self._emit_tick(Tick(
+                stock_id=tick.code,
+                price=tick.close,
+                volume=tick.volume,
+                total_volume=tick.total_volume,
+                time=tick.datetime,
+                open=tick.open,
+                high=tick.high,
+                low=tick.low,
+                avg_price=tick.avg_price,
+                tick_type=tick.tick_type,
+            ))
+
+        @self.api.on_bidask_stk_v1()
+        def _on_bidask(exchange, bidask):
+            self._emit_bidask(BidAsk(
+                stock_id=bidask.code,
+                bid_prices=list(bidask.bid_price),
+                bid_volumes=list(bidask.bid_volume),
+                ask_prices=list(bidask.ask_price),
+                ask_volumes=list(bidask.ask_volume),
+                time=bidask.datetime,
+            ))
+
+        def _order_cb(stat, msg):
+            if hasattr(msg, 'trade_id'):
+                # Deal/fill event
+                self._emit_fill(Fill(
+                    order_id=msg.seqno if hasattr(msg, 'seqno') else '',
+                    stock_id=msg.code,
+                    action=Action.BUY if msg.action == 'Buy' else Action.SELL,
+                    price=msg.price,
+                    quantity=msg.quantity,
+                    time=msg.ts if hasattr(msg, 'ts') else datetime.datetime.now(),
+                    org_event=msg,
+                ))
+            else:
+                # Order status event
+                self._emit_order_update(OrderUpdate(
+                    order_id=msg.id if hasattr(msg, 'id') else '',
+                    stock_id=msg.code if hasattr(msg, 'code') else '',
+                    action=Action.BUY if getattr(msg, 'action', '') == 'Buy' else Action.SELL,
+                    price=getattr(msg, 'price', 0),
+                    quantity=getattr(msg, 'quantity', 0),
+                    filled_quantity=getattr(msg, 'deal_quantity', 0),
+                    status=map_trade_status(msg.status) if hasattr(msg, 'status') else OrderStatus.NEW,
+                    order_condition=map_order_condition(msg.order_cond) if hasattr(msg, 'order_cond') else OrderCondition.CASH,
+                    time=getattr(msg, 'order_datetime', datetime.datetime.now()),
+                    org_event=msg,
+                ))
+        self.api.set_order_callback(_order_cb)
+
+        @self.api.quote.on_event
+        def _event_cb(resp_code, event_code, info, event):
+            state_map = {
+                0: ConnectionState.CONNECTED,
+                -1: ConnectionState.DISCONNECTED,
+            }
+            state = state_map.get(resp_code, ConnectionState.ERROR)
+            self._emit_connection(state, str(event))
+
+        self._realtime_connected = True
+        self._emit_connection(ConnectionState.CONNECTED)
+        logger.info("Sinopac realtime connected")
+
+    def disconnect_realtime(self) -> None:
+        if not self._realtime_connected:
+            return
+        self._realtime_connected = False
+        self._emit_connection(ConnectionState.DISCONNECTED)
+        logger.info("Sinopac realtime disconnected")
+
+    def subscribe_ticks(self, stock_ids):
+        for sid in stock_ids:
+            contract = SJStock(
+                security_type=SJSecurityType.Stock,
+                code=sid,
+                exchange=SJExchange.TSE,
+            )
+            self.api.quote.subscribe(contract, quote_type=sj.constant.QuoteType.Tick)
+
+    def unsubscribe_ticks(self, stock_ids):
+        for sid in stock_ids:
+            contract = SJStock(
+                security_type=SJSecurityType.Stock,
+                code=sid,
+                exchange=SJExchange.TSE,
+            )
+            self.api.quote.unsubscribe(contract, quote_type=sj.constant.QuoteType.Tick)
+
+    def subscribe_bidask(self, stock_ids):
+        for sid in stock_ids:
+            contract = SJStock(
+                security_type=SJSecurityType.Stock,
+                code=sid,
+                exchange=SJExchange.TSE,
+            )
+            self.api.quote.subscribe(contract, quote_type=sj.constant.QuoteType.BidAsk)
+
+    def unsubscribe_bidask(self, stock_ids):
+        for sid in stock_ids:
+            contract = SJStock(
+                security_type=SJSecurityType.Stock,
+                code=sid,
+                exchange=SJExchange.TSE,
+            )
+            self.api.quote.unsubscribe(contract, quote_type=sj.constant.QuoteType.BidAsk)
+
+    # ── End RealtimeProvider ──────────────────────────────────────
 
     def __del__(self):
         try:

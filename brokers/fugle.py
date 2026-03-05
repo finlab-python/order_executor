@@ -9,6 +9,9 @@ from finlab.online.core.account import Account, Stock, Order
 from finlab.online.core.enums import *
 from finlab.markets.tw import TWMarket
 from finlab.online.core.position import Position
+from finlab.online.core.realtime import (
+    RealtimeProvider, OrderUpdate, Fill, ConnectionState,
+)
 from finlab import data
 
 from threading import Thread
@@ -26,7 +29,7 @@ trades = {}
 threads = {}
 callbacks = {}
 
-class FugleAccount(Account):
+class FugleAccount(Account, RealtimeProvider):
 
     required_module = 'esun_trade'
 
@@ -97,6 +100,103 @@ class FugleAccount(Account):
             self.thread = Thread(target=lambda: self.sdk.connect_websocket())
             self.thread.daemon = True
             self.thread.start()
+
+        self._init_realtime()
+
+    # ── RealtimeProvider implementation ──────────────────────────────
+
+    def connect_realtime(self) -> None:
+        if self._realtime_connected:
+            return
+
+        order_condition_map = {
+            '0': OrderCondition.CASH,
+            '3': OrderCondition.MARGIN_TRADING,
+            '4': OrderCondition.SHORT_SELLING,
+            '9': OrderCondition.DAY_TRADING_LONG,
+            'A': OrderCondition.DAY_TRADING_SHORT,
+        }
+
+        @self.sdk.on('order')
+        def _on_order(data):
+            try:
+                order_id = self.get_org_order_id(data)
+                action = Action.BUY if data['buy_sell'] == 'B' else Action.SELL
+                status = OrderStatus.NEW
+                org_qty = float(data.get('org_qty', 0))
+                mat_qty = float(data.get('mat_qty', 0))
+                cel_qty = float(data.get('cel_qty', 0))
+                if org_qty == mat_qty and mat_qty > 0:
+                    status = OrderStatus.FILLED
+                elif cel_qty > 0:
+                    status = OrderStatus.CANCEL
+                elif mat_qty > 0:
+                    status = OrderStatus.PARTIALLY_FILLED
+
+                if 'ord_date' in data:
+                    t = datetime.datetime.strptime(data['ord_date'] + data['ord_time'], '%Y%m%d%H%M%S%f')
+                else:
+                    t = datetime.datetime.now()
+
+                self._emit_order_update(OrderUpdate(
+                    order_id=order_id,
+                    stock_id=data.get('stock_no', ''),
+                    action=action,
+                    price=float(data.get('od_price', 0)),
+                    quantity=org_qty,
+                    filled_quantity=mat_qty,
+                    status=status,
+                    order_condition=order_condition_map.get(data.get('trade', '0'), OrderCondition.CASH),
+                    time=t,
+                    org_event=data,
+                ))
+            except Exception:
+                logging.exception("Error in realtime on_order handler")
+
+        @self.sdk.on('dealt')
+        def _on_dealt(data):
+            try:
+                if isinstance(data, dict):
+                    t = datetime.datetime.strptime(
+                        f"{str((datetime.datetime.utcnow()+datetime.timedelta(hours=8)).date())} {data['mat_time']}",
+                        "%Y-%m-%d %H%M%S%f"
+                    )
+                    self._emit_fill(Fill(
+                        order_id=data.get('ord_no', ''),
+                        stock_id=data.get('stock_no', ''),
+                        action=Action.BUY if data.get('buy_sell') == 'B' else Action.SELL,
+                        price=float(data.get('mat_price', 0)),
+                        quantity=float(data.get('mat_qty', 0)),
+                        time=t,
+                        org_event=data,
+                    ))
+            except Exception:
+                logging.exception("Error in realtime on_dealt handler")
+
+        self._realtime_connected = True
+        self._emit_connection(ConnectionState.CONNECTED)
+        logging.info("Fugle realtime connected")
+
+    def disconnect_realtime(self) -> None:
+        if not self._realtime_connected:
+            return
+        self._realtime_connected = False
+        self._emit_connection(ConnectionState.DISCONNECTED)
+        logging.info("Fugle realtime disconnected")
+
+    def subscribe_ticks(self, stock_ids):
+        raise NotImplementedError("Fugle/Esun SDK does not support tick streaming")
+
+    def unsubscribe_ticks(self, stock_ids):
+        raise NotImplementedError("Fugle/Esun SDK does not support tick streaming")
+
+    def subscribe_bidask(self, stock_ids):
+        raise NotImplementedError("Fugle/Esun SDK does not support bidask streaming")
+
+    def unsubscribe_bidask(self, stock_ids):
+        raise NotImplementedError("Fugle/Esun SDK does not support bidask streaming")
+
+    # ── End RealtimeProvider ──────────────────────────────────────
 
     def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
 

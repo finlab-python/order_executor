@@ -14,6 +14,9 @@ from functools import wraps
 from finlab.online.core.account import Account, Stock, Order
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
+from finlab.online.core.realtime import (
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+)
 from finlab import data
 from finlab.markets.tw import TWMarket
 from fubon_neo.sdk import FubonSDK, Order as FBOrder
@@ -38,7 +41,7 @@ def handle_exceptions(default_return=None, log_prefix=""):
     return decorator
 
 
-class FubonAccount(Account):
+class FubonAccount(Account, RealtimeProvider):
     """
     富邦證券賬戶類
     實現與富邦證券 API 的交互
@@ -118,6 +121,124 @@ class FubonAccount(Account):
             logging.info("初始化行情元件成功")
         except Exception as e:
             logging.warning(f"初始化行情元件失敗: {e}")
+
+        self._init_realtime()
+
+    # ── RealtimeProvider implementation ──────────────────────────────
+
+    def connect_realtime(self) -> None:
+        if self._realtime_connected:
+            return
+
+        # Quote websocket: tick (trades channel)
+        def _on_message(message):
+            try:
+                if hasattr(message, 'symbol'):
+                    self._emit_tick(Tick(
+                        stock_id=message.symbol,
+                        price=getattr(message, 'price', 0.0),
+                        volume=getattr(message, 'size', 0),
+                        total_volume=getattr(message, 'total_volume', 0),
+                        time=getattr(message, 'time', datetime.datetime.now()),
+                        open=getattr(message, 'open', 0.0),
+                        high=getattr(message, 'high', 0.0),
+                        low=getattr(message, 'low', 0.0),
+                    ))
+            except Exception:
+                logging.exception("Error in Fubon tick handler")
+
+        def _on_book_message(message):
+            try:
+                if hasattr(message, 'symbol'):
+                    bids = getattr(message, 'bids', [])
+                    asks = getattr(message, 'asks', [])
+                    self._emit_bidask(BidAsk(
+                        stock_id=message.symbol,
+                        bid_prices=[getattr(b, 'price', 0.0) for b in bids],
+                        bid_volumes=[getattr(b, 'size', 0) for b in bids],
+                        ask_prices=[getattr(a, 'price', 0.0) for a in asks],
+                        ask_volumes=[getattr(a, 'size', 0) for a in asks],
+                        time=getattr(message, 'time', datetime.datetime.now()),
+                    ))
+            except Exception:
+                logging.exception("Error in Fubon bidask handler")
+
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        ws_client.on('message', _on_message)
+        ws_client.on('book', _on_book_message)
+
+        # Order/fill callbacks
+        def _on_order(data):
+            try:
+                self._emit_order_update(OrderUpdate(
+                    order_id=getattr(data, 'order_no', ''),
+                    stock_id=getattr(data, 'stock_no', ''),
+                    action=Action.BUY if getattr(data, 'buy_sell', '') == 'B' else Action.SELL,
+                    price=float(getattr(data, 'od_price', 0)),
+                    quantity=float(getattr(data, 'org_qty', 0)),
+                    filled_quantity=float(getattr(data, 'mat_qty', 0)),
+                    status=OrderStatus.NEW,
+                    order_condition=OrderCondition.CASH,
+                    time=datetime.datetime.now(),
+                    org_event=data,
+                ))
+            except Exception:
+                logging.exception("Error in Fubon order handler")
+
+        def _on_filled(data):
+            try:
+                self._emit_fill(Fill(
+                    order_id=getattr(data, 'order_no', ''),
+                    stock_id=getattr(data, 'stock_no', ''),
+                    action=Action.BUY if getattr(data, 'buy_sell', '') == 'B' else Action.SELL,
+                    price=float(getattr(data, 'filled_price', 0)),
+                    quantity=float(getattr(data, 'filled_qty', 0)),
+                    time=datetime.datetime.now(),
+                    org_event=data,
+                ))
+            except Exception:
+                logging.exception("Error in Fubon fill handler")
+
+        self.sdk.set_on_order(_on_order)
+        self.sdk.set_on_filled(_on_filled)
+
+        self._realtime_connected = True
+        self._emit_connection(ConnectionState.CONNECTED)
+        logging.info("Fubon realtime connected")
+
+    def disconnect_realtime(self) -> None:
+        if not self._realtime_connected:
+            return
+        try:
+            ws_client = self.sdk.marketdata.websocket_client.stock
+            ws_client.disconnect()
+        except Exception:
+            logging.exception("Error disconnecting Fubon websocket")
+        self._realtime_connected = False
+        self._emit_connection(ConnectionState.DISCONNECTED)
+        logging.info("Fubon realtime disconnected")
+
+    def subscribe_ticks(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.subscribe({'channel': 'trades', 'symbol': sid})
+
+    def unsubscribe_ticks(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.unsubscribe({'channel': 'trades', 'symbol': sid})
+
+    def subscribe_bidask(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.subscribe({'channel': 'books', 'symbol': sid})
+
+    def unsubscribe_bidask(self, stock_ids):
+        ws_client = self.sdk.marketdata.websocket_client.stock
+        for sid in stock_ids:
+            ws_client.unsubscribe({'channel': 'books', 'symbol': sid})
+
+    # ── End RealtimeProvider ──────────────────────────────────────
 
     def __del__(self):
         """
