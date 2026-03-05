@@ -8,8 +8,8 @@ from unittest.mock import Mock, patch, MagicMock
 from decimal import Decimal
 
 # 導入測試基礎設施
-from tests.utils.test_base import MockTestCase, AccountTestMixin
-from tests.fixtures.fubon_test_data import FubonTestData
+from ..utils.test_base import MockTestCase, AccountTestMixin
+from ..fixtures.fubon_test_data import FubonTestData
 
 # 導入被測試的模組
 from finlab.online.enums import Action, OrderCondition, OrderStatus
@@ -196,6 +196,9 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         orders = [
             {'stock_id': '2330', 'quantity': 1, 'order_condition': OrderCondition.CASH}
         ]
+        self.mock_account.get_stocks.return_value = {
+            '2330': Mock(close=580.0, bid_price=579.0, ask_price=581.0)
+        }
         
         oe = OrderExecutor(Position({}), self.mock_account)
         result = oe.execute_orders(orders, view_only=True)

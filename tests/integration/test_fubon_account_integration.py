@@ -8,11 +8,14 @@ import time
 import unittest
 import logging
 from decimal import Decimal
+import pytest
+
+pytest.importorskip("fubon_neo")
 
 # 導入測試基礎設施
-from tests.utils.test_base import IntegrationTestCase, AccountTestMixin
-from tests.test_config import TestConfig
-from tests.fixtures.fubon_test_data import FubonTestData, COMMON_TEST_SCENARIOS
+from ..utils.test_base import IntegrationTestCase, AccountTestMixin
+from ..test_config import TestConfig
+from ..fixtures.fubon_test_data import FubonTestData, COMMON_TEST_SCENARIOS
 
 # 導入被測試的模組
 from finlab.online.enums import OrderCondition, OrderStatus, Action
@@ -29,7 +32,7 @@ class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
     def setUp(self):
         super().setUp()
         try:
-            from fubon_account import FubonAccount
+            from finlab.online.fubon_account import FubonAccount
             self.fubon_account = FubonAccount()
             logging.info("富邦帳戶初始化成功")
         except Exception as e:
@@ -379,7 +382,7 @@ class TestFubonAccountOrderExecutor(IntegrationTestCase):
     def setUp(self):
         super().setUp()
         try:
-            from fubon_account import FubonAccount
+            from finlab.online.fubon_account import FubonAccount
             self.fubon_account = FubonAccount()
         except Exception as e:
             logging.error(f"設定 FubonAccount 時發生錯誤: {e}")

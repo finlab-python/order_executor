@@ -2,8 +2,7 @@
 富邦 SDK Mock 物件
 """
 from unittest.mock import Mock, MagicMock, patch
-from tests.fixtures.fubon_sdk_responses import FubonSDKResponses
-from tests.utils.mock_helpers import create_mock_result, MockBuilder
+from ..utils.mock_helpers import create_mock_result, MockBuilder
 
 class FubonSDKMock:
     """富邦 SDK Mock 類"""
@@ -190,7 +189,7 @@ class FubonAccountMockHelper:
         if sdk_mock is None:
             sdk_mock = FubonSDKMock().get_sdk()
         
-        with patch('fubon_account.FubonSDK') as mock_sdk_class:
+        with patch('finlab.online.fubon_account.FubonSDK') as mock_sdk_class:
             mock_sdk_class.return_value = sdk_mock
             
             # Mock 環境變數
@@ -199,7 +198,7 @@ class FubonAccountMockHelper:
                 'FUBON_ACCOUNT_PASS': 'test_password',
                 'FUBON_CERT_PATH': '/test/path/cert.pfx'
             }):
-                from fubon_account import FubonAccount
+                from finlab.online.fubon_account import FubonAccount
                 account = FubonAccount()
                 account.sdk = sdk_mock  # 確保 SDK 是我們的 mock
                 return account
@@ -207,7 +206,7 @@ class FubonAccountMockHelper:
     @staticmethod
     def patch_fubon_sdk():
         """返回可用於裝飾器的 FubonSDK patch"""
-        return patch('fubon_account.FubonSDK')
+        return patch('finlab.online.fubon_account.FubonSDK')
     
     @staticmethod
     def patch_environment():

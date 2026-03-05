@@ -1,5 +1,6 @@
 from finlab.online.order_executor import Position
 from finlab.online.order_executor import OrderExecutor
+from finlab.compat import resolve_position_entry_symbol
 import sched
 import time
 import finlab
@@ -65,8 +66,16 @@ class Dashboard():
 
         # get present_qty
         position = self.acc.get_position()
-        acc_position = pd.DataFrame(position.position).groupby(
-            'stock_id').sum() if len(position.position) > 0 else []
+        if len(position.position) == 0:
+            acc_position = []
+        else:
+            rows = []
+            for p in position.position:
+                rows.append({
+                    'symbol': resolve_position_entry_symbol(p),
+                    'quantity': p['quantity'],
+                })
+            acc_position = pd.DataFrame(rows).groupby('symbol').sum()
 
         stocks = self.acc.get_stocks(acc_position.index.tolist())
 
@@ -103,13 +112,14 @@ class Dashboard():
         q = {}
 
         for p in position.position:
-            q[p['stock_id']] = p['quantity']
+            q[resolve_position_entry_symbol(p)] = p['quantity']
 
         target_qty = []
 
         for p in position.position:
+            symbol = resolve_position_entry_symbol(p)
             target_qty.append({
-                'symbol': p["stock_id"],
+                'symbol': symbol,
                 'qty': p['quantity'],
                 'strategy_id': sid
             })
@@ -138,13 +148,18 @@ class Dashboard():
             self.oe = OrderExecutor(p, self.acc)
             self.oe.create_orders(*self.args, **self.kwargs)
         else:
-            stocks = self.acc.get_stocks([p['stock_id'].split('.')[0] for p in p.position])
+            symbols = [resolve_position_entry_symbol(pp) for pp in p.position]
+            stocks = self.acc.get_stocks([symbol.split('.')[0] for symbol in symbols])
 
-            present_qty = [{
-                'symbol': p['stock_id'],
-                'price': stocks[p['stock_id']].close,
-                'qty': p['quantity']
-            } for p in p.position]
+            present_qty = []
+            for symbol, pp in zip(symbols, p.position):
+                base_symbol = symbol.split('.')[0]
+                stock = stocks.get(symbol) or stocks[base_symbol]
+                present_qty.append({
+                    'symbol': symbol,
+                    'price': stock.close,
+                    'qty': pp['quantity'],
+                })
 
             # upload present and target qty
             url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
@@ -214,7 +229,7 @@ class Dashboard():
                 "api_token": finlab.get_token(),
                 "pt": self.paper_trade,
                 "symbol": {
-                    "id": trade.stock_id,
+                    "id": trade.symbol if isinstance(getattr(trade, "symbol", None), str) else trade.stock_id,
                     "market": "tw_stock",
                 },
                 "txn": {
@@ -226,4 +241,3 @@ class Dashboard():
             requests.post(url, json=json)
 
         self.acc.on_trades(upload_trade)
-
