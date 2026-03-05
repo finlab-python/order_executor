@@ -34,8 +34,8 @@ class OrderExecutor():
         present_position = self.account.get_position()
         new_orders = (self.target_position - present_position).position
 
-        symbols = [o.get('symbol') or o['stock_id'] for o in new_orders]
-        quantity = {(o.get('symbol') or o['stock_id']): o['quantity'] for o in new_orders}
+        symbols = [self._symbol(o) for o in new_orders]
+        quantity = {self._symbol(o): o['quantity'] for o in new_orders}
 
         res = requests.get('https://www.sinotrade.com.tw/Stock/Stock_3_8_3')
         dfs = pd.read_html(res.text)
@@ -79,16 +79,28 @@ class OrderExecutor():
             return str(quantity)
         raise ValueError("quantity_type should be one of {'decimal', 'float', 'string'}")
 
+    @staticmethod
+    def _symbol(payload):
+        return resolve_position_entry_symbol(payload)
+
+    @staticmethod
+    def _order_symbol(order):
+        sid = getattr(order, "symbol", None)
+        if isinstance(sid, str) and sid:
+            return sid
+        return getattr(order, "stock_id")
+
     def _to_order_entries(self, order_payloads, quantity_type='decimal'):
         from finlab.schemas import OrderEntry
 
         entries = []
         for payload in order_payloads:
+            sid = self._symbol(payload)
             quantity = self._convert_quantity_type(payload['quantity'], quantity_type)
             entries.append(
                 OrderEntry(
-                    symbol=resolve_position_entry_symbol(payload),
-                    stock_id=payload['stock_id'],
+                    symbol=sid,
+                    stock_id=sid,
                     quantity=quantity,
                     order_condition=payload['order_condition'],
                 )
@@ -119,7 +131,7 @@ class OrderExecutor():
         if hasattr(self.account, 'base_currency'):
             base_currency = self.account.base_currency
             for pp in target_position.position:
-                sid = pp.get('symbol') or pp['stock_id']
+                sid = self._symbol(pp)
                 if sid[-len(base_currency):] == base_currency:
                     pp['symbol'] = sid[:-len(base_currency)]
                     pp['stock_id'] = pp['symbol']
@@ -174,7 +186,7 @@ class OrderExecutor():
         if cancel_orders:
             self.cancel_orders()
 
-        stocks = self.account.get_stocks(list({o.get('symbol') or o['stock_id'] for o in orders}))
+        stocks = self.account.get_stocks(list({self._symbol(o) for o in orders}))
 
         pinfo = None
         if hasattr(self.account, 'get_price_info'):
@@ -187,7 +199,7 @@ class OrderExecutor():
             if o['quantity'] == 0:
                 continue
 
-            sid = o.get('symbol') or o['stock_id']
+            sid = self._symbol(o)
             action = Action.BUY if o['quantity'] > 0 else Action.SELL
 
             if buy_only and action == Action.SELL:
@@ -306,7 +318,7 @@ class OrderExecutor():
         if extra_bid_pct < -0.1 or extra_bid_pct > 0.1:
             raise ValueError("The extra_bid_pct parameter is out of the valid range 0 to 0.1")
         orders = self.account.get_orders()
-        sids = set([o.stock_id for i, o in orders.items()])
+        sids = {self._order_symbol(o) for _, o in orders.items()}
         stocks = self.account.get_stocks(sids)
 
         pinfo = None
@@ -316,20 +328,21 @@ class OrderExecutor():
         for i, o in orders.items():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
 
-                price = stocks[o.stock_id].close
+                sid = self._order_symbol(o)
+                price = stocks[sid].close
 
                 if o.price == price:
                     continue
                 
                 price = calculate_price_with_extra_bid(price, extra_bid_pct if o.action == Action.BUY else -extra_bid_pct)
 
-                if pinfo and o.stock_id in pinfo:
-                    up_limit = float(pinfo[o.stock_id]['漲停價'])
-                    dn_limit = float(pinfo[o.stock_id]['跌停價'])
+                if pinfo and sid in pinfo:
+                    up_limit = float(pinfo[sid]['漲停價'])
+                    dn_limit = float(pinfo[sid]['跌停價'])
                     price = max(price, dn_limit)
                     price = min(price, up_limit)
                 else:
-                    logger.warning('No price info for stock %s', o.stock_id)
+                    logger.warning('No price info for stock %s', sid)
 
                 self.account.update_order(i, price=price)
 
@@ -346,11 +359,11 @@ class OrderExecutor():
             }
 
         def get_symbols(orders):
-            return [((o.get('symbol') or o['stock_id']), str(o['order_condition'])) for o in orders]
+            return [(self._symbol(o), str(o['order_condition'])) for o in orders]
 
 
         def find_symbols(orders, symbol):
-            ret = [o for o in orders if (o.get('symbol') or o['stock_id']) == symbol]
+            ret = [o for o in orders if self._symbol(o) == symbol]
             if len(ret) == 0:
                 return {'quantity': 0, 'symbol': symbol[0], 'order_condition': symbol[1]}
             return ret[0]

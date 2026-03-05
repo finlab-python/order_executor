@@ -3,6 +3,7 @@ import time
 from finlab.online import enums
 from finlab.online.utils import greedy_allocation
 from finlab.online.order_executor import Position, OrderExecutor
+from finlab.compat import resolve_position_entry_symbol
 import copy
 import pandas as pd
 import ipywidgets as widgets
@@ -117,6 +118,13 @@ class OrderPanel():
         with self.out2:
             display(widgets.HTML('<h2>委託部位</h2>'))
 
+    @staticmethod
+    def _order_symbol(order):
+        sid = getattr(order, "symbol", None)
+        if isinstance(sid, str) and sid:
+            return sid
+        return getattr(order, "stock_id")
+
     def set_position(self, *args, **kwargs):
         self.oe = OrderExecutor(*args, **kwargs)
         self.display_position(edit=True)
@@ -131,12 +139,12 @@ class OrderPanel():
         delta = target_position - current_position
 
         stocks = self.oe.account.get_stocks(
-            [o.get('symbol') or o['stock_id'] for o in delta.position])
+            [resolve_position_entry_symbol(o) for o in delta.position])
 
         grid = widgets.GridspecLayout(max(1, len(delta.position)), 5)
 
         for i, o in enumerate(delta.position):
-            sid = o.get('symbol') or o['stock_id']
+            sid = resolve_position_entry_symbol(o)
             org_quantity = self.get_quantity(
                 current_position.position, sid, o['order_condition'])
             target_quantity = self.get_quantity(
@@ -156,7 +164,7 @@ class OrderPanel():
             new_target_position = []
             for i, o in enumerate(delta.position):
 
-                o_sid = o.get('symbol') or o['stock_id']
+                o_sid = resolve_position_entry_symbol(o)
                 new_target_position.append({
                     'symbol': o_sid,
                     'stock_id': o_sid,
@@ -183,7 +191,7 @@ class OrderPanel():
     def get_quantity(position_list, stock_id=None, order_condition=None, *, symbol=None):
         sid = symbol or stock_id
         for o in position_list:
-            o_sid = o.get('symbol') or o['stock_id']
+            o_sid = resolve_position_entry_symbol(o)
             if o_sid == sid and o['order_condition'] == order_condition:
                 return o['quantity']
         return 0
@@ -209,7 +217,7 @@ class OrderPanel():
 
         active_orders = [o for oid, o in orders.items() if o.status not in [
             enums.OrderStatus.CANCEL, enums.OrderStatus.FILLED]]
-        active_orders.sort(key=lambda o: o.stock_id)
+        active_orders.sort(key=self._order_symbol)
 
         def cancel_order_btn_func(btn):
             self.oe.account.cancel_order(btn.oid)
@@ -217,23 +225,25 @@ class OrderPanel():
 
         def update_price_btn_func(btn):
             order = orders[btn.oid]
+            sid = self._order_symbol(order)
             stock = self.oe.account.get_stocks(
-                [order.stock_id])[order.stock_id]
+                [sid])[sid]
             self.oe.account.update_order(btn.oid, price=stock.close)
             self.display_active_order()
 
         def buy_at_market_price_btn_func(btn):
             self.oe.account.cancel_order(btn.oid)
             order = self.oe.account.get_orders()[btn.oid]
+            sid = self._order_symbol(order)
             new_quantity = (float(order.quantity) - float(order.filled_quantity))
             if new_quantity >= 1:
                 self.oe.account.create_order(
-                    order.action, order.stock_id, 1, order_cond=order.order_condition, market_order=True)
+                    order.action, sid, 1, order_cond=order.order_condition, market_order=True)
                 new_quantity -= 1
 
             if new_quantity > 0:
                 self.oe.account.create_order(
-                    order.action, order.stock_id, new_quantity, order_cond=order.order_condition)
+                    order.action, sid, new_quantity, order_cond=order.order_condition)
 
             self.display_active_order()
 

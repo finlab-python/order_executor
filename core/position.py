@@ -1,6 +1,6 @@
 from finlab.online.core.utils import greedy_allocation
 from finlab.online.core.enums import *
-from finlab.compat import normalize_position_dict
+from finlab.compat import normalize_position_dict, resolve_position_entry_symbol
 from decimal import Decimal
 from typing import Union
 from finlab import config
@@ -341,7 +341,7 @@ class Position:
         orig = position.to_list()
         rows = []
         for p in orig:
-            sid = p.get("symbol") or p["stock_id"]
+            sid = resolve_position_entry_symbol(p)
             qty = Decimal(p["quantity"])
             if qty <= 0:
                 continue
@@ -642,7 +642,7 @@ class Position:
         qty = {}
         for s in stocks:
             if s["order_condition"] == oc:
-                sid = s.get("symbol") or s["stock_id"]
+                sid = resolve_position_entry_symbol(s)
                 q = qty.get(sid, 0)
                 qty[sid] = q + s.get(attr, 0)
 
@@ -725,7 +725,7 @@ class Position:
     def fall_back_cash(self):
         pos = []
         for p in self.position:
-            sid = p.get("symbol") or p["stock_id"]
+            sid = resolve_position_entry_symbol(p)
             oc = (
                 OrderCondition.CASH
                 if p["order_condition"]
