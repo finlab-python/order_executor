@@ -1,6 +1,6 @@
 from finlab.online.position import Position
 from finlab.online.enums import *
-from finlab.compat import resolve_position_entry_symbol
+from finlab.compat import resolve_position_entry_symbol, is_typed_strict_mode
 from finlab import data
 from decimal import Decimal
 import pandas as pd
@@ -95,13 +95,24 @@ class OrderExecutor():
             )
         return entries
 
-    def generate_orders(self, progress=1, progress_precision=0, as_entries=False, quantity_type='decimal'):
+    def generate_orders(self, progress=1, progress_precision=0, as_entries=None, quantity_type='decimal', _internal=False):
         """
         Generate orders based on the difference between target position and present position.
         
         Returns:
         orders (dict): Orders to be executed.
         """
+
+        strict_mode = is_typed_strict_mode()
+
+        if strict_mode and not _internal:
+            if as_entries is False:
+                raise ValueError("strict mode requires typed output; use as_entries=True or generate_order_entries()")
+            if as_entries is None:
+                as_entries = True
+
+        if as_entries is None:
+            as_entries = False
 
         target_position = Position.from_list(copy.copy(self.target_position.position))
 
@@ -282,7 +293,7 @@ class OrderExecutor():
             sell_only (bool): 若設為 True，只下賣單
         """
         self.cancel_orders()
-        orders = self.generate_orders(progress, progress_precision)
+        orders = self.generate_orders(progress, progress_precision, _internal=True)
         return self.execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct, cancel_orders=False, buy_only=buy_only, sell_only=sell_only)
     
     
