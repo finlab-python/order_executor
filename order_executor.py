@@ -1,5 +1,6 @@
 from finlab.online.position import Position
 from finlab.online.enums import *
+from finlab.compat import resolve_position_entry_symbol
 from finlab import data
 from decimal import Decimal
 import pandas as pd
@@ -86,7 +87,7 @@ class OrderExecutor():
             quantity = self._convert_quantity_type(payload['quantity'], quantity_type)
             entries.append(
                 OrderEntry(
-                    symbol=payload.get('symbol') or payload['stock_id'],
+                    symbol=resolve_position_entry_symbol(payload),
                     stock_id=payload['stock_id'],
                     quantity=quantity,
                     order_condition=payload['order_condition'],
