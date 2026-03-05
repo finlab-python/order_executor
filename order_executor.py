@@ -66,7 +66,35 @@ class OrderExecutor():
             if o.status == OrderStatus.NEW or o.status == OrderStatus.PARTIALLY_FILLED:
                 self.account.cancel_order(oid)
 
-    def generate_orders(self, progress=1, progress_precision=0):
+    @staticmethod
+    def _convert_quantity_type(quantity, quantity_type):
+        if quantity_type == 'decimal':
+            return quantity if isinstance(quantity, Decimal) else Decimal(str(quantity))
+        if quantity_type == 'float':
+            return float(quantity)
+        if quantity_type == 'string':
+            if isinstance(quantity, Decimal):
+                return format(quantity, 'f')
+            return str(quantity)
+        raise ValueError("quantity_type should be one of {'decimal', 'float', 'string'}")
+
+    def _to_order_entries(self, order_payloads, quantity_type='decimal'):
+        from finlab.schemas import OrderEntry
+
+        entries = []
+        for payload in order_payloads:
+            quantity = self._convert_quantity_type(payload['quantity'], quantity_type)
+            entries.append(
+                OrderEntry(
+                    symbol=payload.get('symbol') or payload['stock_id'],
+                    stock_id=payload['stock_id'],
+                    quantity=quantity,
+                    order_condition=payload['order_condition'],
+                )
+            )
+        return entries
+
+    def generate_orders(self, progress=1, progress_precision=0, as_entries=False, quantity_type='decimal'):
         """
         Generate orders based on the difference between target position and present position.
         
@@ -96,7 +124,18 @@ class OrderExecutor():
             
             orders = Position.from_list([{**o, 'quantity': round(float(o['quantity'])*progress, progress_precision)} for o in orders.position])
 
+        if as_entries:
+            return self._to_order_entries(orders.position, quantity_type=quantity_type)
+
         return orders.position
+
+    def generate_order_entries(self, progress=1, progress_precision=0, quantity_type='decimal'):
+        return self.generate_orders(
+            progress=progress,
+            progress_precision=progress_precision,
+            as_entries=True,
+            quantity_type=quantity_type,
+        )
     
     def execute_orders(self, orders, market_order=False, best_price_limit=False, view_only=False, extra_bid_pct=0, cancel_orders=True, buy_only=False, sell_only=False):
         """產生委託單，將部位同步成 self.target_position
