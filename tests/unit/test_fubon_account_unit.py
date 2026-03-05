@@ -7,12 +7,15 @@ import unittest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 from decimal import Decimal
+import pytest
+
+pytest.importorskip("fubon_neo")
 
 # 導入測試基礎設施
-from tests.utils.test_base import MockTestCase, AccountTestMixin
-from tests.fixtures.fubon_mocks import FubonSDKMock, FubonAccountMockHelper
-from tests.fixtures.fubon_test_data import FubonTestData, COMMON_TEST_SCENARIOS
-from tests.utils.mock_helpers import MockBuilder
+from ..utils.test_base import MockTestCase, AccountTestMixin
+from ..fixtures.fubon_mocks import FubonSDKMock, FubonAccountMockHelper
+from ..fixtures.fubon_test_data import FubonTestData, COMMON_TEST_SCENARIOS
+from ..utils.mock_helpers import MockBuilder
 
 # 導入被測試的模組
 from finlab.online.enums import Action, OrderCondition, OrderStatus
@@ -34,7 +37,7 @@ class TestFubonAccountUnit(MockTestCase, AccountTestMixin):
             with FubonAccountMockHelper.patch_fubon_sdk() as mock_sdk_class:
                 mock_sdk_class.return_value = self.sdk_mock.get_sdk()
                 
-                from fubon_account import FubonAccount
+                from finlab.online.fubon_account import FubonAccount
                 account = FubonAccount()
                 
                 # 驗證 SDK 被正確初始化
@@ -50,7 +53,7 @@ class TestFubonAccountUnit(MockTestCase, AccountTestMixin):
         """測試缺少憑證時初始化失敗"""
         with patch.dict('os.environ', {}, clear=True):
             with self.assertRaises(ValueError) as context:
-                from fubon_account import FubonAccount
+                from finlab.online.fubon_account import FubonAccount
                 FubonAccount()
             
             self.assertIn("缺少必要的登錄信息", str(context.exception))
@@ -64,7 +67,7 @@ class TestFubonAccountUnit(MockTestCase, AccountTestMixin):
                 mock_sdk_class.return_value = sdk_mock
                 
                 with self.assertRaises(Exception) as context:
-                    from fubon_account import FubonAccount
+                    from finlab.online.fubon_account import FubonAccount
                     FubonAccount()
                 
                 self.assertIn("無法登入富邦證券", str(context.exception))
@@ -363,7 +366,7 @@ class TestFubonAccountErrorHandling(MockTestCase):
 
     def test_handle_exceptions_decorator(self):
         """測試 handle_exceptions 裝飾器"""
-        from fubon_account import handle_exceptions
+        from finlab.online.fubon_account import handle_exceptions
         
         @handle_exceptions(default_return="default_value", log_prefix="test: ")
         def test_function():

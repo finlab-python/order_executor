@@ -11,10 +11,16 @@ tests/
 ├── test_config.py                     # 測試配置和環境變數管理
 ├── unit/                              # 單元測試（快速，使用 mock）
 │   ├── __init__.py
-│   └── test_fubon_account_unit.py     # 富邦帳戶單元測試
+│   ├── test_fubon_account_unit.py     # 富邦帳戶單元測試
+│   ├── test_order_executor_unit.py    # OrderExecutor 單元測試
+│   ├── test_position_utilities.py     # Position 與權重配置測試
+│   └── test_calculate_price_with_extra_bid.py  # 加減價測試
 ├── integration/                       # 整合測試（需要真實 API 憑證）
 │   ├── __init__.py
-│   └── test_fubon_account_integration.py  # 富邦帳戶整合測試
+│   ├── real_order_helpers.py          # 真實下單流程共用 helper
+│   ├── test_fubon_account_integration.py  # 富邦帳戶整合測試
+│   ├── test_real_order_accounts.py    # 永豐/玉山真實下單流程測試
+│   └── test_position_from_report.py   # from_report 策略整合測試
 ├── fixtures/                          # 測試數據和 mock 物件
 │   ├── __init__.py
 │   ├── fubon_sdk_responses.py         # 富邦 SDK 標準回應格式
@@ -40,12 +46,18 @@ python run_tests.py --unit
 
 # 運行富邦帳戶單元測試
 python run_tests.py --fubon unit
+
+# 運行 Position/價格工具單元測試
+python -m pytest tests/unit/test_position_utilities.py tests/unit/test_calculate_price_with_extra_bid.py -v
 ```
 
 ### 3. 運行整合測試（需要憑證）
 ```bash
 # 運行富邦帳戶整合測試
 python run_tests.py --fubon integration
+
+# 運行真實券商下單流程測試（需券商憑證）
+python -m pytest tests/integration/test_real_order_accounts.py -v -s
 ```
 
 ## 🧪 測試類型說明
