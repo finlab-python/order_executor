@@ -7,6 +7,7 @@ from shioaji.constant import (
     Exchange as SJExchange,
     OrderType as SJOrderType,
     Unit as SJUnit,
+    OrderState as SJOrderState,
 )
 from shioaji.contracts import Stock as SJStock
 from shioaji.order import Trade as SJTrade, StockOrder as SJStockOrder
@@ -26,8 +27,8 @@ from finlab.online.core.utils import estimate_stock_price
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime import (
-    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
-    get_first_valid_float,
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, BalanceUpdate, ConnectionState,
+    get_field_value, get_first_valid_float, to_optional_float,
 )
 from finlab import data
 from finlab.markets.tw import TWMarket
@@ -90,6 +91,134 @@ class SinopacAccount(Account, RealtimeProvider):
 
     # ── RealtimeProvider implementation ──────────────────────────────
 
+    @staticmethod
+    def _parse_callback_time(payload):
+        order_datetime = get_field_value(payload, "order_datetime")
+        if isinstance(order_datetime, datetime.datetime):
+            return order_datetime
+
+        msg_datetime = get_field_value(payload, "datetime")
+        if isinstance(msg_datetime, datetime.datetime):
+            return msg_datetime
+
+        ts = to_optional_float(get_field_value(payload, "ts"))
+        if ts is not None:
+            try:
+                if ts >= 10**12:  # milliseconds
+                    return datetime.datetime.fromtimestamp(ts / 1000)
+                return datetime.datetime.fromtimestamp(ts)
+            except (OSError, OverflowError, ValueError):
+                pass
+
+        return datetime.datetime.now()
+
+    @staticmethod
+    def _map_callback_action(raw_action):
+        text = str(raw_action).upper()
+        if text in ("BUY", "ACTION.BUY", "B"):
+            return Action.BUY
+        if text in ("SELL", "ACTION.SELL", "S"):
+            return Action.SELL
+        return Action.SELL
+
+    @staticmethod
+    def _map_callback_order_condition(raw_order_condition):
+        if raw_order_condition is None:
+            return OrderCondition.CASH
+        try:
+            return map_order_condition(str(raw_order_condition))
+        except Exception:
+            return OrderCondition.CASH
+
+    def _build_order_update_from_callback(self, payload):
+        order_id = str(
+            get_field_value(payload, "id")
+            or get_field_value(payload, "ordno")
+            or get_field_value(payload, "seqno")
+            or ""
+        )
+        stock_id = str(
+            get_field_value(payload, "code")
+            or get_field_value(payload, "symbol")
+            or ""
+        )
+        quantity = get_first_valid_float(payload, "quantity", "order_quantity") or 0.0
+        filled_quantity = get_first_valid_float(payload, "deal_quantity", "filled_qty") or 0.0
+        price = get_first_valid_float(payload, "price", "modified_price", "avg_price") or 0.0
+
+        status_raw = get_field_value(payload, "status")
+        try:
+            status = map_trade_status(str(status_raw))
+        except Exception:
+            status = OrderStatus.NEW
+
+        cancel_quantity = get_first_valid_float(payload, "cancel_quantity") or 0.0
+        operation = "new"
+        if cancel_quantity > 0:
+            operation = "cancel"
+        elif get_first_valid_float(payload, "modified_price") not in (None, 0):
+            operation = "update_price"
+
+        return OrderUpdate(
+            order_id=order_id,
+            stock_id=stock_id,
+            action=self._map_callback_action(get_field_value(payload, "action")),
+            price=price,
+            quantity=quantity,
+            filled_quantity=filled_quantity,
+            status=status,
+            order_condition=self._map_callback_order_condition(
+                get_field_value(payload, "order_cond")
+            ),
+            time=self._parse_callback_time(payload),
+            operation=operation,
+            org_event=payload,
+        )
+
+    def _build_fill_from_callback(self, payload):
+        order_id = str(
+            get_field_value(payload, "seqno")
+            or get_field_value(payload, "ordno")
+            or get_field_value(payload, "id")
+            or ""
+        )
+        stock_id = str(
+            get_field_value(payload, "code")
+            or get_field_value(payload, "symbol")
+            or ""
+        )
+        return Fill(
+            order_id=order_id,
+            stock_id=stock_id,
+            action=self._map_callback_action(get_field_value(payload, "action")),
+            price=get_first_valid_float(payload, "price", "avg_price") or 0.0,
+            quantity=get_first_valid_float(payload, "quantity", "deal_quantity") or 0.0,
+            time=self._parse_callback_time(payload),
+            org_event=payload,
+        )
+
+    def _get_realtime_balance(self):
+        account_id = ""
+        if self.api.stock_account is not None:
+            account_id = str(
+                getattr(self.api.stock_account, "account_id", "")
+                or getattr(self.api.stock_account, "account", "")
+            )
+
+        cash = to_optional_float(self.get_cash())
+        settlement = to_optional_float(self.get_settlement())
+        total_balance = to_optional_float(self.get_total_balance())
+
+        return BalanceUpdate(
+            account_id=account_id,
+            broker=self.__class__.__name__,
+            available_balance=cash,
+            cash=cash,
+            settlement=settlement,
+            total_balance=total_balance,
+            time=datetime.datetime.now(),
+        )
+
     def connect_realtime(self) -> None:
         if self._realtime_connected:
             return
@@ -123,6 +252,7 @@ class SinopacAccount(Account, RealtimeProvider):
                 tick_type=tick.tick_type,
                 prev_close=prev_close,
                 pct_change=native_pct_change,
+                source="trade",
             ))
 
         @self.api.on_bidask_stk_v1()
@@ -137,31 +267,35 @@ class SinopacAccount(Account, RealtimeProvider):
             ))
 
         def _order_cb(stat, msg):
-            if hasattr(msg, 'trade_id'):
-                # Deal/fill event
-                self._emit_fill(Fill(
-                    order_id=msg.seqno if hasattr(msg, 'seqno') else '',
-                    stock_id=msg.code,
-                    action=Action.BUY if msg.action == 'Buy' else Action.SELL,
-                    price=msg.price,
-                    quantity=msg.quantity,
-                    time=msg.ts if hasattr(msg, 'ts') else datetime.datetime.now(),
-                    org_event=msg,
-                ))
-            else:
-                # Order status event
-                self._emit_order_update(OrderUpdate(
-                    order_id=msg.id if hasattr(msg, 'id') else '',
-                    stock_id=msg.code if hasattr(msg, 'code') else '',
-                    action=Action.BUY if getattr(msg, 'action', '') == 'Buy' else Action.SELL,
-                    price=getattr(msg, 'price', 0),
-                    quantity=getattr(msg, 'quantity', 0),
-                    filled_quantity=getattr(msg, 'deal_quantity', 0),
-                    status=map_trade_status(msg.status) if hasattr(msg, 'status') else OrderStatus.NEW,
-                    order_condition=map_order_condition(msg.order_cond) if hasattr(msg, 'order_cond') else OrderCondition.CASH,
-                    time=getattr(msg, 'order_datetime', datetime.datetime.now()),
-                    org_event=msg,
-                ))
+            try:
+                state_value = str(getattr(stat, "value", stat))
+                state_value = state_value.upper()
+
+                if state_value in {
+                    SJOrderState.StockDeal.value,
+                    SJOrderState.FuturesDeal.value,
+                    "SDEAL",
+                    "FDEAL",
+                }:
+                    self._emit_fill(self._build_fill_from_callback(msg))
+                    return
+
+                if state_value in {
+                    SJOrderState.StockOrder.value,
+                    SJOrderState.FuturesOrder.value,
+                    "SORDER",
+                    "FORDER",
+                }:
+                    self._emit_order_update(self._build_order_update_from_callback(msg))
+                    return
+
+                # Unknown state fallback (older SDK payloads)
+                if get_field_value(msg, "deal_quantity") not in (None, 0):
+                    self._emit_fill(self._build_fill_from_callback(msg))
+                else:
+                    self._emit_order_update(self._build_order_update_from_callback(msg))
+            except Exception:
+                logger.exception("Sinopac order callback parsing error")
         self.api.set_order_callback(_order_cb)
 
         @self.api.quote.on_event
@@ -180,6 +314,7 @@ class SinopacAccount(Account, RealtimeProvider):
     def disconnect_realtime(self) -> None:
         if not self._realtime_connected:
             return
+        self.unsubscribe_balances()
         self._realtime_connected = False
         self._emit_connection(ConnectionState.DISCONNECTED)
         logger.info("Sinopac realtime disconnected")

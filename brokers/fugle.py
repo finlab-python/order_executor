@@ -180,6 +180,7 @@ class FugleAccount(Account, RealtimeProvider):
     def disconnect_realtime(self) -> None:
         if not self._realtime_connected:
             return
+        self.unsubscribe_balances()
         self._realtime_connected = False
         self._emit_connection(ConnectionState.DISCONNECTED)
         logging.info("Fugle realtime disconnected")

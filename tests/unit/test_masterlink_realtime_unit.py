@@ -77,10 +77,12 @@ def test_masterlink_realtime_tick_and_trade_callbacks(monkeypatch):
     account._init_realtime()
 
     ticks = []
+    trades = []
     bidasks = []
     updates = []
     fills = []
     account.on_tick(ticks.append)
+    account.on_trade(trades.append)
     account.on_bidask(bidasks.append)
     account.on_order_update(updates.append)
     account.on_fill(fills.append)
@@ -150,6 +152,8 @@ def test_masterlink_realtime_tick_and_trade_callbacks(monkeypatch):
     assert ticks[-1].stock_id == "2330"
     assert ticks[-1].price == 568.0
     assert ticks[-1].pct_change == 1.23
+    assert len(trades) == 1
+    assert trades[0].price == 568.0
 
     assert len(bidasks) == 1
     assert bidasks[0].bid_prices[0] == 567.0

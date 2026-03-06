@@ -15,7 +15,7 @@ from finlab.online.core.account import Account, Stock, Order
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime import (
-    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, BalanceUpdate, ConnectionState,
     get_field_value, get_first_valid_float, to_optional_float,
 )
 from finlab import data
@@ -159,6 +159,165 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
         return datetime.datetime.now()
 
+    @staticmethod
+    def _order_quantity_divisor(data):
+        market_type = str(get_field_value(data, "market_type") or "").upper()
+        if market_type in {"INTRADAYODD", "ODD", "EMGODD"}:
+            return 1.0
+        return 1000.0
+
+    @staticmethod
+    def _map_realtime_order_condition(data):
+        order_type = str(get_field_value(data, "order_type") or "").upper()
+        if "MARGIN" in order_type:
+            return OrderCondition.MARGIN_TRADING
+        if "SHORT" in order_type:
+            return OrderCondition.SHORT_SELLING
+        if "DAYTRADE" in order_type:
+            return OrderCondition.DAY_TRADING_SHORT
+        return OrderCondition.CASH
+
+    @staticmethod
+    def _map_realtime_operation(data):
+        act = str(get_field_value(data, "act") or "").upper()
+        return {
+            "0": "new",
+            "M": "update_qty",
+            "R": "update_price",
+            "C": "cancel",
+        }.get(act, "")
+
+    def _map_realtime_status(self, data):
+        kind = str(get_field_value(data, "kind") or "").upper()
+        divisor = self._order_quantity_divisor(data)
+        quantity = (get_first_valid_float(data, "after_qty", "org_qty", "quantity", "qty") or 0.0) / divisor
+        filled_quantity = (get_first_valid_float(data, "filled_qty", "mat_qty", "deal_quantity") or 0.0) / divisor
+        canceled_quantity = (get_first_valid_float(data, "cel_qty", "cancel_quantity") or 0.0) / divisor
+        can_cancel = get_field_value(data, "can_cancel")
+        if isinstance(can_cancel, str):
+            can_cancel = can_cancel.lower() == "true"
+        err_code = str(get_field_value(data, "err_code") or "000000")
+
+        if kind == "MAT" and filled_quantity > 0:
+            if quantity > 0 and filled_quantity >= quantity:
+                return OrderStatus.FILLED
+            return OrderStatus.PARTIALLY_FILLED
+        if canceled_quantity > 0:
+            return OrderStatus.PARTIALLY_FILLED if filled_quantity > 0 else OrderStatus.CANCEL
+        if err_code not in {"000000", "", "0", "NONE"}:
+            return OrderStatus.CANCEL
+        if quantity > 0 and filled_quantity >= quantity > 0:
+            return OrderStatus.FILLED
+        if filled_quantity > 0:
+            return OrderStatus.PARTIALLY_FILLED
+        if can_cancel is False:
+            return OrderStatus.CANCEL
+        return OrderStatus.NEW
+
+    def _build_realtime_order_update(self, data):
+        divisor = self._order_quantity_divisor(data)
+        quantity = (get_first_valid_float(data, "after_qty", "org_qty", "quantity", "qty") or 0.0) / divisor
+        filled_quantity = (get_first_valid_float(data, "filled_qty", "mat_qty", "deal_quantity") or 0.0) / divisor
+        price = get_first_valid_float(data, "od_price", "order_price", "price") or 0.0
+
+        return OrderUpdate(
+            order_id=str(
+                get_field_value(data, "order_no")
+                or get_field_value(data, "orderNo")
+                or get_field_value(data, "seq_no")
+                or get_field_value(data, "seqNo")
+                or get_field_value(data, "id")
+                or ""
+            ),
+            stock_id=str(
+                get_field_value(data, "stock_no")
+                or get_field_value(data, "symbol")
+                or get_field_value(data, "code")
+                or ""
+            ),
+            action=self._map_buy_sell_action(
+                get_field_value(data, "buy_sell") or get_field_value(data, "action")
+            ),
+            price=price,
+            quantity=quantity,
+            filled_quantity=filled_quantity,
+            status=self._map_realtime_status(data),
+            order_condition=self._map_realtime_order_condition(data),
+            time=self._order_time_from_payload(data),
+            operation=self._map_realtime_operation(data),
+            org_event=data,
+        )
+
+    def _build_realtime_fill(self, data):
+        divisor = self._order_quantity_divisor(data)
+        quantity = (get_first_valid_float(data, "filled_qty", "mat_qty", "quantity", "qty") or 0.0) / divisor
+        return Fill(
+            order_id=str(
+                get_field_value(data, "order_no")
+                or get_field_value(data, "orderNo")
+                or get_field_value(data, "ord_no")
+                or get_field_value(data, "seq_no")
+                or ""
+            ),
+            stock_id=str(
+                get_field_value(data, "stock_no")
+                or get_field_value(data, "symbol")
+                or get_field_value(data, "code")
+                or ""
+            ),
+            action=self._map_buy_sell_action(
+                get_field_value(data, "buy_sell") or get_field_value(data, "action")
+            ),
+            price=get_first_valid_float(data, "filled_price", "mat_price", "price") or 0.0,
+            quantity=quantity,
+            time=self._order_time_from_payload(data),
+            org_event=data,
+        )
+
+    def _get_realtime_balance(self):
+        balance_payload = None
+        if hasattr(self.sdk.accounting, "skbank_balance"):
+            try:
+                balance_payload = self.sdk.accounting.skbank_balance(self.target_account)
+            except Exception:
+                logging.exception("Failed to fetch skbank_balance for realtime")
+
+        if balance_payload is None and hasattr(self.sdk.accounting, "bank_balance"):
+            try:
+                bank_balance = self.sdk.accounting.bank_balance(self.target_account)
+                if isinstance(bank_balance, list) and bank_balance:
+                    balance_payload = bank_balance[0]
+                else:
+                    balance_payload = bank_balance
+            except Exception:
+                logging.exception("Failed to fetch bank_balance for realtime")
+
+        if balance_payload is None:
+            return None
+
+        available_balance = get_first_valid_float(
+            balance_payload, "available_balance", "availableBalance"
+        )
+        reserved_amount = get_first_valid_float(
+            balance_payload, "reserved_amount", "reservedAmount"
+        )
+        dedicated_account_balance = get_first_valid_float(
+            balance_payload, "dedicated_account_balance", "dedicatedAccountBalance"
+        )
+
+        return BalanceUpdate(
+            account_id=str(getattr(self.target_account, "account", "")),
+            broker=self.__class__.__name__,
+            available_balance=available_balance,
+            reserved_amount=reserved_amount,
+            dedicated_account_balance=dedicated_account_balance,
+            cash=available_balance,
+            settlement=to_optional_float(self.get_settlement()),
+            total_balance=to_optional_float(self.get_total_balance()),
+            time=datetime.datetime.now(),
+            org_event=balance_payload,
+        )
+
     def connect_realtime(self) -> None:
         if self._realtime_connected:
             return
@@ -176,7 +335,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 payload = nested_data
             return payload
 
-        def _emit_tick_from_payload(payload):
+        def _emit_tick_from_payload(payload, channel=""):
             symbol = get_field_value(payload, "symbol")
             if not symbol:
                 return
@@ -212,6 +371,15 @@ class MasterlinkAccount(Account, RealtimeProvider):
             high_price = get_first_valid_float(payload, "highPrice", "high", "high_price")
             low_price = get_first_valid_float(payload, "lowPrice", "low", "low_price")
             avg_price = get_first_valid_float(payload, "avgPrice", "avg_price")
+            channel_text = str(channel).lower()
+            source = "aggregate" if "aggregate" in channel_text else "trade"
+            if source != "aggregate":
+                source = (
+                    "trade"
+                    if get_field_value(payload, "size") is not None
+                    or get_field_value(payload, "lastSize") is not None
+                    else "aggregate"
+                )
 
             self._emit_tick(Tick(
                 stock_id=symbol,
@@ -224,11 +392,13 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 low=low_price if low_price is not None else 0.0,
                 avg_price=avg_price if avg_price is not None else 0.0,
                 pct_change=native_pct_change,
+                source=source,
             ))
 
         def _on_message(message):
             try:
                 payload = _extract_payload(message)
+                channel = get_field_value(message, "channel") or ""
 
                 # Books channel payload can still arrive via generic "message" event.
                 bids = get_field_value(payload, "bids")
@@ -254,7 +424,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
                     or get_field_value(payload, "lastPrice") is not None
                 )
                 if trade_like:
-                    _emit_tick_from_payload(payload)
+                    _emit_tick_from_payload(payload, channel=channel)
             except Exception:
                 logging.exception("Error in Masterlink tick handler")
 
@@ -284,69 +454,13 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
         def _on_order(data):
             try:
-                self._emit_order_update(OrderUpdate(
-                    order_id=str(
-                        get_field_value(data, "order_no")
-                        or get_field_value(data, "orderNo")
-                        or get_field_value(data, "seq_no")
-                        or get_field_value(data, "seqNo")
-                        or get_field_value(data, "id")
-                        or ""
-                    ),
-                    stock_id=str(
-                        get_field_value(data, "stock_no")
-                        or get_field_value(data, "symbol")
-                        or get_field_value(data, "code")
-                        or ""
-                    ),
-                    action=self._map_buy_sell_action(
-                        get_field_value(data, "buy_sell") or get_field_value(data, "action")
-                    ),
-                    price=float(
-                        get_first_valid_float(data, "od_price", "order_price", "price") or 0.0
-                    ),
-                    quantity=float(
-                        get_first_valid_float(data, "org_qty", "quantity", "qty") or 0.0
-                    ),
-                    filled_quantity=float(
-                        get_first_valid_float(data, "filled_qty", "mat_qty", "deal_quantity") or 0.0
-                    ),
-                    status=OrderStatus.NEW,
-                    order_condition=OrderCondition.CASH,
-                    time=self._order_time_from_payload(data),
-                    org_event=data,
-                ))
+                self._emit_order_update(self._build_realtime_order_update(data))
             except Exception:
                 logging.exception("Error in Masterlink order handler")
 
         def _on_filled(data):
             try:
-                self._emit_fill(Fill(
-                    order_id=str(
-                        get_field_value(data, "order_no")
-                        or get_field_value(data, "orderNo")
-                        or get_field_value(data, "ord_no")
-                        or get_field_value(data, "seq_no")
-                        or ""
-                    ),
-                    stock_id=str(
-                        get_field_value(data, "stock_no")
-                        or get_field_value(data, "symbol")
-                        or get_field_value(data, "code")
-                        or ""
-                    ),
-                    action=self._map_buy_sell_action(
-                        get_field_value(data, "buy_sell") or get_field_value(data, "action")
-                    ),
-                    price=float(
-                        get_first_valid_float(data, "filled_price", "mat_price", "price") or 0.0
-                    ),
-                    quantity=float(
-                        get_first_valid_float(data, "filled_qty", "mat_qty", "quantity", "qty") or 0.0
-                    ),
-                    time=self._order_time_from_payload(data),
-                    org_event=data,
-                ))
+                self._emit_fill(self._build_realtime_fill(data))
             except Exception:
                 logging.exception("Error in Masterlink fill handler")
 
@@ -366,6 +480,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
             ws_client.disconnect()
         except Exception:
             logging.exception("Error disconnecting Masterlink websocket")
+        self.unsubscribe_balances()
         self._realtime_connected = False
         self._emit_connection(ConnectionState.DISCONNECTED)
         logging.info("Masterlink realtime disconnected")

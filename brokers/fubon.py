@@ -15,7 +15,7 @@ from finlab.online.core.account import Account, Stock, Order
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime import (
-    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, ConnectionState,
+    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, BalanceUpdate, ConnectionState,
     get_field_value, get_first_valid_float, to_optional_float,
 )
 from finlab import data
@@ -128,6 +128,192 @@ class FubonAccount(Account, RealtimeProvider):
 
     # ── RealtimeProvider implementation ──────────────────────────────
 
+    @staticmethod
+    def _parse_market_event_time(payload):
+        raw = get_field_value(payload, "time")
+        if isinstance(raw, datetime.datetime):
+            return raw
+        ts = to_optional_float(raw)
+        if ts is None:
+            return datetime.datetime.now()
+        try:
+            if ts >= 10**14:  # microseconds
+                return datetime.datetime.fromtimestamp(ts / 1_000_000)
+            if ts >= 10**11:  # milliseconds
+                return datetime.datetime.fromtimestamp(ts / 1_000)
+            return datetime.datetime.fromtimestamp(ts)
+        except (OSError, OverflowError, ValueError):
+            return datetime.datetime.now()
+
+    @staticmethod
+    def _parse_realtime_action(value):
+        text = str(value).upper()
+        return Action.BUY if text in ("B", "BUY", "BSACTION.BUY") else Action.SELL
+
+    @staticmethod
+    def _parse_realtime_order_condition(value):
+        text = str(value).upper()
+        if "MARGIN" in text:
+            return OrderCondition.MARGIN_TRADING
+        if "SHORT" in text:
+            return OrderCondition.SHORT_SELLING
+        if "DAYTRADE" in text:
+            return OrderCondition.DAY_TRADING_SHORT
+        return OrderCondition.CASH
+
+    @staticmethod
+    def _quantity_divisor(payload):
+        market_type = str(
+            get_field_value(payload, "market_type")
+            or get_field_value(payload, "marketType")
+            or ""
+        ).upper()
+        if market_type in {"INTRADAYODD", "ODD", "EMGODD"}:
+            return 1.0
+        return float(STOCK_LOT_SIZE)
+
+    def _parse_realtime_order_time(self, payload):
+        date_value = get_field_value(payload, "date")
+        time_value = (
+            get_field_value(payload, "last_time")
+            or get_field_value(payload, "filled_time")
+        )
+        if date_value and time_value:
+            try:
+                year, month, day = self._parse_date(str(date_value))
+                hour, minute, second, microsecond = self._parse_time(str(time_value))
+                return datetime.datetime(year, month, day, hour, minute, second, microsecond)
+            except Exception:
+                pass
+        return datetime.datetime.now()
+
+    @staticmethod
+    def _map_realtime_operation(payload):
+        function_type = int(get_first_valid_float(payload, "function_type") or -1)
+        mapping = {
+            0: "new",
+            10: "new",
+            15: "update_price",
+            20: "update_qty",
+            30: "cancel",
+            50: "fill",
+            90: "failed",
+        }
+        return mapping.get(function_type, "")
+
+    def _map_realtime_status(self, payload):
+        status_code = int(get_first_valid_float(payload, "status") or -1)
+        status_map = {
+            0: OrderStatus.NEW,
+            4: OrderStatus.NEW,
+            8: OrderStatus.NEW,
+            9: OrderStatus.CANCEL,
+            10: OrderStatus.NEW,
+            14: OrderStatus.NEW,
+            15: OrderStatus.NEW,
+            19: OrderStatus.CANCEL,
+            20: OrderStatus.NEW,
+            24: OrderStatus.NEW,
+            29: OrderStatus.CANCEL,
+            30: OrderStatus.CANCEL,
+            34: OrderStatus.CANCEL,
+            39: OrderStatus.CANCEL,
+            40: OrderStatus.PARTIALLY_FILLED,
+            50: OrderStatus.FILLED,
+            90: OrderStatus.CANCEL,
+        }
+        status = status_map.get(status_code, OrderStatus.NEW)
+
+        divisor = self._quantity_divisor(payload)
+        filled_qty = (get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0) / divisor
+        after_qty = (get_first_valid_float(payload, "after_qty", "quantity", "org_qty") or 0.0) / divisor
+
+        if status == OrderStatus.NEW and filled_qty > 0:
+            if after_qty > 0 and filled_qty >= after_qty:
+                return OrderStatus.FILLED
+            return OrderStatus.PARTIALLY_FILLED
+        if status == OrderStatus.CANCEL and filled_qty > 0:
+            return OrderStatus.PARTIALLY_FILLED
+        return status
+
+    def _build_realtime_order_update(self, payload):
+        divisor = self._quantity_divisor(payload)
+        quantity = (get_first_valid_float(payload, "after_qty", "quantity", "org_qty") or 0.0) / divisor
+        filled_quantity = (get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0) / divisor
+        price = get_first_valid_float(payload, "after_price", "price", "od_price", "order_price") or 0.0
+
+        return OrderUpdate(
+            order_id=str(
+                get_field_value(payload, "order_no")
+                or get_field_value(payload, "seq_no")
+                or ""
+            ),
+            stock_id=str(get_field_value(payload, "stock_no") or ""),
+            action=self._parse_realtime_action(
+                get_field_value(payload, "buy_sell")
+            ),
+            price=price,
+            quantity=quantity,
+            filled_quantity=filled_quantity,
+            status=self._map_realtime_status(payload),
+            order_condition=self._parse_realtime_order_condition(
+                get_field_value(payload, "order_type")
+            ),
+            time=self._parse_realtime_order_time(payload),
+            operation=self._map_realtime_operation(payload),
+            org_event=payload,
+        )
+
+    def _build_realtime_fill(self, payload):
+        divisor = self._quantity_divisor(payload)
+        quantity = (get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0) / divisor
+        return Fill(
+            order_id=str(
+                get_field_value(payload, "order_no")
+                or get_field_value(payload, "seq_no")
+                or ""
+            ),
+            stock_id=str(get_field_value(payload, "stock_no") or ""),
+            action=self._parse_realtime_action(
+                get_field_value(payload, "buy_sell")
+            ),
+            price=get_first_valid_float(payload, "filled_price", "mat_price", "price") or 0.0,
+            quantity=quantity,
+            time=self._parse_realtime_order_time(payload),
+            org_event=payload,
+        )
+
+    def _get_realtime_balance(self):
+        result = self.sdk.accounting.bank_remain(self.target_account)
+        if not result or not result.is_success or not result.data:
+            return None
+
+        payload = result.data
+        available_balance = get_first_valid_float(
+            payload, "available_balance", "availableBalance"
+        )
+        reserved_amount = get_first_valid_float(
+            payload, "reserved_amount", "reservedAmount"
+        )
+        dedicated_account_balance = get_first_valid_float(
+            payload, "dedicated_account_balance", "dedicatedAccountBalance"
+        )
+        settlement = to_optional_float(self.get_settlement())
+        total_balance = to_optional_float(self.get_total_balance())
+
+        return BalanceUpdate(
+            account_id=str(getattr(self.target_account, "account", "")),
+            broker=self.__class__.__name__,
+            available_balance=available_balance,
+            reserved_amount=reserved_amount,
+            dedicated_account_balance=dedicated_account_balance,
+            cash=available_balance,
+            settlement=settlement,
+            total_balance=total_balance,
+            time=datetime.datetime.now(),
+            org_event=payload,
+        )
+
     def connect_realtime(self) -> None:
         if self._realtime_connected:
             return
@@ -181,28 +367,37 @@ class FubonAccount(Account, RealtimeProvider):
                         price=price if price is not None else 0.0,
                         volume=volume,
                         total_volume=total_volume,
-                        time=get_field_value(payload, 'time') or datetime.datetime.now(),
+                        time=self._parse_market_event_time(payload),
                         open=open_price if open_price is not None else 0.0,
                         high=high_price if high_price is not None else 0.0,
                         low=low_price if low_price is not None else 0.0,
                         pct_change=native_pct_change,
+                        source="trade",
                     ))
             except Exception:
                 logging.exception("Error in Fubon tick handler")
 
         def _on_book_message(message):
             try:
-                if hasattr(message, 'symbol'):
-                    bids = getattr(message, 'bids', [])
-                    asks = getattr(message, 'asks', [])
-                    self._emit_bidask(BidAsk(
-                        stock_id=message.symbol,
-                        bid_prices=[getattr(b, 'price', 0.0) for b in bids],
-                        bid_volumes=[getattr(b, 'size', 0) for b in bids],
-                        ask_prices=[getattr(a, 'price', 0.0) for a in asks],
-                        ask_volumes=[getattr(a, 'size', 0) for a in asks],
-                        time=getattr(message, 'time', datetime.datetime.now()),
-                    ))
+                payload = message
+                nested_data = get_field_value(message, 'data')
+                if nested_data is not None and get_field_value(message, 'symbol') is None:
+                    payload = nested_data
+
+                stock_id = get_field_value(payload, 'symbol')
+                if not stock_id:
+                    return
+
+                bids = get_field_value(payload, 'bids') or []
+                asks = get_field_value(payload, 'asks') or []
+                self._emit_bidask(BidAsk(
+                    stock_id=str(stock_id),
+                    bid_prices=[get_field_value(b, 'price') or 0.0 for b in bids],
+                    bid_volumes=[get_field_value(b, 'size') or 0 for b in bids],
+                    ask_prices=[get_field_value(a, 'price') or 0.0 for a in asks],
+                    ask_volumes=[get_field_value(a, 'size') or 0 for a in asks],
+                    time=self._parse_market_event_time(payload),
+                ))
             except Exception:
                 logging.exception("Error in Fubon bidask handler")
 
@@ -213,37 +408,31 @@ class FubonAccount(Account, RealtimeProvider):
         # Order/fill callbacks
         def _on_order(data):
             try:
-                self._emit_order_update(OrderUpdate(
-                    order_id=getattr(data, 'order_no', ''),
-                    stock_id=getattr(data, 'stock_no', ''),
-                    action=Action.BUY if getattr(data, 'buy_sell', '') == 'B' else Action.SELL,
-                    price=float(getattr(data, 'od_price', 0)),
-                    quantity=float(getattr(data, 'org_qty', 0)),
-                    filled_quantity=float(getattr(data, 'mat_qty', 0)),
-                    status=OrderStatus.NEW,
-                    order_condition=OrderCondition.CASH,
-                    time=datetime.datetime.now(),
-                    org_event=data,
-                ))
+                self._emit_order_update(self._build_realtime_order_update(data))
             except Exception:
                 logging.exception("Error in Fubon order handler")
 
         def _on_filled(data):
             try:
-                self._emit_fill(Fill(
-                    order_id=getattr(data, 'order_no', ''),
-                    stock_id=getattr(data, 'stock_no', ''),
-                    action=Action.BUY if getattr(data, 'buy_sell', '') == 'B' else Action.SELL,
-                    price=float(getattr(data, 'filled_price', 0)),
-                    quantity=float(getattr(data, 'filled_qty', 0)),
-                    time=datetime.datetime.now(),
-                    org_event=data,
-                ))
+                self._emit_fill(self._build_realtime_fill(data))
             except Exception:
                 logging.exception("Error in Fubon fill handler")
 
+        def _on_event(data, event_type):
+            event_key = str(event_type).lower()
+            if event_key in {"disconnect", "disconnected", "close"}:
+                self._emit_connection(ConnectionState.DISCONNECTED, str(data))
+            elif event_key in {"connect", "connected", "open"}:
+                self._emit_connection(ConnectionState.CONNECTED, str(data))
+            else:
+                self._emit_connection(ConnectionState.ERROR, f"{event_type}: {data}")
+
         self.sdk.set_on_order(_on_order)
+        if hasattr(self.sdk, "set_on_order_changed"):
+            self.sdk.set_on_order_changed(_on_order)
         self.sdk.set_on_filled(_on_filled)
+        if hasattr(self.sdk, "set_on_event"):
+            self.sdk.set_on_event(_on_event)
 
         self._realtime_connected = True
         self._emit_connection(ConnectionState.CONNECTED)
@@ -257,6 +446,7 @@ class FubonAccount(Account, RealtimeProvider):
             ws_client.disconnect()
         except Exception:
             logging.exception("Error disconnecting Fubon websocket")
+        self.unsubscribe_balances()
         self._realtime_connected = False
         self._emit_connection(ConnectionState.DISCONNECTED)
         logging.info("Fubon realtime disconnected")
