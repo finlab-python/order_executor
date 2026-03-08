@@ -3,7 +3,7 @@ import sys
 import types
 
 from finlab.online.core.enums import Action, OrderStatus
-from finlab.online.core.realtime import ConnectionState
+from finlab.online.core.realtime_models import ConnectionState
 
 
 class _FakeWsClient:
@@ -30,7 +30,48 @@ class _FakeSdk:
     def __init__(self):
         self.ws = _FakeWsClient()
         self.marketdata = types.SimpleNamespace(
-            websocket_client=types.SimpleNamespace(stock=self.ws)
+            websocket_client=types.SimpleNamespace(stock=self.ws),
+            rest_client=types.SimpleNamespace(
+                stock=types.SimpleNamespace(
+                    intraday=types.SimpleNamespace(
+                        quote=lambda symbol: {
+                            "symbol": symbol,
+                            "previousClose": 579.0,
+                            "changePercent": 1.5,
+                            "bids": [
+                                {"price": 580.0, "size": 100},
+                                {"price": 579.0, "size": 90},
+                            ],
+                            "asks": [
+                                {"price": 581.0, "size": 150},
+                                {"price": 582.0, "size": 120},
+                            ],
+                            "time": 1_700_000_000_000,
+                        },
+                        trades=lambda symbol, limit=500, offset=0: {
+                            "data": (
+                                [
+                                    {
+                                        "serial": 2,
+                                        "price": 582.0,
+                                        "size": 1,
+                                        "time": "09:00:02.000000",
+                                    },
+                                    {
+                                        "serial": 1,
+                                        "price": 581.0,
+                                        "size": 2,
+                                        "volume": 2,
+                                        "time": "09:00:01.000000",
+                                    },
+                                ]
+                                if offset == 0
+                                else []
+                            )
+                        },
+                    )
+                )
+            ),
         )
         self.order_cb = None
         self.order_changed_cb = None
@@ -204,3 +245,46 @@ def test_fubon_subscribe_ticks_tracks_trades_and_aggregates(monkeypatch):
     assert {"channel": "aggregates", "symbol": "2330"} in account.sdk.ws.unsubscriptions
     assert {"channel": "books", "symbol": "2330"} in account.sdk.ws.unsubscriptions
     assert "2330" not in account._tick_pct_change_cache
+
+
+def test_fubon_backfill_ticks_normalizes_intraday_trade_rows(monkeypatch):
+    fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
+    FubonAccount = fubon_module.FubonAccount
+
+    account = FubonAccount.__new__(FubonAccount)
+    account.sdk = _FakeSdk()
+    account._tick_pct_change_cache = {}
+    account._init_realtime()
+
+    ticks = []
+    account.on_tick(ticks.append)
+
+    backfilled = account.backfill_ticks(["2330"], start_time="09:00:01", emit=True)
+
+    assert len(backfilled["2330"]) == 2
+    assert [tick.price for tick in backfilled["2330"]] == [581.0, 582.0]
+    assert [tick.total_volume for tick in backfilled["2330"]] == [2, 3]
+    assert all(tick.prev_close == 579.0 for tick in backfilled["2330"])
+    assert all(tick.pct_change == 1.5 for tick in backfilled["2330"])
+    assert [tick.price for tick in ticks] == [581.0, 582.0]
+
+
+def test_fubon_get_bidask_snapshot_uses_quote_top5(monkeypatch):
+    fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
+    FubonAccount = fubon_module.FubonAccount
+
+    account = FubonAccount.__new__(FubonAccount)
+    account.sdk = _FakeSdk()
+    account._tick_pct_change_cache = {}
+    account._init_realtime()
+
+    bidasks = []
+    account.on_bidask(bidasks.append)
+
+    snapshots = account.get_bidask_snapshot(["2330"], emit=True)
+
+    assert list(snapshots) == ["2330"]
+    assert snapshots["2330"].bid_prices[:2] == [580.0, 579.0]
+    assert snapshots["2330"].ask_prices[:2] == [581.0, 582.0]
+    assert len(bidasks) == 1
+    assert bidasks[0].bid_prices[:2] == [580.0, 579.0]

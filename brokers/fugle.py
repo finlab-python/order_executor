@@ -9,9 +9,13 @@ from finlab.online.core.account import Account, Stock, Order
 from finlab.online.core.enums import *
 from finlab.markets.tw import TWMarket
 from finlab.online.core.position import Position
-from finlab.online.core.realtime import (
-    RealtimeProvider, OrderUpdate, Fill, ConnectionState,
+from finlab.online.core.realtime_helpers import (
+    build_bidask_from_quote,
+    build_ticks_from_intraday_trade_rows,
 )
+from finlab.online.core.realtime_models import ConnectionState, Fill, OrderUpdate
+from finlab.online.core.realtime_normalizers import get_first_valid_float
+from finlab.online.core.realtime_provider import RealtimeProvider
 from finlab import data
 
 from threading import Thread
@@ -196,6 +200,101 @@ class FugleAccount(Account, RealtimeProvider):
 
     def unsubscribe_bidask(self, stock_ids):
         raise NotImplementedError("Fugle/Esun SDK does not support bidask streaming")
+
+    def _get_marketdata_json(self, path, **params):
+        if not self.market_api_key:
+            raise ValueError("market_api_key is required for market-data backfill")
+
+        response = requests.get(
+            f"https://api.fugle.tw/marketdata/v1.0/{path}",
+            headers={"X-API-KEY": self.market_api_key},
+            params=params or None,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def backfill_ticks(self, stock_ids, start_time=None, end_time=None, emit=True):
+        backfilled = {}
+        session_date = datetime.datetime.now().date()
+
+        for stock_id in stock_ids:
+            ticks = []
+            try:
+                quote = self._get_marketdata_json(f"stock/intraday/quote/{stock_id}")
+                prev_close = get_first_valid_float(
+                    quote,
+                    "previousClose",
+                    "referencePrice",
+                    "reference_price",
+                )
+                pct_change = get_first_valid_float(
+                    quote,
+                    "changePercent",
+                    "pct_change",
+                    "pctChange",
+                )
+
+                rows = []
+                offset = 0
+                limit = 500
+                seen_pages = set()
+                while True:
+                    payload = self._get_marketdata_json(
+                        f"stock/intraday/trades/{stock_id}",
+                        limit=limit,
+                        offset=offset,
+                    )
+                    page_rows = payload.get("data", []) if isinstance(payload, dict) else []
+                    if not page_rows:
+                        break
+
+                    page_marker = (
+                        len(page_rows),
+                        page_rows[0].get("serial"),
+                        page_rows[-1].get("serial"),
+                    )
+                    if page_marker in seen_pages:
+                        break
+                    seen_pages.add(page_marker)
+                    rows.extend(page_rows)
+
+                    if len(page_rows) < limit:
+                        break
+                    offset += len(page_rows)
+
+                ticks = build_ticks_from_intraday_trade_rows(
+                    stock_id=stock_id,
+                    rows=rows,
+                    session_date=session_date,
+                    prev_close=prev_close,
+                    pct_change=pct_change,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+
+            except Exception:
+                logging.exception("backfill_ticks: unable to backfill intraday ticks for %s", stock_id)
+                ticks = []
+
+            backfilled[stock_id] = ticks
+            if emit:
+                for tick in ticks:
+                    self._emit_tick(tick)
+
+        return backfilled
+
+    def get_bidask_snapshot(self, stock_ids, emit=True):
+        backfilled = {}
+        for stock_id in stock_ids:
+            try:
+                quote = self._get_marketdata_json(f"stock/intraday/quote/{stock_id}")
+                bidask = build_bidask_from_quote(stock_id, quote)
+                backfilled[stock_id] = bidask
+                if emit:
+                    self._emit_bidask(bidask)
+            except Exception:
+                logging.exception("get_bidask_snapshot: unable to fetch top5 snapshot for %s", stock_id)
+        return backfilled
 
     # ── End RealtimeProvider ──────────────────────────────────────
 

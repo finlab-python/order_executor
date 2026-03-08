@@ -14,10 +14,24 @@ from decimal import Decimal
 from finlab.online.core.account import Account, Stock, Order
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
-from finlab.online.core.realtime import (
-    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, BalanceUpdate, ConnectionState,
-    get_field_value, get_first_valid_float, to_optional_float,
+from finlab.online.core.realtime_helpers import (
+    build_bidask_from_quote,
+    build_ticks_from_intraday_trade_rows,
 )
+from finlab.online.core.realtime_models import (
+    BalanceUpdate,
+    BidAsk,
+    ConnectionState,
+    Fill,
+    OrderUpdate,
+    Tick,
+)
+from finlab.online.core.realtime_normalizers import (
+    get_field_value,
+    get_first_valid_float,
+    to_optional_float,
+)
+from finlab.online.core.realtime_provider import RealtimeProvider
 from finlab import data
 from finlab.markets.tw import TWMarket
 from masterlink_sdk import MasterlinkSDK, Order as MLOrder, Account as MLAccount, BSAction, MarketType, PriceType, \
@@ -507,6 +521,108 @@ class MasterlinkAccount(Account, RealtimeProvider):
         ws_client = self.sdk.marketdata.websocket_client.stock
         for sid in stock_ids:
             ws_client.unsubscribe({'channel': 'books', 'symbol': sid})
+
+    def backfill_ticks(self, stock_ids, start_time=None, end_time=None, emit=True):
+        if not hasattr(self.sdk, 'marketdata') or not hasattr(self.sdk.marketdata, 'rest_client'):
+            try:
+                self.sdk.init_realtime(self.target_account)
+            except Exception as e:
+                logging.error(f"backfill_ticks: 無法初始化行情連線: {e}")
+                return {}
+
+        rest_stock = self.sdk.marketdata.rest_client.stock
+        intraday = getattr(rest_stock, "intraday", None)
+        if intraday is None or not hasattr(intraday, "trades"):
+            raise NotImplementedError("Masterlink SDK does not expose intraday.trades")
+
+        backfilled = {}
+        session_date = datetime.datetime.now().date()
+
+        for stock_id in stock_ids:
+            rows = []
+            try:
+                quote = rest_stock.intraday.quote(symbol=stock_id) or {}
+                prev_close = get_first_valid_float(
+                    quote,
+                    "previousClose",
+                    "referencePrice",
+                    "reference_price",
+                )
+                pct_change = get_first_valid_float(
+                    quote,
+                    "changePercent",
+                    "pct_change",
+                    "pctChange",
+                )
+
+                offset = 0
+                limit = 500
+                seen_pages = set()
+                while True:
+                    payload = intraday.trades(symbol=stock_id, limit=limit, offset=offset)
+                    page_rows = payload.get("data", []) if isinstance(payload, dict) else []
+                    if not page_rows:
+                        break
+
+                    page_marker = (
+                        len(page_rows),
+                        get_field_value(page_rows[0], "serial"),
+                        get_field_value(page_rows[-1], "serial"),
+                    )
+                    if page_marker in seen_pages:
+                        break
+                    seen_pages.add(page_marker)
+
+                    rows.extend(page_rows)
+
+                    if len(page_rows) < limit:
+                        break
+                    offset += len(page_rows)
+
+                ticks = build_ticks_from_intraday_trade_rows(
+                    stock_id=stock_id,
+                    rows=rows,
+                    session_date=session_date,
+                    prev_close=prev_close,
+                    pct_change=pct_change,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+
+            except Exception:
+                logging.exception("backfill_ticks: 無法回補股票 %s 的盤中 ticks", stock_id)
+                ticks = []
+
+            backfilled[stock_id] = ticks
+            if emit:
+                for tick in ticks:
+                    self._emit_tick(tick)
+
+        return backfilled
+
+    def get_bidask_snapshot(self, stock_ids, emit=True):
+        if not hasattr(self.sdk, 'marketdata') or not hasattr(self.sdk.marketdata, 'rest_client'):
+            try:
+                self.sdk.init_realtime(self.target_account)
+            except Exception as e:
+                logging.error(f"get_bidask_snapshot: 無法初始化行情連線: {e}")
+                return {}
+
+        snapshots = {}
+        rest_stock = self.sdk.marketdata.rest_client.stock
+        for stock_id in stock_ids:
+            try:
+                quote = rest_stock.intraday.quote(symbol=stock_id)
+                if not quote:
+                    continue
+                bidask = build_bidask_from_quote(stock_id, quote)
+                snapshots[stock_id] = bidask
+                if emit:
+                    self._emit_bidask(bidask)
+            except Exception:
+                logging.exception("get_bidask_snapshot: 無法取得股票 %s 的五檔快照", stock_id)
+
+        return snapshots
 
     # ── End RealtimeProvider ──────────────────────────────────────
 

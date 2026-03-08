@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from finlab.online.core.realtime import Tick, calculate_tick_pct_change, get_first_valid_float
+from finlab.online.core.realtime_models import Tick
+from finlab.online.core.realtime_normalizers import (
+    calculate_tick_pct_change,
+    get_first_valid_float,
+)
 
 
 def test_tick_pct_change_prefers_broker_native_value():

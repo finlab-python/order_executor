@@ -33,7 +33,48 @@ class _FakeSdk:
     def __init__(self):
         self.ws = _FakeWsClient()
         self.marketdata = types.SimpleNamespace(
-            websocket_client=types.SimpleNamespace(stock=self.ws)
+            websocket_client=types.SimpleNamespace(stock=self.ws),
+            rest_client=types.SimpleNamespace(
+                stock=types.SimpleNamespace(
+                    intraday=types.SimpleNamespace(
+                        quote=lambda symbol: {
+                            "symbol": symbol,
+                            "previousClose": 560.0,
+                            "changePercent": 1.23,
+                            "bids": [
+                                {"price": 567.0, "size": 20},
+                                {"price": 566.0, "size": 19},
+                            ],
+                            "asks": [
+                                {"price": 568.0, "size": 30},
+                                {"price": 569.0, "size": 31},
+                            ],
+                            "time": 1_700_000_000_000,
+                        },
+                        trades=lambda symbol, limit=500, offset=0: {
+                            "data": (
+                                [
+                                    {
+                                        "serial": 11,
+                                        "price": 568.0,
+                                        "size": 3,
+                                        "time": "09:00:02.000000",
+                                    },
+                                    {
+                                        "serial": 10,
+                                        "price": 567.0,
+                                        "size": 2,
+                                        "volume": 2,
+                                        "time": "09:00:01.000000",
+                                    },
+                                ]
+                                if offset == 0
+                                else []
+                            )
+                        },
+                    )
+                )
+            ),
         )
         self.order_cb = None
         self.filled_cb = None
@@ -191,3 +232,48 @@ def test_masterlink_subscribe_ticks_and_bidask(monkeypatch):
     assert {"channel": "aggregates", "symbol": "2330"} in account.sdk.ws.unsubscriptions
     assert {"channel": "books", "symbol": "2330"} in account.sdk.ws.unsubscriptions
     assert "2330" not in account._tick_pct_change_cache
+
+
+def test_masterlink_backfill_ticks_normalizes_intraday_trade_rows(monkeypatch):
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    MasterlinkAccount = masterlink_module.MasterlinkAccount
+
+    account = MasterlinkAccount.__new__(MasterlinkAccount)
+    account.sdk = _FakeSdk()
+    account.target_account = types.SimpleNamespace(account="9809789")
+    account._tick_pct_change_cache = {}
+    account._init_realtime()
+
+    ticks = []
+    account.on_tick(ticks.append)
+
+    backfilled = account.backfill_ticks(["2330"], emit=True)
+
+    assert len(backfilled["2330"]) == 2
+    assert [tick.price for tick in backfilled["2330"]] == [567.0, 568.0]
+    assert [tick.total_volume for tick in backfilled["2330"]] == [2, 5]
+    assert all(tick.prev_close == 560.0 for tick in backfilled["2330"])
+    assert all(tick.pct_change == 1.23 for tick in backfilled["2330"])
+    assert [tick.price for tick in ticks] == [567.0, 568.0]
+
+
+def test_masterlink_get_bidask_snapshot_uses_quote_top5(monkeypatch):
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    MasterlinkAccount = masterlink_module.MasterlinkAccount
+
+    account = MasterlinkAccount.__new__(MasterlinkAccount)
+    account.sdk = _FakeSdk()
+    account.target_account = types.SimpleNamespace(account="9809789")
+    account._tick_pct_change_cache = {}
+    account._init_realtime()
+
+    bidasks = []
+    account.on_bidask(bidasks.append)
+
+    snapshots = account.get_bidask_snapshot(["2330"], emit=True)
+
+    assert list(snapshots) == ["2330"]
+    assert snapshots["2330"].bid_prices[:2] == [567.0, 566.0]
+    assert snapshots["2330"].ask_prices[:2] == [568.0, 569.0]
+    assert len(bidasks) == 1
+    assert bidasks[0].ask_prices[:2] == [568.0, 569.0]

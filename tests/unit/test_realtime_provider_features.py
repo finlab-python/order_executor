@@ -1,7 +1,9 @@
 import datetime
 import time
 
-from finlab.online.core.realtime import BidAsk, RealtimeProvider, Tick
+from finlab.online.core.realtime_helpers import build_ticks_from_intraday_trade_rows
+from finlab.online.core.realtime_models import BidAsk, Tick
+from finlab.online.core.realtime_provider import RealtimeProvider
 
 
 class _DummyRealtimeProvider(RealtimeProvider):
@@ -37,6 +39,51 @@ class _DummyRealtimeProvider(RealtimeProvider):
 
     def get_total_balance(self):
         return self.cash + self.settlement
+
+
+class _BackfillRealtimeProvider(_DummyRealtimeProvider):
+    def __init__(self):
+        super().__init__()
+        self.backfill_calls = []
+        self.snapshot_calls = []
+        self.subscribe_calls = []
+        self.subscribe_bidask_calls = []
+
+    def backfill_ticks(self, stock_ids, start_time=None, end_time=None, emit=True):
+        self.backfill_calls.append((stock_ids, start_time, end_time, emit))
+        return {
+            stock_id: [
+                Tick(
+                    stock_id=stock_id,
+                    price=100.0,
+                    volume=1,
+                    total_volume=1,
+                    time=datetime.datetime(2026, 3, 5, 9, 0, 0),
+                    source="trade",
+                )
+            ]
+            for stock_id in stock_ids
+        }
+
+    def subscribe_ticks(self, stock_ids):
+        self.subscribe_calls.append(stock_ids)
+
+    def get_bidask_snapshot(self, stock_ids, emit=True):
+        self.snapshot_calls.append((stock_ids, emit))
+        return {
+            stock_id: BidAsk(
+                stock_id=stock_id,
+                bid_prices=[100.0],
+                bid_volumes=[10],
+                ask_prices=[101.0],
+                ask_volumes=[11],
+                time=datetime.datetime(2026, 3, 5, 9, 0, 0),
+            )
+            for stock_id in stock_ids
+        }
+
+    def subscribe_bidask(self, stock_ids):
+        self.subscribe_bidask_calls.append(stock_ids)
 
 
 def _wait_until(predicate, timeout=1.0, interval=0.02):
@@ -111,6 +158,53 @@ def test_trade_callback_ignores_aggregate_ticks():
 
     assert len(trades) == 1
     assert trades[0].price == 101.0
+
+
+def test_build_ticks_from_intraday_trade_rows_sorts_filters_and_repairs_total_volume():
+    ticks = build_ticks_from_intraday_trade_rows(
+        stock_id="2330",
+        rows=[
+            {"serial": 3, "price": 101.0, "size": 2, "time": "09:01:00.000000"},
+            {"serial": 1, "price": 100.0, "size": 1, "time": "09:00:00.000000", "volume": 1},
+            {"serial": 2, "price": 100.5, "size": 3, "time": "09:00:30.000000"},
+        ],
+        session_date=datetime.date(2026, 3, 5),
+        prev_close=99.0,
+        pct_change=2.0,
+        start_time="09:00:15",
+    )
+
+    assert [tick.price for tick in ticks] == [100.5, 101.0]
+    assert [tick.total_volume for tick in ticks] == [3, 5]
+    assert all(tick.prev_close == 99.0 for tick in ticks)
+    assert all(tick.pct_change == 2.0 for tick in ticks)
+
+
+def test_subscribe_ticks_with_backfill_calls_backfill_before_subscribe():
+    provider = _BackfillRealtimeProvider()
+
+    backfilled = provider.subscribe_ticks_with_backfill(
+        ["2330", "2317"],
+        start_time="09:00:00",
+        end_time="09:05:00",
+        emit=False,
+    )
+
+    assert list(backfilled) == ["2330", "2317"]
+    assert provider.backfill_calls == [
+        (["2330", "2317"], "09:00:00", "09:05:00", False)
+    ]
+    assert provider.subscribe_calls == [["2330", "2317"]]
+
+
+def test_subscribe_bidask_with_snapshot_calls_snapshot_before_subscribe():
+    provider = _BackfillRealtimeProvider()
+
+    snapshots = provider.subscribe_bidask_with_snapshot(["2330", "2317"], emit=False)
+
+    assert list(snapshots) == ["2330", "2317"]
+    assert provider.snapshot_calls == [(["2330", "2317"], False)]
+    assert provider.subscribe_bidask_calls == [["2330", "2317"]]
 
 
 def test_balance_polling_emits_only_on_change():

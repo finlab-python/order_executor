@@ -3,7 +3,7 @@ import sys
 import types
 
 from finlab.online.core.enums import Action, OrderStatus
-from finlab.online.core.realtime import ConnectionState
+from finlab.online.core.realtime_models import ConnectionState
 
 
 class _FakeQuote:
@@ -30,6 +30,14 @@ class _FakeShioaji:
         self.order_cb = None
         self.quote = _FakeQuote()
         self.stock_account = types.SimpleNamespace(account_id="9809789")
+
+    def ticks(self, contract, date=None):
+        return types.SimpleNamespace(
+            ts=[1_700_000_000_000_000, 1_700_000_001_000_000],
+            close=[581.0, 582.0],
+            volume=[2, 1],
+            tick_type=[1, 2],
+        )
 
     def on_tick_stk_v1(self):
         def decorator(callback):
@@ -207,3 +215,23 @@ def test_sinopac_subscribe_ticks_and_bidask(monkeypatch):
     assert ("2330", "BidAsk") in account.api.quote.subscriptions
     assert ("2330", "Tick") in account.api.quote.unsubscriptions
     assert ("2330", "BidAsk") in account.api.quote.unsubscriptions
+
+
+def test_sinopac_backfill_ticks_uses_historical_tick_query(monkeypatch):
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    SinopacAccount = sinopac_module.SinopacAccount
+
+    account = SinopacAccount.__new__(SinopacAccount)
+    account.api = _FakeShioaji()
+    account._init_realtime()
+
+    ticks = []
+    account.on_tick(ticks.append)
+
+    backfilled = account.backfill_ticks(["2330"], emit=True)
+
+    assert len(backfilled["2330"]) == 2
+    assert [tick.price for tick in backfilled["2330"]] == [581.0, 582.0]
+    assert [tick.total_volume for tick in backfilled["2330"]] == [2, 3]
+    assert [tick.tick_type for tick in backfilled["2330"]] == [1, 2]
+    assert [tick.price for tick in ticks] == [581.0, 582.0]

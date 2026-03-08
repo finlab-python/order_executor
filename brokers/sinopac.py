@@ -26,10 +26,23 @@ from finlab.online.core.account import Account, Stock, Order, typesafe_op
 from finlab.online.core.utils import estimate_stock_price
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
-from finlab.online.core.realtime import (
-    RealtimeProvider, Tick, BidAsk, OrderUpdate, Fill, BalanceUpdate, ConnectionState,
-    get_field_value, get_first_valid_float, to_optional_float,
+from finlab.online.core.realtime_models import (
+    BalanceUpdate,
+    BidAsk,
+    ConnectionState,
+    Fill,
+    OrderUpdate,
+    Tick,
 )
+from finlab.online.core.realtime_normalizers import (
+    finalize_backfilled_ticks,
+    get_field_value,
+    get_first_valid_float,
+    normalize_backfill_window,
+    to_optional_datetime,
+    to_optional_float,
+)
+from finlab.online.core.realtime_provider import RealtimeProvider
 from finlab import data
 from finlab.markets.tw import TWMarket
 
@@ -354,6 +367,68 @@ class SinopacAccount(Account, RealtimeProvider):
                 exchange=SJExchange.TSE,
             )
             self.api.quote.unsubscribe(contract, quote_type=sj.constant.QuoteType.BidAsk)
+
+    def backfill_ticks(self, stock_ids, start_time=None, end_time=None, emit=True):
+        start_filter, end_filter = normalize_backfill_window(start_time, end_time)
+        session_date = datetime.datetime.now().date()
+        session_date_str = session_date.strftime("%Y-%m-%d")
+        backfilled = {}
+
+        for stock_id in stock_ids:
+            ticks = []
+            try:
+                contract = SJStock(
+                    security_type=SJSecurityType.Stock,
+                    code=stock_id,
+                    exchange=SJExchange.TSE,
+                )
+                ticks_data = self.api.ticks(contract, date=session_date_str)
+                prices = list(getattr(ticks_data, "close", []) or [])
+                volumes = list(getattr(ticks_data, "volume", []) or [])
+                timestamps = list(getattr(ticks_data, "ts", []) or [])
+                tick_types = list(getattr(ticks_data, "tick_type", []) or [])
+
+                running_total = 0
+                for ts_value, price, volume, tick_type in zip(
+                    timestamps,
+                    prices,
+                    volumes,
+                    tick_types,
+                ):
+                    tick_time = to_optional_datetime(ts_value, default_date=session_date)
+                    if tick_time is None:
+                        continue
+                    current_time = tick_time.time()
+                    if start_filter is not None and current_time < start_filter:
+                        continue
+                    if end_filter is not None and current_time > end_filter:
+                        continue
+
+                    running_total += int(volume or 0)
+                    ticks.append(
+                        Tick(
+                            stock_id=stock_id,
+                            price=float(price or 0.0),
+                            volume=int(volume or 0),
+                            total_volume=running_total,
+                            time=tick_time,
+                            tick_type=int(tick_type or 0),
+                            source="trade",
+                        )
+                    )
+
+                ticks = finalize_backfilled_ticks(ticks)
+
+            except Exception:
+                logger.exception("backfill_ticks: unable to backfill intraday ticks for %s", stock_id)
+                ticks = []
+
+            backfilled[stock_id] = ticks
+            if emit:
+                for tick in ticks:
+                    self._emit_tick(tick)
+
+        return backfilled
 
     # ── End RealtimeProvider ──────────────────────────────────────
 
