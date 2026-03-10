@@ -52,13 +52,13 @@ class Dashboard():
 
     def fetch_portfolio(self):
         url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_get_portfolio'
-        return requests.post(url, json={'api_token': finlab.get_token()}).json()['msg']
+        return requests.post(url, json={'api_token': finlab.get_token()[0]}).json()['msg']
 
     def set_portfolio(self, allocs):
         url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_portfolio'
         # url = 'http://127.0.0.1:8080'
         return requests.post(url, json={
-            'api_token': finlab.get_token(),
+            'api_token': finlab.get_token()[0],
             'allocs': allocs,
             }).json()['msg']
 
@@ -137,7 +137,7 @@ class Dashboard():
             url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
             res = requests.post(url, json={
                                 'target_qty': target_qty, 'present_qty': present_qty,
-                                'api_token': finlab.get_token(), 'pt': self.paper_trade})
+                                'api_token': finlab.get_token()[0], 'pt': self.paper_trade})
         
             for t in target_qty:
                 port.s[t['strategy_id']][-1].q[t['symbol']] = t['qty']
@@ -165,7 +165,7 @@ class Dashboard():
             url = 'https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_qty'
             requests.post(url, json={
                 'target_qty': [], 'present_qty': present_qty,
-                'api_token': finlab.get_token(), 'pt': True})
+                'api_token': finlab.get_token()[0], 'pt': True})
  
 
     def set_schedule(self):
@@ -226,7 +226,7 @@ class Dashboard():
             url = "https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_add_txn"
 
             json = {
-                "api_token": finlab.get_token(),
+                "api_token": finlab.get_token()[0],
                 "pt": self.paper_trade,
                 "symbol": {
                     "id": trade.symbol if isinstance(getattr(trade, "symbol", None), str) else trade.stock_id,
