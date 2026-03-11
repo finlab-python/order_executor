@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Union
 from finlab.markets.us import USMarket
 from finlab.online.core.account import Account, Order, Stock
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
+from finlab.online.core.realtime_normalizers import to_optional_float
 from finlab.online.core.position import Position
 from schwab.auth import client_from_token_file
 
@@ -565,6 +566,7 @@ def quote_to_stock(json_response: Dict[str, Any]) -> Stock:
         ask_price=quote['askPrice'],
         bid_volume=quote['bidSize'],
         ask_volume=quote['askSize'],
+        pct_change=to_optional_float(quote.get('netPercentChangeInDouble')),
     )
 
 

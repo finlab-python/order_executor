@@ -3,7 +3,7 @@ from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_LIMIT, ORDER_TYPE_MARK
 
 from finlab.online.core.account import OrderCondition, Account, Action, Order, Stock, OrderStatus
 from finlab.online.core.position import Position
-import os
+from finlab.online.core.realtime_normalizers import to_optional_float
 import os
 import sys
 import time
@@ -365,10 +365,11 @@ class BinanceAccount(Account):
 
         for t in tickers:
             asset = t['symbol'].replace(self.base_currency, '')
-            ret[asset] = Stock(stock_id=asset, open=Decimal(t['openPrice']), 
-                               high=Decimal(t['highPrice']), low=Decimal(t['lowPrice']), 
-                close=Decimal(t['lastPrice']), bid_price=Decimal(t['bidPrice']), bid_volume=Decimal(t['bidQty']), 
-                ask_price=Decimal(t['askPrice']), ask_volume=Decimal(t['askQty']))
+            ret[asset] = Stock(stock_id=asset, open=Decimal(t['openPrice']),
+                               high=Decimal(t['highPrice']), low=Decimal(t['lowPrice']),
+                close=Decimal(t['lastPrice']), bid_price=Decimal(t['bidPrice']), bid_volume=Decimal(t['bidQty']),
+                ask_price=Decimal(t['askPrice']), ask_volume=Decimal(t['askQty']),
+                pct_change=to_optional_float(t.get('priceChangePercent')))
             
         return ret
 

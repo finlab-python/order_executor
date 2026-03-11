@@ -783,4 +783,5 @@ def snapshot_to_stock(snapshot):
         ask_price=d.sell_price,
         bid_volume=d.buy_volume,
         ask_volume=d.sell_volume,
+        pct_change=to_optional_float(getattr(d, 'change_rate', None)),
     )

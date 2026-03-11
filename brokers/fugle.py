@@ -14,7 +14,7 @@ from finlab.online.core.realtime_helpers import (
     build_ticks_from_intraday_trade_rows,
 )
 from finlab.online.core.realtime_models import ConnectionState, Fill, OrderUpdate
-from finlab.online.core.realtime_normalizers import get_first_valid_float
+from finlab.online.core.realtime_normalizers import get_first_valid_float, calculate_tick_pct_change
 from finlab.online.core.realtime_provider import RealtimeProvider
 from finlab import data
 
@@ -639,6 +639,9 @@ def to_finlab_stock(json_response):
         asks = []
 
     has_volume = 'lastTrade' in r
+    pct = r.get('changePercent')
+    if pct is None:
+        pct = calculate_tick_pct_change(r.get('closePrice'), r.get('previousClose'))
     return Stock(
         stock_id=r['symbol'],
         high=r['highPrice'] if has_volume else np.nan,
@@ -649,4 +652,5 @@ def to_finlab_stock(json_response):
         ask_price=asks[0]['price'] if asks else np.nan,
         bid_volume=bids[0]['size'] if bids else 0,
         ask_volume=asks[0]['size'] if asks else 0,
+        pct_change=pct,
     )

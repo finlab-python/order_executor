@@ -9,6 +9,7 @@ import pandas as pd
 from decimal import Decimal
 
 from finlab.online.core.account import Account, Stock, Order
+from finlab.online.core.realtime_normalizers import to_optional_float
 from finlab.online.core.utils import estimate_stock_price
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
@@ -386,4 +387,5 @@ def snapshot_to_stock(snapshot):
     """將 Pocket 股價行情轉換成 finlab 格式"""
     d = snapshot
     return Stock(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
-                 bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume)
+                 bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume,
+                 pct_change=to_optional_float(getattr(d, 'change_rate', None)))

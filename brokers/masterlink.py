@@ -1010,6 +1010,9 @@ class MasterlinkAccount(Account, RealtimeProvider):
             if not stock_id and original_stock_id:
                 stock_id = original_stock_id
 
+            # 提取漲跌幅
+            pct_change = get_first_valid_float(quote, 'changePercent', 'change_rate')
+
             # 返回 finlab Stock 物件
             return Stock(
                 stock_id=stock_id,
@@ -1020,7 +1023,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 bid_price=bid_price,
                 ask_price=ask_price,
                 bid_volume=bid_volume,
-                ask_volume=ask_volume
+                ask_volume=ask_volume,
+                pct_change=pct_change,
             )
         except Exception as e:
             logging.warning(f"_create_finlab_stock: 轉換時發生錯誤: {e}")

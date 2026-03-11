@@ -86,6 +86,7 @@ class Stock:
         bid_volume (Number): 買方第一檔量
         ask_price (Number): 賣方第一檔價格
         ask_volume (Number): 賣方第一檔量
+        pct_change (Optional[float]): 今日漲跌幅 (vs 前日收盤)
     """
 
     stock_id: str
@@ -97,6 +98,7 @@ class Stock:
     bid_volume: Number
     ask_price: Number
     ask_volume: Number
+    pct_change: Optional[float] = None
 
     @property
     def symbol(self) -> str:

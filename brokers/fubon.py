@@ -854,14 +854,18 @@ class FubonAccount(Account, RealtimeProvider):
         try:
             # 提取基本價格信息
             stock_id, price_data = self._extract_price_data(quote, original_stock_id)
-            
+
             # 提取委買委賣信息
             bid_ask_data = self._extract_bid_ask_data(quote)
-            
+
+            # 提取漲跌幅
+            pct_change = get_first_valid_float(quote, 'changePercent', 'change_rate')
+
             return Stock(
                 stock_id=stock_id,
                 **price_data,
-                **bid_ask_data
+                **bid_ask_data,
+                pct_change=pct_change,
             )
         except Exception as e:
             logging.warning(f"_create_finlab_stock: 轉換時發生錯誤: {e}")
