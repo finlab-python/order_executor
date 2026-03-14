@@ -1,11 +1,14 @@
 """Unified realtime event models."""
 
+from __future__ import annotations
+
+import datetime
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, List, Optional
-import datetime
+from typing import Any
 
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
+
 from .realtime_normalizers import (
     BOOK_DEPTH,
     calculate_tick_pct_change,
@@ -29,11 +32,11 @@ class Tick:
     low: float = 0.0
     avg_price: float = 0.0
     tick_type: int = 0
-    prev_close: Optional[float] = None
-    pct_change: Optional[float] = None
+    prev_close: float | None = None
+    pct_change: float | None = None
     source: str = "trade"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.prev_close = to_optional_float(self.prev_close)
         native_pct_change = to_optional_float(self.pct_change)
         self.pct_change = (
@@ -62,13 +65,13 @@ class BidAsk:
     """Order book snapshot (supports multi-level bid/ask)."""
 
     stock_id: str
-    bid_prices: List[float]
-    bid_volumes: List[int]
-    ask_prices: List[float]
-    ask_volumes: List[int]
+    bid_prices: list[float]
+    bid_volumes: list[int]
+    ask_prices: list[float]
+    ask_volumes: list[int]
     time: datetime.datetime
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.bid_prices, self.bid_volumes = normalize_book_side(
             self.bid_prices, self.bid_volumes, depth=BOOK_DEPTH
         )
@@ -77,33 +80,33 @@ class BidAsk:
         )
 
     @property
-    def bid_levels(self) -> List[BookLevel]:
+    def bid_levels(self) -> list[BookLevel]:
         return [
             BookLevel(price=p, volume=v)
             for p, v in zip(self.bid_prices, self.bid_volumes)
         ]
 
     @property
-    def ask_levels(self) -> List[BookLevel]:
+    def ask_levels(self) -> list[BookLevel]:
         return [
             BookLevel(price=p, volume=v)
             for p, v in zip(self.ask_prices, self.ask_volumes)
         ]
 
     @property
-    def bid_prices_top5(self) -> List[float]:
+    def bid_prices_top5(self) -> list[float]:
         return pad_levels(self.bid_prices, BOOK_DEPTH, 0.0)
 
     @property
-    def bid_volumes_top5(self) -> List[int]:
+    def bid_volumes_top5(self) -> list[int]:
         return pad_levels(self.bid_volumes, BOOK_DEPTH, 0)
 
     @property
-    def ask_prices_top5(self) -> List[float]:
+    def ask_prices_top5(self) -> list[float]:
         return pad_levels(self.ask_prices, BOOK_DEPTH, 0.0)
 
     @property
-    def ask_volumes_top5(self) -> List[int]:
+    def ask_volumes_top5(self) -> list[int]:
         return pad_levels(self.ask_volumes, BOOK_DEPTH, 0)
 
 
@@ -143,17 +146,17 @@ class BalanceUpdate:
 
     account_id: str
     broker: str
-    available_balance: Optional[float] = None
-    reserved_amount: Optional[float] = None
-    dedicated_account_balance: Optional[float] = None
-    cash: Optional[float] = None
-    settlement: Optional[float] = None
-    total_balance: Optional[float] = None
+    available_balance: float | None = None
+    reserved_amount: float | None = None
+    dedicated_account_balance: float | None = None
+    cash: float | None = None
+    settlement: float | None = None
+    total_balance: float | None = None
     currency: str = "TWD"
     time: datetime.datetime = field(default_factory=datetime.datetime.now)
     org_event: Any = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.available_balance = to_optional_float(self.available_balance)
         self.reserved_amount = to_optional_float(self.reserved_amount)
         self.dedicated_account_balance = to_optional_float(

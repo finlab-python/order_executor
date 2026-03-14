@@ -1,34 +1,33 @@
-from typing import Any, Union, Dict, Optional
-from dataclasses import dataclass, asdict
-from abc import ABC, abstractmethod
-from decimal import Decimal
-import importlib.util
+from __future__ import annotations
+
 import datetime
-import numbers
+import importlib.util
 import logging
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass
+from decimal import Decimal
+from typing import Any
 
 from finlab.config import get_default_market
-from finlab.online.core.position import Position
-from finlab.online.core.enums import *
 from finlab.market import Market
-from finlab import data
+from finlab.online.core.enums import *
+from finlab.online.core.position import Position
 
 logger = logging.getLogger(__name__)
 
-Number = Union[int, float, Decimal]
+Number = int | float | Decimal
+
 
 def typesafe_op(a: Number, b: Number, op: str) -> Number:
-    if isinstance(a, Decimal) and isinstance(b, Decimal):
-        if op == '+':
+    if (isinstance(a, Decimal) and isinstance(b, Decimal)) or (
+        isinstance(a, (int, float)) and isinstance(b, (int, float))
+    ):
+        if op == "+":
             return a + b
-        elif op == '-':
-            return a - b
-    elif isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        if op == '+':
-            return a + b
-        elif op == '-':
+        if op == "-":
             return a - b
     raise TypeError(f"Unsupported types for operation {op}: {type(a)}, {type(b)}")
+
 
 @dataclass
 class Order:
@@ -65,7 +64,7 @@ class Order:
         return self.stock_id
 
     @symbol.setter
-    def symbol(self, value: str):
+    def symbol(self, value: str) -> None:
         self.stock_id = value
 
 
@@ -98,22 +97,21 @@ class Stock:
     bid_volume: Number
     ask_price: Number
     ask_volume: Number
-    pct_change: Optional[float] = None
+    pct_change: float | None = None
 
     @property
     def symbol(self) -> str:
         return self.stock_id
 
     @symbol.setter
-    def symbol(self, value: str):
+    def symbol(self, value: str) -> None:
         self.stock_id = value
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 class Account(ABC):
-
     # Required module name and version for the account implementation
     required_module: str = ""
     module_version: str = ""
@@ -160,7 +158,6 @@ class Account(ABC):
     def check_version(cls) -> None:
 
         m = cls.required_module
-        v = cls.module_version
 
         # check module installed
         if importlib.util.find_spec(m) is None:
@@ -172,10 +169,10 @@ class Account(ABC):
         action: Action,
         stock_id: str,
         quantity: Number,
-        price: Optional[Number] = None,
+        price: Number | None = None,
         odd_lot: bool = False,
         market_order: bool = False,
-        best_price_limit: Optional[Number] = None,
+        best_price_limit: Number | None = None,
         order_cond: OrderCondition = OrderCondition.CASH,
     ) -> str:
         """產生新的委託單
@@ -196,14 +193,13 @@ class Account(ABC):
         Returns:
             (str): order id 券商提供的委託單編號
         """
-        pass
 
     @abstractmethod
     def update_order(
         self,
-        order_id,
-        price: Optional[Number] = None,
-        quantity: Optional[Number] = None,
+        order_id: str,
+        price: Number | None = None,
+        quantity: Number | None = None,
     ) -> None:
         """產生新的委託單
 
@@ -215,10 +211,9 @@ class Account(ABC):
         Returns:
             (None): 無跳出 erorr 代表成功更新委託單
         """
-        pass
 
     @abstractmethod
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: str) -> None:
         """刪除委託單
 
         建議使用 刪除委託單此功能前，先使用 update_order() 來更新委託單的狀況！如下
@@ -233,10 +228,9 @@ class Account(ABC):
         Returns:
             (None): 代表成功更新委託單
         """
-        pass
 
     @abstractmethod
-    def get_orders(self) -> Dict[str, Order]:
+    def get_orders(self) -> dict[str, Order]:
         """拿到現在所有委託單
 
         Returns:
@@ -244,10 +238,9 @@ class Account(ABC):
                 !!! example
                     `{'12345A': Order(order_id='12345A', stock_id='5410',...),...}`
         """
-        pass
 
     @abstractmethod
-    def get_stocks(self, stock_ids) -> Dict[str, Stock]:
+    def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
         """拿到現在股票報價
 
         Attributes:
@@ -258,7 +251,6 @@ class Account(ABC):
                 !!! example
                     `{'1101': Stock(stock_id='1101', open=31.15, high=31.85, low=31.1, close=31.65, bid_price=31.6, bid_volume=728.0, ask_price=31.65, ask_volume=202)}`
         """
-        pass
 
     @abstractmethod
     def get_position(self) -> Position:
@@ -267,27 +259,23 @@ class Account(ABC):
         Returns:
             (Position): 當前股票部位
         """
-        pass
 
     @abstractmethod
     def get_total_balance(self) -> int:
         """拿到當前帳戶的股票部位淨值"""
-        pass
 
     @abstractmethod
     def get_cash(self) -> int:
         """拿到當前帳戶的現金"""
-        pass
 
     @abstractmethod
     def get_settlement(self) -> int:
         """拿到當前帳戶的結算資料"""
-        pass
 
-    def sep_odd_lot_order(self):
+    def sep_odd_lot_order(self) -> bool:
         return True
 
-    def get_price(self, stock_ids):
+    def get_price(self, stock_ids: list[str]) -> dict[str, Number]:
 
         s = self.get_stocks(stock_ids)
 
@@ -302,7 +290,7 @@ class Account(ABC):
                     s[sid].ask_price if s[sid].ask_price != 0 else s[sid].bid_price
                 )
 
-                price[sid] = typesafe_op(bid_price, ask_price, '+') / 2
+                price[sid] = typesafe_op(bid_price, ask_price, "+") / 2
 
             if price[sid] == 0:
                 raise Exception(

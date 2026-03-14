@@ -1,7 +1,9 @@
 """Broker-facing helpers for intraday backfill and snapshot normalization."""
 
-from typing import Any, List, Optional
+from __future__ import annotations
+
 import datetime
+from typing import Any
 
 from .realtime_models import BidAsk, Tick
 from .realtime_normalizers import (
@@ -18,20 +20,20 @@ from .realtime_normalizers import (
 
 def build_ticks_from_intraday_trade_rows(
     stock_id: str,
-    rows: List[Any],
-    session_date: Optional[datetime.date] = None,
+    rows: list[Any],
+    session_date: datetime.date | None = None,
     prev_close: Any = None,
     pct_change: Any = None,
     start_time: Any = None,
     end_time: Any = None,
-) -> List[Tick]:
+) -> list[Tick]:
     """Normalize REST intraday trade rows into unified Tick objects."""
     session_date = session_date or datetime.date.today()
     start_filter, end_filter = normalize_backfill_window(start_time, end_time)
     prev_close_value = to_optional_float(prev_close)
     pct_change_value = to_optional_float(pct_change)
     seen_keys = set()
-    ticks: List[Tick] = []
+    ticks: list[Tick] = []
 
     for row in list(rows or []):
         trade_time = to_optional_datetime(
@@ -86,7 +88,7 @@ def build_ticks_from_intraday_trade_rows(
 def build_bidask_from_quote(
     stock_id: str,
     quote: Any,
-    default_time: Optional[datetime.datetime] = None,
+    default_time: datetime.datetime | None = None,
 ) -> BidAsk:
     """Normalize a quote payload carrying bid/ask ladders into BidAsk."""
     bids = get_field_value(quote, "bids") or []

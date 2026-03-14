@@ -1,13 +1,22 @@
 """Shared helpers for real-order integration tests."""
 
+from __future__ import annotations
+
 import time
+import unittest
+from typing import Any
 
 from finlab.online.base_account import Action
+from finlab.online.core.account import Account
 from finlab.online.enums import OrderStatus
 from finlab.online.order_executor import OrderExecutor, Position
 
 
-def verify_order_executor_flow(testcase, order_executor, **create_order_kwargs):
+def verify_order_executor_flow(
+    testcase: unittest.TestCase,
+    order_executor: OrderExecutor,
+    **create_order_kwargs: Any,
+) -> None:
     """Create, inspect, execute, and validate orders for a target position."""
     view_orders = order_executor.create_orders(view_only=True)
 
@@ -20,7 +29,7 @@ def verify_order_executor_flow(testcase, order_executor, **create_order_kwargs):
     expected_by_stock = {o["stock_id"]: o for o in view_orders}
     actual_quantity = {o.stock_id: 0 for _, o in orders.items()}
 
-    for _, order in orders.items():
+    for order in orders.values():
         if (
             order.status == OrderStatus.CANCEL
             or order.stock_id not in expected_by_stock
@@ -30,9 +39,7 @@ def verify_order_executor_flow(testcase, order_executor, **create_order_kwargs):
 
         stock_id = order.stock_id
         expected_action = (
-            Action.BUY
-            if expected_by_stock[stock_id]["quantity"] > 0
-            else Action.SELL
+            Action.BUY if expected_by_stock[stock_id]["quantity"] > 0 else Action.SELL
         )
 
         actual_quantity[stock_id] += order.quantity
@@ -51,7 +58,9 @@ def verify_order_executor_flow(testcase, order_executor, **create_order_kwargs):
     order_executor.cancel_orders()
 
 
-def run_account_order_flow(testcase, account, odd_lot=False):
+def run_account_order_flow(
+    testcase: unittest.TestCase, account: Account, odd_lot: bool = False
+) -> None:
     """Run buy/sell/day-trading scenarios against a real account."""
     sid1 = "3661"
     sid2 = "1101"
@@ -79,7 +88,9 @@ def run_account_order_flow(testcase, account, odd_lot=False):
     verify_order_executor_flow(testcase, oe, market_order=True)
 
 
-def run_account_update_price_flow(testcase, account, odd_lot=False):
+def run_account_update_price_flow(
+    testcase: unittest.TestCase, account: Account, odd_lot: bool = False
+) -> None:
     """Run update-order-price scenarios against a real account."""
     sid = "6016"
     quantity = 0.1 if odd_lot else 2
@@ -92,7 +103,9 @@ def run_account_update_price_flow(testcase, account, odd_lot=False):
     orders = oe.account.get_orders()
 
     active_order_ids = [
-        order_id for order_id, order in orders.items() if order.status == OrderStatus.NEW
+        order_id
+        for order_id, order in orders.items()
+        if order.status == OrderStatus.NEW
     ]
 
     time.sleep(11)
@@ -108,7 +121,7 @@ def run_account_update_price_flow(testcase, account, odd_lot=False):
     expected_by_stock = {o["stock_id"]: o for o in view_orders}
     actual_quantity = {o.stock_id: 0 for _, o in orders_new.items()}
 
-    for _, order in orders_new.items():
+    for order in orders_new.values():
         if (
             order.status == OrderStatus.CANCEL
             or order.stock_id not in expected_by_stock
@@ -118,7 +131,9 @@ def run_account_update_price_flow(testcase, account, odd_lot=False):
             continue
 
         actual_quantity[sid] += order.quantity
-        testcase.assertEqual(order.order_condition, expected_by_stock[sid]["order_condition"])
+        testcase.assertEqual(
+            order.order_condition, expected_by_stock[sid]["order_condition"]
+        )
 
     for stock_id, qty in actual_quantity.items():
         if qty != 0:

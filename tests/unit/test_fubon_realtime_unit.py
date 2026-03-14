@@ -1,33 +1,36 @@
+from __future__ import annotations
+
 import importlib
 import sys
 import types
+from typing import Any
 
 from finlab.online.core.enums import Action, OrderStatus
 from finlab.online.core.realtime_models import ConnectionState
 
 
 class _FakeWsClient:
-    def __init__(self):
-        self.handlers = {}
-        self.subscriptions = []
-        self.unsubscriptions = []
+    def __init__(self) -> None:
+        self.handlers: dict[str, Any] = {}
+        self.subscriptions: list[dict[str, str]] = []
+        self.unsubscriptions: list[dict[str, str]] = []
         self.disconnected = False
 
-    def on(self, event, callback):
+    def on(self, event: str, callback: Any) -> None:
         self.handlers[event] = callback
 
-    def subscribe(self, payload):
+    def subscribe(self, payload: dict[str, str]) -> None:
         self.subscriptions.append(payload)
 
-    def unsubscribe(self, payload):
+    def unsubscribe(self, payload: dict[str, str]) -> None:
         self.unsubscriptions.append(payload)
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         self.disconnected = True
 
 
 class _FakeSdk:
-    def __init__(self):
+    def __init__(self) -> None:
         self.ws = _FakeWsClient()
         self.marketdata = types.SimpleNamespace(
             websocket_client=types.SimpleNamespace(stock=self.ws),
@@ -73,26 +76,26 @@ class _FakeSdk:
                 )
             ),
         )
-        self.order_cb = None
-        self.order_changed_cb = None
-        self.filled_cb = None
-        self.event_cb = None
+        self.order_cb: Any = None
+        self.order_changed_cb: Any = None
+        self.filled_cb: Any = None
+        self.event_cb: Any = None
         self.accounting = types.SimpleNamespace(bank_remain=lambda account: None)
 
-    def set_on_order(self, callback):
+    def set_on_order(self, callback: Any) -> None:
         self.order_cb = callback
 
-    def set_on_order_changed(self, callback):
+    def set_on_order_changed(self, callback: Any) -> None:
         self.order_changed_cb = callback
 
-    def set_on_filled(self, callback):
+    def set_on_filled(self, callback: Any) -> None:
         self.filled_cb = callback
 
-    def set_on_event(self, callback):
+    def set_on_event(self, callback: Any) -> None:
         self.event_cb = callback
 
 
-def _import_fubon_module_with_fake_sdk(monkeypatch):
+def _import_fubon_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     sdk_module = types.ModuleType("fubon_neo.sdk")
     sdk_module.FubonSDK = object
     sdk_module.Order = object
@@ -117,7 +120,9 @@ def _import_fubon_module_with_fake_sdk(monkeypatch):
     return importlib.reload(module)
 
 
-def test_fubon_realtime_callbacks_cover_tick_book_order_fill_and_connection(monkeypatch):
+def test_fubon_realtime_callbacks_cover_tick_book_order_fill_and_connection(
+    monkeypatch: Any,
+) -> None:
     fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 
@@ -136,7 +141,9 @@ def test_fubon_realtime_callbacks_cover_tick_book_order_fill_and_connection(monk
     account.on_bidask(bidasks.append)
     account.on_order_update(updates.append)
     account.on_fill(fills.append)
-    account.on_connection(lambda state, message="": connections.append((state, message)))
+    account.on_connection(
+        lambda state, message="": connections.append((state, message))
+    )
 
     account.connect_realtime()
 
@@ -224,7 +231,7 @@ def test_fubon_realtime_callbacks_cover_tick_book_order_fill_and_connection(monk
     assert connections[-1][0] == ConnectionState.DISCONNECTED
 
 
-def test_fubon_subscribe_ticks_tracks_trades_and_aggregates(monkeypatch):
+def test_fubon_subscribe_ticks_tracks_trades_and_aggregates(monkeypatch: Any) -> None:
     fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 
@@ -247,7 +254,7 @@ def test_fubon_subscribe_ticks_tracks_trades_and_aggregates(monkeypatch):
     assert "2330" not in account._tick_pct_change_cache
 
 
-def test_fubon_backfill_ticks_normalizes_intraday_trade_rows(monkeypatch):
+def test_fubon_backfill_ticks_normalizes_intraday_trade_rows(monkeypatch: Any) -> None:
     fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 
@@ -269,7 +276,7 @@ def test_fubon_backfill_ticks_normalizes_intraday_trade_rows(monkeypatch):
     assert [tick.price for tick in ticks] == [581.0, 582.0]
 
 
-def test_fubon_get_bidask_snapshot_uses_quote_top5(monkeypatch):
+def test_fubon_get_bidask_snapshot_uses_quote_top5(monkeypatch: Any) -> None:
     fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 

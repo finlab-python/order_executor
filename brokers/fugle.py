@@ -1,59 +1,75 @@
-from configparser import ConfigParser
-from esun_trade.sdk import SDK
-from esun_trade.order import OrderObject
-from esun_trade.constant import Action as fugleAction
-from esun_trade.constant import (APCode, Trade, PriceFlag, BSFlag, Action)
-from esun_trade.util import setup_keyring, set_password
+from __future__ import annotations
 
-from finlab.online.core.account import Account, Stock, Order
-from finlab.online.core.enums import *
+import copy
+import datetime
+import logging
+import math
+import os
+import time
+from configparser import ConfigParser
+from decimal import Decimal
+from threading import Thread
+from typing import Any
+
+import numpy as np
+import requests
+from esun_trade.constant import Action, APCode, PriceFlag, Trade
+from esun_trade.constant import Action as fugleAction
+from esun_trade.order import OrderObject
+from esun_trade.sdk import SDK
+from esun_trade.util import set_password, setup_keyring
+
+from finlab import data
 from finlab.markets.tw import TWMarket
+from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_helpers import (
     build_bidask_from_quote,
     build_ticks_from_intraday_trade_rows,
 )
-from finlab.online.core.realtime_models import ConnectionState, Fill, OrderUpdate
-from finlab.online.core.realtime_normalizers import get_first_valid_float, calculate_tick_pct_change
+from finlab.online.core.realtime_models import (
+    BidAsk,
+    ConnectionState,
+    Fill,
+    OrderUpdate,
+    Tick,
+)
+from finlab.online.core.realtime_normalizers import (
+    calculate_tick_pct_change,
+    get_first_valid_float,
+)
 from finlab.online.core.realtime_provider import RealtimeProvider
-from finlab import data
 
-from threading import Thread
-from decimal import Decimal
-import numpy as np
-import requests
-import datetime
-import logging
-import math
-import copy
-import time
-import os
+trades: dict[str, dict[str, Order]] = {}
+threads: dict[str, Thread] = {}
+callbacks: dict[str, Any] = {}
 
-trades = {}
-threads = {}
-callbacks = {}
 
 class FugleAccount(Account, RealtimeProvider):
+    required_module = "esun_trade"
 
-    required_module = 'esun_trade'
-
-    def __init__(self, config_path='./config.ini.example', market_api_key=None):
+    def __init__(
+        self,
+        config_path: str = "./config.ini.example",
+        market_api_key: str | None = None,
+    ) -> None:
 
         self.check_version()
-        self.market = 'tw_stock'
+        self.market = "tw_stock"
 
         self.market_api_key = market_api_key
 
         # Support both ESUN_* (new) and FUGLE_* (legacy) environment variables
-        if 'ESUN_CONFIG_PATH' in os.environ:
-            config_path = os.environ['ESUN_CONFIG_PATH']
-        elif 'FUGLE_CONFIG_PATH' in os.environ:
-            config_path = os.environ['FUGLE_CONFIG_PATH']
+        if "ESUN_CONFIG_PATH" in os.environ:
+            config_path = os.environ["ESUN_CONFIG_PATH"]
+        elif "FUGLE_CONFIG_PATH" in os.environ:
+            config_path = os.environ["FUGLE_CONFIG_PATH"]
 
-        if 'ESUN_MARKET_API_KEY' in os.environ:
-            market_api_key = os.environ['ESUN_MARKET_API_KEY']
-        elif 'FUGLE_MARKET_API_KEY' in os.environ:
-            market_api_key = os.environ['FUGLE_MARKET_API_KEY']
+        if "ESUN_MARKET_API_KEY" in os.environ:
+            market_api_key = os.environ["ESUN_MARKET_API_KEY"]
+        elif "FUGLE_MARKET_API_KEY" in os.environ:
+            market_api_key = os.environ["FUGLE_MARKET_API_KEY"]
 
         self.timestamp_for_get_position = datetime.datetime(2021, 1, 1)
 
@@ -62,30 +78,37 @@ class FugleAccount(Account, RealtimeProvider):
         config.read(config_path)
         # 將設定檔內容寫至 SDK 中，並確認是否已設定密碼
         if not os.path.isfile(config_path):
-            raise Exception('無法找到 config 檔案')
-        
-        # Support both ESUN_* (new) and FUGLE_* (legacy) environment variables for passwords
-        account_password = os.environ.get('ESUN_ACCOUNT_PASSWORD') or os.environ.get('FUGLE_ACCOUNT_PASSWORD')
-        cert_password = os.environ.get('ESUN_CERT_PASSWORD') or os.environ.get('FUGLE_CERT_PASSWORD')
-        
-        if account_password and cert_password:
+            raise Exception("無法找到 config 檔案")
 
-            setup_keyring(config['User']['Account'])
-            set_password("esun_trade_sdk:account", config['User']['Account'], account_password)
-            set_password("esun_trade_sdk:cert", config['User']['Account'], cert_password)
+        # Support both ESUN_* (new) and FUGLE_* (legacy) environment variables for passwords
+        account_password = os.environ.get("ESUN_ACCOUNT_PASSWORD") or os.environ.get(
+            "FUGLE_ACCOUNT_PASSWORD"
+        )
+        cert_password = os.environ.get("ESUN_CERT_PASSWORD") or os.environ.get(
+            "FUGLE_CERT_PASSWORD"
+        )
+
+        if account_password and cert_password:
+            setup_keyring(config["User"]["Account"])
+            set_password(
+                "esun_trade_sdk:account", config["User"]["Account"], account_password
+            )
+            set_password(
+                "esun_trade_sdk:cert", config["User"]["Account"], cert_password
+            )
 
         sdk = SDK(config)
         sdk.login()
         self.sdk = sdk
         self.market_api_key = market_api_key
-        self.user_account = config['User']['Account']
+        self.user_account = config["User"]["Account"]
 
         global trades, threads
         trades[self.user_account] = {}
 
         # 註冊接收委託回報的 callback
-        @self.sdk.on('order')
-        def on_order(order):
+        @self.sdk.on("order")
+        def on_order(order: dict[str, Any]) -> None:
 
             try:
                 order_id = self.get_org_order_id(order)
@@ -97,11 +120,12 @@ class FugleAccount(Account, RealtimeProvider):
                     callback_func(trades[self.user_account][order_id])
             except Exception as e:
                 import traceback
+
                 traceback.print_exc()
                 logging.warning(f"on_order: Cannot process order {order}: {e}")
 
         if self.user_account not in threads:
-            self.thread = Thread(target=lambda: self.sdk.connect_websocket())
+            self.thread = Thread(target=self.sdk.connect_websocket)
             self.thread.daemon = True
             self.thread.start()
 
@@ -113,23 +137,23 @@ class FugleAccount(Account, RealtimeProvider):
         if self._realtime_connected:
             return
 
-        order_condition_map = {
-            '0': OrderCondition.CASH,
-            '3': OrderCondition.MARGIN_TRADING,
-            '4': OrderCondition.SHORT_SELLING,
-            '9': OrderCondition.DAY_TRADING_LONG,
-            'A': OrderCondition.DAY_TRADING_SHORT,
+        order_condition_map: dict[str, OrderCondition] = {
+            "0": OrderCondition.CASH,
+            "3": OrderCondition.MARGIN_TRADING,
+            "4": OrderCondition.SHORT_SELLING,
+            "9": OrderCondition.DAY_TRADING_LONG,
+            "A": OrderCondition.DAY_TRADING_SHORT,
         }
 
-        @self.sdk.on('order')
-        def _on_order(data):
+        @self.sdk.on("order")
+        def _on_order(data: dict[str, Any]) -> None:
             try:
                 order_id = self.get_org_order_id(data)
-                action = Action.BUY if data['buy_sell'] == 'B' else Action.SELL
+                action = Action.BUY if data["buy_sell"] == "B" else Action.SELL
                 status = OrderStatus.NEW
-                org_qty = float(data.get('org_qty', 0))
-                mat_qty = float(data.get('mat_qty', 0))
-                cel_qty = float(data.get('cel_qty', 0))
+                org_qty = float(data.get("org_qty", 0))
+                mat_qty = float(data.get("mat_qty", 0))
+                cel_qty = float(data.get("cel_qty", 0))
                 if org_qty == mat_qty and mat_qty > 0:
                     status = OrderStatus.FILLED
                 elif cel_qty > 0:
@@ -137,43 +161,53 @@ class FugleAccount(Account, RealtimeProvider):
                 elif mat_qty > 0:
                     status = OrderStatus.PARTIALLY_FILLED
 
-                if 'ord_date' in data:
-                    t = datetime.datetime.strptime(data['ord_date'] + data['ord_time'], '%Y%m%d%H%M%S%f')
+                if "ord_date" in data:
+                    t = datetime.datetime.strptime(
+                        data["ord_date"] + data["ord_time"], "%Y%m%d%H%M%S%f"
+                    )
                 else:
                     t = datetime.datetime.now()
 
-                self._emit_order_update(OrderUpdate(
-                    order_id=order_id,
-                    stock_id=data.get('stock_no', ''),
-                    action=action,
-                    price=float(data.get('od_price', 0)),
-                    quantity=org_qty,
-                    filled_quantity=mat_qty,
-                    status=status,
-                    order_condition=order_condition_map.get(data.get('trade', '0'), OrderCondition.CASH),
-                    time=t,
-                    org_event=data,
-                ))
+                self._emit_order_update(
+                    OrderUpdate(
+                        order_id=order_id,
+                        stock_id=data.get("stock_no", ""),
+                        action=action,
+                        price=float(data.get("od_price", 0)),
+                        quantity=org_qty,
+                        filled_quantity=mat_qty,
+                        status=status,
+                        order_condition=order_condition_map.get(
+                            data.get("trade", "0"), OrderCondition.CASH
+                        ),
+                        time=t,
+                        org_event=data,
+                    )
+                )
             except Exception:
                 logging.exception("Error in realtime on_order handler")
 
-        @self.sdk.on('dealt')
-        def _on_dealt(data):
+        @self.sdk.on("dealt")
+        def _on_dealt(data: dict[str, Any]) -> None:
             try:
                 if isinstance(data, dict):
                     t = datetime.datetime.strptime(
-                        f"{str((datetime.datetime.utcnow()+datetime.timedelta(hours=8)).date())} {data['mat_time']}",
-                        "%Y-%m-%d %H%M%S%f"
+                        f"{(datetime.datetime.utcnow() + datetime.timedelta(hours=8)).date()!s} {data['mat_time']}",
+                        "%Y-%m-%d %H%M%S%f",
                     )
-                    self._emit_fill(Fill(
-                        order_id=data.get('ord_no', ''),
-                        stock_id=data.get('stock_no', ''),
-                        action=Action.BUY if data.get('buy_sell') == 'B' else Action.SELL,
-                        price=float(data.get('mat_price', 0)),
-                        quantity=float(data.get('mat_qty', 0)),
-                        time=t,
-                        org_event=data,
-                    ))
+                    self._emit_fill(
+                        Fill(
+                            order_id=data.get("ord_no", ""),
+                            stock_id=data.get("stock_no", ""),
+                            action=Action.BUY
+                            if data.get("buy_sell") == "B"
+                            else Action.SELL,
+                            price=float(data.get("mat_price", 0)),
+                            quantity=float(data.get("mat_qty", 0)),
+                            time=t,
+                            org_event=data,
+                        )
+                    )
             except Exception:
                 logging.exception("Error in realtime on_dealt handler")
 
@@ -189,19 +223,19 @@ class FugleAccount(Account, RealtimeProvider):
         self._emit_connection(ConnectionState.DISCONNECTED)
         logging.info("Fugle realtime disconnected")
 
-    def subscribe_ticks(self, stock_ids):
+    def subscribe_ticks(self, stock_ids: list[str]) -> None:
         raise NotImplementedError("Fugle/Esun SDK does not support tick streaming")
 
-    def unsubscribe_ticks(self, stock_ids):
+    def unsubscribe_ticks(self, stock_ids: list[str]) -> None:
         raise NotImplementedError("Fugle/Esun SDK does not support tick streaming")
 
-    def subscribe_bidask(self, stock_ids):
+    def subscribe_bidask(self, stock_ids: list[str]) -> None:
         raise NotImplementedError("Fugle/Esun SDK does not support bidask streaming")
 
-    def unsubscribe_bidask(self, stock_ids):
+    def unsubscribe_bidask(self, stock_ids: list[str]) -> None:
         raise NotImplementedError("Fugle/Esun SDK does not support bidask streaming")
 
-    def _get_marketdata_json(self, path, **params):
+    def _get_marketdata_json(self, path: str, **params: Any) -> dict[str, Any]:
         if not self.market_api_key:
             raise ValueError("market_api_key is required for market-data backfill")
 
@@ -213,12 +247,18 @@ class FugleAccount(Account, RealtimeProvider):
         response.raise_for_status()
         return response.json()
 
-    def backfill_ticks(self, stock_ids, start_time=None, end_time=None, emit=True):
-        backfilled = {}
+    def backfill_ticks(
+        self,
+        stock_ids: list[str],
+        start_time: Any = None,
+        end_time: Any = None,
+        emit: bool = True,
+    ) -> dict[str, list[Tick]]:
+        backfilled: dict[str, list[Tick]] = {}
         session_date = datetime.datetime.now().date()
 
         for stock_id in stock_ids:
-            ticks = []
+            ticks: list[Tick] = []
             try:
                 quote = self._get_marketdata_json(f"stock/intraday/quote/{stock_id}")
                 prev_close = get_first_valid_float(
@@ -234,17 +274,19 @@ class FugleAccount(Account, RealtimeProvider):
                     "pctChange",
                 )
 
-                rows = []
+                rows: list[dict[str, Any]] = []
                 offset = 0
                 limit = 500
-                seen_pages = set()
+                seen_pages: set[tuple[int, Any, Any]] = set()
                 while True:
                     payload = self._get_marketdata_json(
                         f"stock/intraday/trades/{stock_id}",
                         limit=limit,
                         offset=offset,
                     )
-                    page_rows = payload.get("data", []) if isinstance(payload, dict) else []
+                    page_rows = (
+                        payload.get("data", []) if isinstance(payload, dict) else []
+                    )
                     if not page_rows:
                         break
 
@@ -273,7 +315,9 @@ class FugleAccount(Account, RealtimeProvider):
                 )
 
             except Exception:
-                logging.exception("backfill_ticks: unable to backfill intraday ticks for %s", stock_id)
+                logging.exception(
+                    "backfill_ticks: unable to backfill intraday ticks for %s", stock_id
+                )
                 ticks = []
 
             backfilled[stock_id] = ticks
@@ -283,8 +327,12 @@ class FugleAccount(Account, RealtimeProvider):
 
         return backfilled
 
-    def get_bidask_snapshot(self, stock_ids, emit=True):
-        backfilled = {}
+    def get_bidask_snapshot(
+        self,
+        stock_ids: list[str],
+        emit: bool = True,
+    ) -> dict[str, BidAsk]:
+        backfilled: dict[str, BidAsk] = {}
         for stock_id in stock_ids:
             try:
                 quote = self._get_marketdata_json(f"stock/intraday/quote/{stock_id}")
@@ -293,12 +341,25 @@ class FugleAccount(Account, RealtimeProvider):
                 if emit:
                     self._emit_bidask(bidask)
             except Exception:
-                logging.exception("get_bidask_snapshot: unable to fetch top5 snapshot for %s", stock_id)
+                logging.exception(
+                    "get_bidask_snapshot: unable to fetch top5 snapshot for %s",
+                    stock_id,
+                )
         return backfilled
 
     # ── End RealtimeProvider ──────────────────────────────────────
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH):
+    def create_order(
+        self,
+        action: Action,
+        stock_id: str,
+        quantity: int,
+        price: float | None = None,
+        odd_lot: bool = False,
+        best_price_limit: bool = False,
+        market_order: bool = False,
+        order_cond: OrderCondition = OrderCondition.CASH,
+    ) -> str | None:
 
         if quantity <= 0:
             raise ValueError("quantity should be larger than zero")
@@ -321,7 +382,6 @@ class FugleAccount(Account, RealtimeProvider):
             elif action == Action.SELL:
                 price_flag = PriceFlag.LimitUp
 
-
         order_cond = {
             OrderCondition.CASH: Trade.Cash,
             OrderCondition.MARGIN_TRADING: Trade.Margin,
@@ -332,100 +392,126 @@ class FugleAccount(Account, RealtimeProvider):
 
         ap_code = APCode.IntradayOdd if odd_lot else APCode.Common
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        if datetime.time(13, 40) < datetime.time(now.hour, now.minute) and datetime.time(now.hour, now.minute) < datetime.time(14, 30) and odd_lot:
+        if (
+            datetime.time(13, 40) < datetime.time(now.hour, now.minute)
+            and datetime.time(now.hour, now.minute) < datetime.time(14, 30)
+            and odd_lot
+        ):
             ap_code = APCode.Odd
-        if datetime.time(14, 00) < datetime.time(now.hour, now.minute) and datetime.time(now.hour, now.minute) < datetime.time(14, 30) and not odd_lot:
+        if (
+            datetime.time(14, 00) < datetime.time(now.hour, now.minute)
+            and datetime.time(now.hour, now.minute) < datetime.time(14, 30)
+            and not odd_lot
+        ):
             ap_code = APCode.AfterMarket
             price_flag = PriceFlag.Limit
 
-        params = dict(
-            buy_sell=fugle_action,
-            stock_no=stock_id,
-            quantity=quantity,
-            ap_code=ap_code,
-            price_flag=price_flag,
-            trade=order_cond,
-            price=price
-        )
+        params = {
+            "buy_sell": fugle_action,
+            "stock_no": stock_id,
+            "quantity": quantity,
+            "ap_code": ap_code,
+            "price_flag": price_flag,
+            "trade": order_cond,
+            "price": price,
+        }
 
         order = OrderObject(**params)
 
         try:
             ret = self.sdk.place_order(order)
         except Exception as e:
-            logging.warning(
-                f"create_order: Cannot create order of {params}: {e}")
-            return
-        
-        order_id = self.get_org_order_id(ret)
-        return order_id
+            logging.warning(f"create_order: Cannot create order of {params}: {e}")
+            return None
 
-    def update_order(self, order_id, price=None):
+        return self.get_org_order_id(ret)
+
+    def update_order(
+        self,
+        order_id: str,
+        price: float | None = None,
+    ) -> None:
 
         global trades, callbacks
 
         if isinstance(price, int):
             price = float(price)
 
-        if order_id not in trades[self.user_account] or trades[self.user_account][order_id].org_order.get('kind', '') == 'ACK':
+        if (
+            order_id not in trades[self.user_account]
+            or trades[self.user_account][order_id].org_order.get("kind", "") == "ACK"
+        ):
             self.get_orders()
 
         if order_id not in trades[self.user_account]:
             logging.warning(
-                f"update_order: Order id {order_id} not found, cannot update the price.")
+                f"update_order: Order id {order_id} not found, cannot update the price."
+            )
 
         if price is not None:
             try:
-                if trades[self.user_account][order_id].org_order['ap_code'] == '5':
+                if trades[self.user_account][order_id].org_order["ap_code"] == "5":
                     fugle_order = trades[self.user_account][order_id].org_order
-                    action = Action.BUY if fugle_order['buy_sell'] == 'B' else Action.SELL
-                    stock_id = fugle_order['stock_no']
-                    user_cancel_orders = fugle_order['cel_qty']
-                    q = fugle_order['org_qty_share'] - \
-                        fugle_order['mat_qty_share'] - \
-                        fugle_order['cel_qty_share']
+                    action = (
+                        Action.BUY if fugle_order["buy_sell"] == "B" else Action.SELL
+                    )
+                    stock_id = fugle_order["stock_no"]
+                    user_cancel_orders = fugle_order["cel_qty"]
+                    (
+                        fugle_order["org_qty_share"]
+                        - fugle_order["mat_qty_share"]
+                        - fugle_order["cel_qty_share"]
+                    )
 
                     self.cancel_order(order_id)
 
-                    def callback(order):
+                    def callback(order: Order) -> bool:
                         if order.status == OrderStatus.CANCEL:
-                            all_canceled_orders = float(trades[self.user_account][order_id].org_order['cel_qty'])
-                            quantity = int((all_canceled_orders - user_cancel_orders))
+                            all_canceled_orders = float(
+                                trades[self.user_account][order_id].org_order["cel_qty"]
+                            )
+                            quantity = int(all_canceled_orders - user_cancel_orders)
                             self.create_order(
-                                action=action, stock_id=stock_id, quantity=quantity, price=price, odd_lot=True)
+                                action=action,
+                                stock_id=stock_id,
+                                quantity=quantity,
+                                price=price,
+                                odd_lot=True,
+                            )
                             return True
                         return False
-                            
+
                     callbacks[self.user_account + order_id] = callback
                 else:
                     self.sdk.modify_price(
-                        trades[self.user_account][order_id].org_order, price)
+                        trades[self.user_account][order_id].org_order, price
+                    )
             except ValueError as ve:
                 logging.warning(
-                    f"update_order: Cannot update price of order {order_id}: {ve}")
+                    f"update_order: Cannot update price of order {order_id}: {ve}"
+                )
 
-
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: str) -> None:
 
         global trades
-        if not order_id in trades[self.user_account] or trades[self.user_account][order_id].org_order.get('kind', '') == 'ACK':
+        if (
+            order_id not in trades[self.user_account]
+            or trades[self.user_account][order_id].org_order.get("kind", "") == "ACK"
+        ):
             trades[self.user_account] = self.get_orders()
 
         try:
             self.sdk.cancel_order(trades[self.user_account][order_id].org_order)
         except Exception as e:
-            logging.warning(
-                f"cancel_order: Cannot cancel order {order_id}: {e}")
-            
+            logging.warning(f"cancel_order: Cannot cancel order {order_id}: {e}")
 
-    def get_org_order_id(self, org_order):
-        order_id = org_order['ord_no']
-        if order_id == '':
-            order_id = org_order['pre_ord_no']
+    def get_org_order_id(self, org_order: dict[str, Any]) -> str:
+        order_id = org_order["ord_no"]
+        if order_id == "":
+            order_id = org_order["pre_ord_no"]
         return order_id
 
-
-    def get_orders(self):
+    def get_orders(self) -> dict[str, Order]:
 
         global trades
         success = False
@@ -435,15 +521,17 @@ class FugleAccount(Account, RealtimeProvider):
             try:
                 orders = self.sdk.get_order_results()
                 success = True
-            except:
+            except Exception as e:
                 logging.warning("get_orders: Cannot get orders, sleep for 1 minute")
                 fetch_count += 1
                 time.sleep(60)
                 if fetch_count > 5:
-                    logging.error("get_orders: Cannot get orders, try 5 times, raise error")
-                    raise Exception("Cannot get orders")
+                    logging.exception(
+                        "get_orders: Cannot get orders, try 5 times, raise error"
+                    )
+                    raise Exception("Cannot get orders") from e
 
-        ret = {}
+        ret: dict[str, Order] = {}
         for o in orders:
             order_id = self.get_org_order_id(o)
             ret[order_id] = create_finlab_order(o)
@@ -451,31 +539,33 @@ class FugleAccount(Account, RealtimeProvider):
 
         return copy.deepcopy(ret)
 
-    def get_stocks(self, stock_ids):
-        ret = {}
+    def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
+        ret: dict[str, Stock] = {}
         for s in stock_ids:
             try:
                 res = requests.get(
-                    f'https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/{s}',headers={'X-API-KEY': self.market_api_key})
+                    f"https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/{s}",
+                    headers={"X-API-KEY": self.market_api_key},
+                )
                 json_response = res.json()
                 ret[s] = to_finlab_stock(json_response)
 
                 if math.isnan(ret[s].close):
-                    ret[s].close = json_response['previousClose']
+                    ret[s].close = json_response["previousClose"]
 
             except Exception as e:
-                logging.warn(f"Fugle API: cannot get stock {s}")
-                logging.warn(e)
+                logging.warning(f"Fugle API: cannot get stock {s}")
+                logging.warning(e)
 
         return ret
 
-    def get_position(self):
-        order_condition = {
-            '0': OrderCondition.CASH,
-            '3': OrderCondition.MARGIN_TRADING,
-            '4': OrderCondition.SHORT_SELLING,
-            '9': OrderCondition.DAY_TRADING_LONG,
-            'A': OrderCondition.DAY_TRADING_SHORT,
+    def get_position(self) -> Position:
+        order_condition: dict[str, OrderCondition] = {
+            "0": OrderCondition.CASH,
+            "3": OrderCondition.MARGIN_TRADING,
+            "4": OrderCondition.SHORT_SELLING,
+            "9": OrderCondition.DAY_TRADING_LONG,
+            "A": OrderCondition.DAY_TRADING_SHORT,
         }
 
         now = datetime.datetime.now()
@@ -488,26 +578,30 @@ class FugleAccount(Account, RealtimeProvider):
         inv = self.sdk.get_inventories()
         self.timestamp_for_get_position = now
 
-        ret = []
+        ret: list[dict[str, Any]] = []
         for i in inv:
-
             # removed: position of stk_dats is not completed
             # total_qty = sum([int(d['qty']) for d in i['stk_dats']]) / 1000
-            total_qty = Decimal(int(i['qty_l']) +
-                         int(i['qty_bm']) - int(i['qty_sm'])) / 1000
+            total_qty = (
+                Decimal(int(i["qty_l"]) + int(i["qty_bm"]) - int(i["qty_sm"])) / 1000
+            )
 
-            o = order_condition[i['trade']]
+            o = order_condition[i["trade"]]
 
             if total_qty != 0:
-                ret.append({
-                    'stock_id': i['stk_no'],
-                    'quantity': total_qty if o != OrderCondition.SHORT_SELLING else -total_qty,
-                    'order_condition': order_condition[i['trade']]
-                })
+                ret.append(
+                    {
+                        "stock_id": i["stk_no"],
+                        "quantity": total_qty
+                        if o != OrderCondition.SHORT_SELLING
+                        else -total_qty,
+                        "order_condition": order_condition[i["trade"]],
+                    }
+                )
 
         return Position.from_list(ret)
 
-    def get_total_balance(self):
+    def get_total_balance(self) -> int:
         # get bank balance
         bank_balance = self.get_cash()
 
@@ -515,142 +609,179 @@ class FugleAccount(Account, RealtimeProvider):
         settlements = self.get_settlement()
 
         # get position balance
-        account_balance = sum(int(inv['value_mkt'])
-                              for inv in self.sdk.get_inventories())
+        account_balance = sum(
+            int(inv["value_mkt"]) for inv in self.sdk.get_inventories()
+        )
         return bank_balance + settlements + account_balance
-    
-    def get_cash(self):
-        return self.sdk.get_balance()['available_balance']
-    
-    def get_settlement(self):
+
+    def get_cash(self) -> int:
+        return self.sdk.get_balance()["available_balance"]
+
+    def get_settlement(self) -> int:
         tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         settlements = self.sdk.get_settlements()
-        settlements = sum(int(settlement['price']) for settlement in settlements if datetime.datetime.strptime(
-            settlement['c_date'] + ' 10:00', '%Y%m%d %H:%M') > tw_now)
-        return settlements
+        return sum(
+            int(settlement["price"])
+            for settlement in settlements
+            if datetime.datetime.strptime(
+                settlement["c_date"] + " 10:00", "%Y%m%d %H:%M"
+            )
+            > tw_now
+        )
 
-    def support_day_trade_condition(self):
+    def support_day_trade_condition(self) -> bool:
         return True
 
-    def on_trades(self, func):
+    def on_trades(self, func: Any) -> None:
 
-        order_condition = {
-            '0': OrderCondition.CASH,
-            '3': OrderCondition.MARGIN_TRADING,
-            '4': OrderCondition.SHORT_SELLING,
-            '9': OrderCondition.DAY_TRADING_LONG,
-            'A': OrderCondition.DAY_TRADING_SHORT,
+        order_condition: dict[str, OrderCondition] = {
+            "0": OrderCondition.CASH,
+            "3": OrderCondition.MARGIN_TRADING,
+            "4": OrderCondition.SHORT_SELLING,
+            "9": OrderCondition.DAY_TRADING_LONG,
+            "A": OrderCondition.DAY_TRADING_SHORT,
         }
 
-        @self.acc.sdk.on('dealt')
-        def on_dealt(data):
+        @self.acc.sdk.on("dealt")
+        def on_dealt(data: dict[str, Any]) -> None:
             if isinstance(data, dict):
-                time = (datetime.datetime.strptime(f"{str((datetime.datetime.utcnow()+datetime.timedelta(hours=8)).date())} {data['mat_time']}", "%Y-%m-%d %H%M%S%f")-datetime.timedelta(
-                    hours=8)).replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8))).isoformat()
+                time = (
+                    (
+                        datetime.datetime.strptime(
+                            f"{(datetime.datetime.utcnow() + datetime.timedelta(hours=8)).date()!s} {data['mat_time']}",
+                            "%Y-%m-%d %H%M%S%f",
+                        )
+                        - datetime.timedelta(hours=8)
+                    )
+                    .replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                    .isoformat()
+                )
 
-                o = Order(order_id=data['ord_no'], stock_id=data['stock_no'],
-                          action='BUY' if data['buy_sell'] == 'B' else 'SELL', price=data['mat_price'],
-                          quantity=data['mat_qty'], filled_quantity=data['mat_qty'],
-                          status='FILLED', order_condition=order_condition[data['trade']],
-                          time=time, org_order=None)
+                o = Order(
+                    order_id=data["ord_no"],
+                    stock_id=data["stock_no"],
+                    action="BUY" if data["buy_sell"] == "B" else "SELL",
+                    price=data["mat_price"],
+                    quantity=data["mat_qty"],
+                    filled_quantity=data["mat_qty"],
+                    status="FILLED",
+                    order_condition=order_condition[data["trade"]],
+                    time=time,
+                    org_order=None,
+                )
 
                 func(o)
-        self.threading = Thread(target=lambda: self.sdk.connect_websocket())
 
-    def sep_odd_lot_order(self):
+        self.threading = Thread(target=self.sdk.connect_websocket)
+
+    def sep_odd_lot_order(self) -> bool:
         return True
 
-    def get_price_info(self):
-        ref = data.get('reference_price')
-        return ref.set_index('stock_id').to_dict(orient='index')
+    def get_price_info(self) -> dict[str, dict[str, Any]]:
+        ref = data.get("reference_price")
+        return ref.set_index("stock_id").to_dict(orient="index")
 
-    def get_market(self):
+    def get_market(self) -> TWMarket:
         return TWMarket()
 
 
-def create_finlab_order(order):
+def create_finlab_order(order: dict[str, Any]) -> Order:
     """將 esun_trade package 的委託單轉換成 finlab 格式"""
-
 
     # deepcopy order
     org_order = order
     order = copy.deepcopy(order)
 
-    order['org_qty'] = float(order['org_qty'])
-    order['mat_qty'] = float(order['mat_qty'])
-    order['cel_qty'] = float(order['cel_qty'])
+    order["org_qty"] = float(order["org_qty"])
+    order["mat_qty"] = float(order["mat_qty"])
+    order["cel_qty"] = float(order["cel_qty"])
 
     status = OrderStatus.NEW
-    if order['org_qty'] == order['mat_qty']:
+    if order["org_qty"] == order["mat_qty"]:
         status = OrderStatus.FILLED
-    elif order['mat_qty'] == 0 and order['cel_qty'] == 0 and order.get('celable', '1') == '1':
+    elif (
+        order["mat_qty"] == 0
+        and order["cel_qty"] == 0
+        and order.get("celable", "1") == "1"
+    ):
         status = OrderStatus.NEW
-    elif order['org_qty'] > order['mat_qty'] + order['cel_qty'] and order.get('celable', '1') == '1' and order['mat_qty'] > 0:
+    elif (
+        order["org_qty"] > order["mat_qty"] + order["cel_qty"]
+        and order.get("celable", "1") == "1"
+        and order["mat_qty"] > 0
+    ):
         status = OrderStatus.PARTIALLY_FILLED
-    elif order['cel_qty'] > 0 or order['err_code'] != '00000000' or order['celable'] == '2':
+    elif (
+        order["cel_qty"] > 0
+        or order["err_code"] != "00000000"
+        or order["celable"] == "2"
+    ):
         status = OrderStatus.CANCEL
 
     order_condition = {
-        '0': OrderCondition.CASH,
-        '3': OrderCondition.MARGIN_TRADING,
-        '4': OrderCondition.SHORT_SELLING,
-        '9': OrderCondition.DAY_TRADING_LONG,
-        'A': OrderCondition.DAY_TRADING_SHORT,
-    }[order['trade']]
+        "0": OrderCondition.CASH,
+        "3": OrderCondition.MARGIN_TRADING,
+        "4": OrderCondition.SHORT_SELLING,
+        "9": OrderCondition.DAY_TRADING_LONG,
+        "A": OrderCondition.DAY_TRADING_SHORT,
+    }[order["trade"]]
 
-    filled_quantity = order['mat_qty']
+    filled_quantity = order["mat_qty"]
 
-    order_id = order['ord_no']
-    if order_id == '':
-        order_id = order['pre_ord_no']
+    order_id = order["ord_no"]
+    if order_id == "":
+        order_id = order["pre_ord_no"]
 
-    if 'ord_date' in order:
-        order_time = datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f')
+    if "ord_date" in order:
+        order_time = datetime.datetime.strptime(
+            order["ord_date"] + order["ord_time"], "%Y%m%d%H%M%S%f"
+        )
     else:
-        order_time = datetime.datetime.strptime(order['ret_date'] + order['ret_time'], '%Y%m%d%H%M%S%f')
+        order_time = datetime.datetime.strptime(
+            order["ret_date"] + order["ret_time"], "%Y%m%d%H%M%S%f"
+        )
 
-    return Order(**{
-        'order_id': order_id,
-        'stock_id': order['stock_no'],
-        'action': Action.BUY if order['buy_sell'] == 'B' else Action.SELL,
-        'price': order.get('od_price', 0),
-        'quantity': order['org_qty'] - order['cel_qty'],
-        'filled_quantity': filled_quantity,
-        'status': status,
-        'order_condition': order_condition,
-        'time': order_time,#datetime.datetime.strptime(order['ord_date'] + order['ord_time'], '%Y%m%d%H%M%S%f'),
-        'org_order': org_order
-    })
+    return Order(
+        order_id=order_id,
+        stock_id=order["stock_no"],
+        action=Action.BUY if order["buy_sell"] == "B" else Action.SELL,
+        price=order.get("od_price", 0),
+        quantity=order["org_qty"] - order["cel_qty"],
+        filled_quantity=filled_quantity,
+        status=status,
+        order_condition=order_condition,
+        time=order_time,
+        org_order=org_order,
+    )
 
 
-
-def to_finlab_stock(json_response):
+def to_finlab_stock(json_response: dict[str, Any]) -> Stock:
     """將 fugle 股價行情轉換成 finlab 格式"""
     r = json_response
 
-    if 'statusCode' in r:
-        raise Exception('Cannot parse fugle quote data' + str(r))
+    if "statusCode" in r:
+        raise Exception("Cannot parse fugle quote data" + str(r))
 
-    if 'bids' in r:
-        bids = r['bids']
-        asks = r['asks']
+    if "bids" in r:
+        bids = r["bids"]
+        asks = r["asks"]
     else:
         bids = []
         asks = []
 
-    has_volume = 'lastTrade' in r
-    pct = r.get('changePercent')
+    has_volume = "lastTrade" in r
+    pct = r.get("changePercent")
     if pct is None:
-        pct = calculate_tick_pct_change(r.get('closePrice'), r.get('previousClose'))
+        pct = calculate_tick_pct_change(r.get("closePrice"), r.get("previousClose"))
     return Stock(
-        stock_id=r['symbol'],
-        high=r['highPrice'] if has_volume else np.nan,
-        low=r['lowPrice'] if has_volume else np.nan,
-        close=r['closePrice'] if has_volume else np.nan,
-        open=r['openPrice'] if has_volume else np.nan,
-        bid_price=bids[0]['price'] if bids else np.nan,
-        ask_price=asks[0]['price'] if asks else np.nan,
-        bid_volume=bids[0]['size'] if bids else 0,
-        ask_volume=asks[0]['size'] if asks else 0,
+        stock_id=r["symbol"],
+        high=r["highPrice"] if has_volume else np.nan,
+        low=r["lowPrice"] if has_volume else np.nan,
+        close=r["closePrice"] if has_volume else np.nan,
+        open=r["openPrice"] if has_volume else np.nan,
+        bid_price=bids[0]["price"] if bids else np.nan,
+        ask_price=asks[0]["price"] if asks else np.nan,
+        bid_volume=bids[0]["size"] if bids else 0,
+        ask_volume=asks[0]["size"] if asks else 0,
         pct_change=pct,
     )

@@ -1,22 +1,31 @@
-from finlab.online.core.utils import greedy_allocation
-from finlab.online.core.enums import *
-from finlab.compat import normalize_position_dict, resolve_position_entry_symbol
-from decimal import Decimal
-from typing import Union
-from finlab import config
-import pandas as pd
-import numpy as np
+from __future__ import annotations
+
 import datetime
+import json
 import logging
 import math
-import json
+from collections.abc import Callable, Iterator
+from decimal import Decimal
+from typing import Any
+
+import pandas as pd
+
+from finlab import config
+from finlab.compat import normalize_position_dict, resolve_position_entry_symbol
+from finlab.online.core.enums import *
+from finlab.online.core.utils import greedy_allocation
 
 logger = logging.getLogger(__name__)
 
 
-def _make_entry(sid, quantity, order_condition, **extra):
+def _make_entry(
+    sid: str,
+    quantity: float | Decimal,
+    order_condition: OrderCondition,
+    **extra: Any,
+) -> dict[str, Any]:
     """Create a position entry dict with both 'symbol' and 'stock_id' keys."""
-    d = {
+    d: dict[str, Any] = {
         "symbol": sid,
         "stock_id": sid,
         "quantity": quantity,
@@ -31,13 +40,13 @@ class Position:
 
     def __init__(
         self,
-        stocks,
-        weights=None,
-        margin_trading=False,
-        short_selling=False,
-        day_trading_long=False,
-        day_trading_short=False,
-    ):
+        stocks: dict[str, float | Decimal],
+        weights: dict[str, float] | pd.Series | None = None,
+        margin_trading: bool = False,
+        short_selling: bool = False,
+        day_trading_long: bool = False,
+        day_trading_short: bool = False,
+    ) -> None:
         """建構股票部位
 
         Attributes:
@@ -106,7 +115,7 @@ class Position:
                 self.position.append(_make_entry(s, a, oc, **extra))
 
     @classmethod
-    def from_list(cls, position):
+    def from_list(cls, position: list[dict[str, Any]]) -> Position:
         """利用 `dict` 建構股票部位
 
 
@@ -129,35 +138,41 @@ class Position:
 
         """
         ret = cls({})
-        ret.position = [normalize_position_dict(p) for p in ret._format_quantity(position)]
+        ret.position = [
+            normalize_position_dict(p) for p in ret._format_quantity(position)
+        ]
         return ret
 
     @staticmethod
-    def _entry_to_position_dict(entry):
+    def _entry_to_position_dict(entry: dict[str, Any] | Any) -> dict[str, Any]:
         if isinstance(entry, dict):
             d = entry.copy()
         else:
             if not hasattr(entry, "to_dict"):
-                raise TypeError(f"entry should be dict or schema object with to_dict(), got {type(entry)}")
+                raise TypeError(
+                    f"entry should be dict or schema object with to_dict(), got {type(entry)}"
+                )
             d = entry.to_dict()
         return normalize_position_dict(d)
 
     @staticmethod
-    def _position_dict_to_entry(position_dict):
+    def _position_dict_to_entry(position_dict: dict[str, Any]) -> Any:
         from finlab.schemas import PositionEntry
 
         return PositionEntry.from_dict(position_dict)
 
     @classmethod
-    def from_entries(cls, entries):
+    def from_entries(cls, entries: list[dict[str, Any] | Any]) -> Position:
         """Build Position from schema entries (e.g. finlab.schemas.PositionEntry)."""
         ret = cls({})
         normalized = [ret._entry_to_position_dict(e) for e in entries]
-        ret.position = [normalize_position_dict(p) for p in ret._format_quantity(normalized)]
+        ret.position = [
+            normalize_position_dict(p) for p in ret._format_quantity(normalized)
+        ]
         return ret
 
-    def to_list(self):
-        ret = []
+    def to_list(self) -> list[dict[str, Any]]:
+        ret: list[dict[str, Any]] = []
 
         for p in self.position:
             pp = normalize_position_dict(p.copy())
@@ -167,7 +182,7 @@ class Position:
 
         return ret
 
-    def to_entries(self):
+    def to_entries(self) -> list[Any]:
         """Convert Position internal payload to schema entries."""
         return [
             self._position_dict_to_entry(normalize_position_dict(p.copy()))
@@ -175,7 +190,7 @@ class Position:
         ]
 
     @classmethod
-    def from_dict(cls, position):
+    def from_dict(cls, position: list[dict[str, Any]]) -> Position:
 
         logger.warning(
             "This method is renamed and will be deprecated."
@@ -187,17 +202,17 @@ class Position:
     @classmethod
     def from_weight(
         cls,
-        weights: Union[dict[str, float], pd.Series],
+        weights: dict[str, float] | pd.Series,
         fund: int,
-        price: Union[None, pd.Series, dict[str, float]] = None,
+        price: pd.Series | dict[str, float] | None = None,
         odd_lot: bool = False,
-        board_lot_size: Union[None, int] = None,
-        allocation=greedy_allocation,
-        precision: Union[None, int] = None,
+        board_lot_size: int | None = None,
+        allocation: Callable[..., Any] = greedy_allocation,
+        precision: int | None = None,
         leverage: float = 1.0,
-        price_history: Union[None, pd.DataFrame] = None,
-        **kwargs,
-    ):
+        price_history: pd.DataFrame | None = None,
+        **kwargs: Any,
+    ) -> Position:
         """利用 `weight` 建構股票部位
 
         Attributes:
@@ -243,7 +258,7 @@ class Position:
                     "board_lot_size must be provided or market.get_board_lot_size() must return a valid value."
                 )
 
-        if precision != None and precision < 0:
+        if precision is not None and precision < 0:
             raise ValueError("The precision parameter is out of the valid range >= 0")
 
         if price is None:
@@ -323,13 +338,13 @@ class Position:
 
     @staticmethod
     def _apply_leverage_to_position(
-        position,
-        price,
-        price_history,
-        leverage,
-        board_lot_size=1000,
-        annualisation_factor=252,
-    ):
+        position: Position,
+        price: pd.Series,
+        price_history: pd.DataFrame,
+        leverage: float,
+        board_lot_size: int = 1000,
+        annualisation_factor: int = 252,
+    ) -> Position:
         """
         Return a *new* Position whose cash + margin legs reach target leverage.
         Safety: allocate margin to lowest-volatility holdings first.
@@ -418,12 +433,12 @@ class Position:
                     )
                 finance_remaining = 0
         for p in orig:
-            if p["quantity"] <= 0 or p["order_condition"] not in [OrderCondition.CASH]:
+            if p["quantity"] <= 0 or p["order_condition"] != OrderCondition.CASH:
                 new_entries.append(p)
         return Position.from_list(new_entries)
 
     @classmethod
-    def from_report(cls, report, fund, **kwargs):
+    def from_report(cls, report: Any, fund: int, **kwargs: Any) -> Position:
         """利用回測完的報告 `finlab.report.Report` 建構股票部位。
 
         Attributes:
@@ -462,8 +477,7 @@ class Position:
                 raise ValueError(
                     "The report contains multiple position. Please use `finlab.portfolio.Portfolio` to handle it."
                 )
-            else:
-                report = position_schedulers
+            report = position_schedulers
 
         # next trading date arrived
 
@@ -507,7 +521,9 @@ class Position:
 
         is_exit_enter = report.actions.isin(["sl_enter", "tp_enter"])
         if sum(is_exit_enter) and now < next_trading_time:
-            exit_stocks = report.actions[is_exit_enter].index.intersection(w.index.tolist())
+            exit_stocks = report.actions[is_exit_enter].index.intersection(
+                w.index.tolist()
+            )
             w.loc[exit_stocks] = 0
 
         # todo: check if w.index is unique and remove this line if possible
@@ -544,7 +560,7 @@ class Position:
 
         return cls.from_weight(w, fund, **kwargs)
 
-    def to_json(self, path):
+    def to_json(self, path: str) -> None:
         """
         Converts the position dictionary to a JSON file and saves it to the specified path.
 
@@ -557,7 +573,7 @@ class Position:
 
         # Custom JSON Encoder that handles Decimal objects
         class DecimalEncoder(json.JSONEncoder):
-            def default(self, o):
+            def default(self, o: Any) -> Any:
                 if isinstance(o, Decimal):
                     return str(o)  # Convert Decimal to string
                 # Let the base class default method raise the TypeError
@@ -567,9 +583,9 @@ class Position:
             json.dump(self.position, f, cls=DecimalEncoder)
 
     @staticmethod
-    def _format_quantity(position):
+    def _format_quantity(position: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
-        ret = []
+        ret: list[dict[str, Any]] = []
         for p in position:
             pp = p.copy()
             if isinstance(pp["quantity"], str):
@@ -578,7 +594,7 @@ class Position:
         return ret
 
     @classmethod
-    def from_json(cls, path):
+    def from_json(cls, path: str) -> Position:
         """
         Load a JSON file from the given path and convert it to a list of positions.
 
@@ -589,22 +605,27 @@ class Position:
             None
         """
 
-        with open(path, "r") as f:
+        with open(path) as f:
             ret = json.load(f)
             ret = cls._format_quantity(ret)
 
         return Position.from_list(ret)
 
-    def __add__(self, position):
+    def __add__(self, position: Position) -> Position:
         return self.for_each_trading_condition(self.position, position.position, "+")
 
-    def __sub__(self, position):
+    def __sub__(self, position: Position) -> Position:
         return self.for_each_trading_condition(self.position, position.position, "-")
 
-    def __eq__(self, position):
+    def __eq__(self, position: object) -> bool:
+        if not isinstance(position, Position):
+            return NotImplemented
         return self.position == position.position
 
-    def __mul__(self, scalar):
+    def __hash__(self) -> int:
+        return hash(tuple(frozenset(p.items()) for p in self.position))
+
+    def __mul__(self, scalar: float) -> Position:
 
         if self.has_weight(self.position):
             return Position.from_list(
@@ -628,18 +649,23 @@ class Position:
             ]
         )
 
-    def __rmul__(self, scalar):
+    def __rmul__(self, scalar: float) -> Position:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar):
+    def __truediv__(self, scalar: float) -> Position:
         return self.__mul__(1 / scalar)
 
-    def __rtruediv__(self, scalar):
+    def __rtruediv__(self, scalar: float) -> Position:
         return self.__truediv__(scalar)
 
-    def sum_stock_quantity(self, stocks, oc, attr="quantity"):
+    def sum_stock_quantity(
+        self,
+        stocks: list[dict[str, Any]],
+        oc: OrderCondition,
+        attr: str = "quantity",
+    ) -> dict[str, float | Decimal]:
 
-        qty = {}
+        qty: dict[str, float | Decimal] = {}
         for s in stocks:
             if s["order_condition"] == oc:
                 sid = resolve_position_entry_symbol(s)
@@ -649,15 +675,17 @@ class Position:
         return qty
 
     @staticmethod
-    def has_weight(position: list) -> bool:
+    def has_weight(position: list[dict[str, Any]]) -> bool:
         if len(position) == 0:
             return True
-        for p in position:
-            if "weight" in p:
-                return True
-        return False
+        return any("weight" in p for p in position)
 
-    def for_each_trading_condition(self, p1, p2, operator):
+    def for_each_trading_condition(
+        self,
+        p1: list[dict[str, Any]],
+        p2: list[dict[str, Any]],
+        operator: str,
+    ) -> Position:
         ret = []
         for oc in [
             OrderCondition.CASH,
@@ -666,18 +694,13 @@ class Position:
             OrderCondition.DAY_TRADING_LONG,
             OrderCondition.DAY_TRADING_SHORT,
         ]:
-
             qty1 = self.sum_stock_quantity(p1, oc)
             qty2 = self.sum_stock_quantity(p2, oc)
 
             ps = self.op(qty1, qty2, operator)
-            new_pos = [
-                _make_entry(sid, qty, oc)
-                for sid, qty in ps.items()
-            ]
+            new_pos = [_make_entry(sid, qty, oc) for sid, qty in ps.items()]
 
             if self.has_weight(p1) and self.has_weight(p2):
-
                 w1 = self.sum_stock_quantity(p1, oc, attr="weight")
                 w2 = self.sum_stock_quantity(p2, oc, attr="weight")
                 ws = self.op(w1, w2, operator)
@@ -689,7 +712,11 @@ class Position:
         return Position.from_list(ret)
 
     @staticmethod
-    def op(position1, position2, operator):
+    def op(
+        position1: dict[str, float | Decimal],
+        position2: dict[str, float | Decimal],
+        operator: str,
+    ) -> dict[str, float | Decimal]:
         # Create a set of unique keys from both dictionaries
         keys = set(position1.keys()).union(position2.keys())
 
@@ -708,7 +735,7 @@ class Position:
                 value2 = float(value2)
 
             # fallback to float if value1 or value2 is Decimal
-            if type(value1) != type(value2):
+            if type(value1) is not type(value2):
                 value1 = float(value1)
                 value2 = float(value2)
 
@@ -718,11 +745,9 @@ class Position:
                 result[key] = value1 + value2
 
         # Remove entries with zero values
-        result = {k: v for k, v in result.items() if v != 0}
+        return {k: v for k, v in result.items() if v != 0}
 
-        return result
-
-    def fall_back_cash(self):
+    def fall_back_cash(self) -> None:
         pos = []
         for p in self.position:
             sid = resolve_position_entry_symbol(p)
@@ -738,7 +763,7 @@ class Position:
             pos.append(_make_entry(sid, p["quantity"], oc))
         self.position = pos
 
-    def to_df(self):
+    def to_df(self) -> pd.DataFrame:
         return (
             pd.DataFrame(self.position)
             .pipe(
@@ -751,12 +776,12 @@ class Position:
             .sort_values("symbol")
         )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
 
         if len(self.position) == 0:
             return "empty position"
 
         return self.to_df().to_string(index=False)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         return iter(self.position)

@@ -1,29 +1,48 @@
+from __future__ import annotations
+
+import contextlib
+import datetime
+import logging
+import os
+import time
+from decimal import Decimal
+from typing import Any
+
+import pandas as pd
 import shioaji as sj
 from shioaji.constant import (
-    StockPriceType as SJStockPriceType,
-    StockOrderLot as SJStockOrderLot,
     Action as SJAction,
-    SecurityType as SJSecurityType,
+)
+from shioaji.constant import (
     Exchange as SJExchange,
-    OrderType as SJOrderType,
-    Unit as SJUnit,
+)
+from shioaji.constant import (
     OrderState as SJOrderState,
 )
+from shioaji.constant import (
+    OrderType as SJOrderType,
+)
+from shioaji.constant import (
+    SecurityType as SJSecurityType,
+)
+from shioaji.constant import (
+    StockOrderLot as SJStockOrderLot,
+)
+from shioaji.constant import (
+    StockPriceType as SJStockPriceType,
+)
+from shioaji.constant import (
+    Unit as SJUnit,
+)
 from shioaji.contracts import Stock as SJStock
-from shioaji.order import Trade as SJTrade, StockOrder as SJStockOrder
-from shioaji.position import StockPosition as SJStockPosition, SettlementV1 as SJSettlementV1
-import datetime
-import time
-import os
-import re
-import math
-import logging
-import pandas as pd
-from typing import Dict, Optional
-from decimal import Decimal
+from shioaji.order import StockOrder as SJStockOrder
+from shioaji.order import Trade as SJTrade
+from shioaji.position import SettlementV1 as SJSettlementV1
+from shioaji.position import StockPosition as SJStockPosition
 
-from finlab.online.core.account import Account, Stock, Order, typesafe_op
-from finlab.online.core.utils import estimate_stock_price
+from finlab import data
+from finlab.markets.tw import TWMarket
+from finlab.online.core.account import Account, Order, Stock, typesafe_op
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_models import (
@@ -43,24 +62,22 @@ from finlab.online.core.realtime_normalizers import (
     to_optional_float,
 )
 from finlab.online.core.realtime_provider import RealtimeProvider
-from finlab import data
-from finlab.markets.tw import TWMarket
 
 logger = logging.getLogger(__name__)
 
-class SinopacAccount(Account, RealtimeProvider):
 
+class SinopacAccount(Account, RealtimeProvider):
     required_module = "shioaji"
     module_version = "1.2.5"
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        secret_key: Optional[str] = None,
-        certificate_person_id: Optional[str] = None,
-        certificate_password: Optional[str] = None,
-        certificate_path: Optional[str] = None,
-    ):
+        api_key: str | None = None,
+        secret_key: str | None = None,
+        certificate_person_id: str | None = None,
+        certificate_password: str | None = None,
+        certificate_path: str | None = None,
+    ) -> None:
 
         api_key = api_key or os.getenv("SHIOAJI_API_KEY")
         secret_key = (
@@ -92,7 +109,7 @@ class SinopacAccount(Account, RealtimeProvider):
         self.api = sj.Shioaji()
         self.accounts = self.api.login(api_key, secret_key, fetch_contract=False)
 
-        self.trades: Dict[str, SJTrade] = {}
+        self.trades: dict[str, SJTrade] = {}
 
         self.api.activate_ca(
             ca_path=certificate_path,
@@ -105,7 +122,7 @@ class SinopacAccount(Account, RealtimeProvider):
     # ── RealtimeProvider implementation ──────────────────────────────
 
     @staticmethod
-    def _parse_callback_time(payload):
+    def _parse_callback_time(payload: Any) -> datetime.datetime:
         order_datetime = get_field_value(payload, "order_datetime")
         if isinstance(order_datetime, datetime.datetime):
             return order_datetime
@@ -126,7 +143,7 @@ class SinopacAccount(Account, RealtimeProvider):
         return datetime.datetime.now()
 
     @staticmethod
-    def _map_callback_action(raw_action):
+    def _map_callback_action(raw_action: Any) -> Action:
         text = str(raw_action).upper()
         if text in ("BUY", "ACTION.BUY", "B"):
             return Action.BUY
@@ -135,7 +152,7 @@ class SinopacAccount(Account, RealtimeProvider):
         return Action.SELL
 
     @staticmethod
-    def _map_callback_order_condition(raw_order_condition):
+    def _map_callback_order_condition(raw_order_condition: Any) -> OrderCondition:
         if raw_order_condition is None:
             return OrderCondition.CASH
         try:
@@ -143,7 +160,7 @@ class SinopacAccount(Account, RealtimeProvider):
         except Exception:
             return OrderCondition.CASH
 
-    def _build_order_update_from_callback(self, payload):
+    def _build_order_update_from_callback(self, payload: Any) -> OrderUpdate:
         order_id = str(
             get_field_value(payload, "id")
             or get_field_value(payload, "ordno")
@@ -151,13 +168,16 @@ class SinopacAccount(Account, RealtimeProvider):
             or ""
         )
         stock_id = str(
-            get_field_value(payload, "code")
-            or get_field_value(payload, "symbol")
-            or ""
+            get_field_value(payload, "code") or get_field_value(payload, "symbol") or ""
         )
         quantity = get_first_valid_float(payload, "quantity", "order_quantity") or 0.0
-        filled_quantity = get_first_valid_float(payload, "deal_quantity", "filled_qty") or 0.0
-        price = get_first_valid_float(payload, "price", "modified_price", "avg_price") or 0.0
+        filled_quantity = (
+            get_first_valid_float(payload, "deal_quantity", "filled_qty") or 0.0
+        )
+        price = (
+            get_first_valid_float(payload, "price", "modified_price", "avg_price")
+            or 0.0
+        )
 
         status_raw = get_field_value(payload, "status")
         try:
@@ -188,7 +208,7 @@ class SinopacAccount(Account, RealtimeProvider):
             org_event=payload,
         )
 
-    def _build_fill_from_callback(self, payload):
+    def _build_fill_from_callback(self, payload: Any) -> Fill:
         order_id = str(
             get_field_value(payload, "seqno")
             or get_field_value(payload, "ordno")
@@ -196,9 +216,7 @@ class SinopacAccount(Account, RealtimeProvider):
             or ""
         )
         stock_id = str(
-            get_field_value(payload, "code")
-            or get_field_value(payload, "symbol")
-            or ""
+            get_field_value(payload, "code") or get_field_value(payload, "symbol") or ""
         )
         return Fill(
             order_id=order_id,
@@ -210,7 +228,7 @@ class SinopacAccount(Account, RealtimeProvider):
             org_event=payload,
         )
 
-    def _get_realtime_balance(self):
+    def _get_realtime_balance(self) -> BalanceUpdate:
         account_id = ""
         if self.api.stock_account is not None:
             account_id = str(
@@ -237,7 +255,7 @@ class SinopacAccount(Account, RealtimeProvider):
             return
 
         @self.api.on_tick_stk_v1()
-        def _on_tick(exchange, tick):
+        def _on_tick(exchange: Any, tick: Any) -> None:
             native_pct_change = get_first_valid_float(
                 tick,
                 "pct_chg",
@@ -252,34 +270,38 @@ class SinopacAccount(Account, RealtimeProvider):
                 "reference_price",
                 "yesterday_close",
             )
-            self._emit_tick(Tick(
-                stock_id=tick.code,
-                price=tick.close,
-                volume=tick.volume,
-                total_volume=tick.total_volume,
-                time=tick.datetime,
-                open=tick.open,
-                high=tick.high,
-                low=tick.low,
-                avg_price=tick.avg_price,
-                tick_type=tick.tick_type,
-                prev_close=prev_close,
-                pct_change=native_pct_change,
-                source="trade",
-            ))
+            self._emit_tick(
+                Tick(
+                    stock_id=tick.code,
+                    price=tick.close,
+                    volume=tick.volume,
+                    total_volume=tick.total_volume,
+                    time=tick.datetime,
+                    open=tick.open,
+                    high=tick.high,
+                    low=tick.low,
+                    avg_price=tick.avg_price,
+                    tick_type=tick.tick_type,
+                    prev_close=prev_close,
+                    pct_change=native_pct_change,
+                    source="trade",
+                )
+            )
 
         @self.api.on_bidask_stk_v1()
-        def _on_bidask(exchange, bidask):
-            self._emit_bidask(BidAsk(
-                stock_id=bidask.code,
-                bid_prices=list(bidask.bid_price),
-                bid_volumes=list(bidask.bid_volume),
-                ask_prices=list(bidask.ask_price),
-                ask_volumes=list(bidask.ask_volume),
-                time=bidask.datetime,
-            ))
+        def _on_bidask(exchange: Any, bidask: Any) -> None:
+            self._emit_bidask(
+                BidAsk(
+                    stock_id=bidask.code,
+                    bid_prices=list(bidask.bid_price),
+                    bid_volumes=list(bidask.bid_volume),
+                    ask_prices=list(bidask.ask_price),
+                    ask_volumes=list(bidask.ask_volume),
+                    time=bidask.datetime,
+                )
+            )
 
-        def _order_cb(stat, msg):
+        def _order_cb(stat: Any, msg: Any) -> None:
             try:
                 state_value = str(getattr(stat, "value", stat))
                 state_value = state_value.upper()
@@ -309,10 +331,11 @@ class SinopacAccount(Account, RealtimeProvider):
                     self._emit_order_update(self._build_order_update_from_callback(msg))
             except Exception:
                 logger.exception("Sinopac order callback parsing error")
+
         self.api.set_order_callback(_order_cb)
 
         @self.api.quote.on_event
-        def _event_cb(resp_code, event_code, info, event):
+        def _event_cb(resp_code: int, event_code: int, info: str, event: str) -> None:
             state_map = {
                 0: ConnectionState.CONNECTED,
                 -1: ConnectionState.DISCONNECTED,
@@ -332,7 +355,7 @@ class SinopacAccount(Account, RealtimeProvider):
         self._emit_connection(ConnectionState.DISCONNECTED)
         logger.info("Sinopac realtime disconnected")
 
-    def subscribe_ticks(self, stock_ids):
+    def subscribe_ticks(self, stock_ids: list[str]) -> None:
         for sid in stock_ids:
             contract = SJStock(
                 security_type=SJSecurityType.Stock,
@@ -341,7 +364,7 @@ class SinopacAccount(Account, RealtimeProvider):
             )
             self.api.quote.subscribe(contract, quote_type=sj.constant.QuoteType.Tick)
 
-    def unsubscribe_ticks(self, stock_ids):
+    def unsubscribe_ticks(self, stock_ids: list[str]) -> None:
         for sid in stock_ids:
             contract = SJStock(
                 security_type=SJSecurityType.Stock,
@@ -350,7 +373,7 @@ class SinopacAccount(Account, RealtimeProvider):
             )
             self.api.quote.unsubscribe(contract, quote_type=sj.constant.QuoteType.Tick)
 
-    def subscribe_bidask(self, stock_ids):
+    def subscribe_bidask(self, stock_ids: list[str]) -> None:
         for sid in stock_ids:
             contract = SJStock(
                 security_type=SJSecurityType.Stock,
@@ -359,23 +382,31 @@ class SinopacAccount(Account, RealtimeProvider):
             )
             self.api.quote.subscribe(contract, quote_type=sj.constant.QuoteType.BidAsk)
 
-    def unsubscribe_bidask(self, stock_ids):
+    def unsubscribe_bidask(self, stock_ids: list[str]) -> None:
         for sid in stock_ids:
             contract = SJStock(
                 security_type=SJSecurityType.Stock,
                 code=sid,
                 exchange=SJExchange.TSE,
             )
-            self.api.quote.unsubscribe(contract, quote_type=sj.constant.QuoteType.BidAsk)
+            self.api.quote.unsubscribe(
+                contract, quote_type=sj.constant.QuoteType.BidAsk
+            )
 
-    def backfill_ticks(self, stock_ids, start_time=None, end_time=None, emit=True):
+    def backfill_ticks(
+        self,
+        stock_ids: list[str],
+        start_time: Any = None,
+        end_time: Any = None,
+        emit: bool = True,
+    ) -> dict[str, list[Tick]]:
         start_filter, end_filter = normalize_backfill_window(start_time, end_time)
         session_date = datetime.datetime.now().date()
         session_date_str = session_date.strftime("%Y-%m-%d")
-        backfilled = {}
+        backfilled: dict[str, list[Tick]] = {}
 
         for stock_id in stock_ids:
-            ticks = []
+            ticks: list[Tick] = []
             try:
                 contract = SJStock(
                     security_type=SJSecurityType.Stock,
@@ -395,7 +426,9 @@ class SinopacAccount(Account, RealtimeProvider):
                     volumes,
                     tick_types,
                 ):
-                    tick_time = to_optional_datetime(ts_value, default_date=session_date)
+                    tick_time = to_optional_datetime(
+                        ts_value, default_date=session_date
+                    )
                     if tick_time is None:
                         continue
                     current_time = tick_time.time()
@@ -420,7 +453,9 @@ class SinopacAccount(Account, RealtimeProvider):
                 ticks = finalize_backfilled_ticks(ticks)
 
             except Exception:
-                logger.exception("backfill_ticks: unable to backfill intraday ticks for %s", stock_id)
+                logger.exception(
+                    "backfill_ticks: unable to backfill intraday ticks for %s", stock_id
+                )
                 ticks = []
 
             backfilled[stock_id] = ticks
@@ -432,22 +467,20 @@ class SinopacAccount(Account, RealtimeProvider):
 
     # ── End RealtimeProvider ──────────────────────────────────────
 
-    def __del__(self):
-        try:
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):
             self.api.logout()
-        except:
-            pass
 
     def create_order(
         self,
-        action,
-        stock_id,
-        quantity,
-        price=None,
-        odd_lot=False,
-        market_order=False,
-        best_price_limit=False,
-        order_cond=OrderCondition.CASH,
+        action: Action,
+        stock_id: str,
+        quantity: int,
+        price: float | None = None,
+        odd_lot: bool = False,
+        market_order: bool = False,
+        best_price_limit: bool = False,
+        order_cond: OrderCondition = OrderCondition.CASH,
     ) -> str:
 
         # contract = self.api.Contracts.Stocks.get(stock_id)
@@ -471,8 +504,8 @@ class SinopacAccount(Account, RealtimeProvider):
 
         if quantity <= 0:
             raise Exception(f"quantity must be positive, got {quantity}")
-        
-        if price == None:
+
+        if price is None:
             price = self.api.snapshots([contract])[0].close
 
         price_type = SJStockPriceType.LMT
@@ -495,7 +528,7 @@ class SinopacAccount(Account, RealtimeProvider):
             action = SJAction.Sell
 
         daytrade_short = order_cond == OrderCondition.DAY_TRADING_SHORT
-        daytrade_short = True if daytrade_short else False
+        daytrade_short = bool(daytrade_short)
 
         order_cond = {
             OrderCondition.CASH: "Cash",
@@ -505,11 +538,7 @@ class SinopacAccount(Account, RealtimeProvider):
             OrderCondition.DAY_TRADING_SHORT: "Cash",
         }[order_cond]
 
-        order_lot = (
-            SJStockOrderLot.IntradayOdd
-            if odd_lot
-            else SJStockOrderLot.Common
-        )
+        order_lot = SJStockOrderLot.IntradayOdd if odd_lot else SJStockOrderLot.Common
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         if (
             datetime.time(13, 40) < datetime.time(now.hour, now.minute)
@@ -541,24 +570,37 @@ class SinopacAccount(Account, RealtimeProvider):
         self.trades[trade.status.id] = trade
         return trade.status.id
 
-    def get_price_info(self):
+    def get_price_info(self) -> dict[str, dict[str, Any]]:
         ref = data.get("reference_price")
         return ref.set_index("stock_id").to_dict(orient="index")
 
-    def update_trades(self):
+    def update_trades(self) -> None:
         if self.api.stock_account is not None:
             self.api.update_status(self.api.stock_account)
         else:
-            raise ValueError("SinopacAccount: stock_account is None, please login first.")
+            raise ValueError(
+                "SinopacAccount: stock_account is None, please login first."
+            )
 
-        self.trades: Dict[str, SJTrade] = {t.status.id: t for t in self.api.list_trades()}
+        self.trades: dict[str, SJTrade] = {
+            t.status.id: t for t in self.api.list_trades()
+        }
 
-    def update_order(self, order_id, price=None, quantity=None):
+    def update_order(
+        self,
+        order_id: str,
+        price: float | None = None,
+        quantity: int | None = None,
+    ) -> None:
         order = self.get_orders()[order_id]
         trade: SJTrade = self.trades[order_id]
 
         try:
-            order_lot = trade.order.order_lot if isinstance(trade.order, SJStockOrder) else SJStockOrderLot.Common
+            order_lot = (
+                trade.order.order_lot
+                if isinstance(trade.order, SJStockOrder)
+                else SJStockOrderLot.Common
+            )
             if order_lot == SJStockOrderLot.IntradayOdd:
                 action = order.action
                 stock_id = order.stock_id
@@ -579,7 +621,7 @@ class SinopacAccount(Account, RealtimeProvider):
                         f"update_order: No price or quantity provided for order {order_id}, skipping update."
                     )
                     return
-                
+
                 if price is not None and quantity is None:
                     self.api.update_order(trade, price=float(price))
                 elif price is None and quantity is not None:
@@ -590,18 +632,18 @@ class SinopacAccount(Account, RealtimeProvider):
                 f"update_order: Cannot update price of order {order_id}: {ve}"
             )
 
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: str) -> None:
         self.update_trades()
         self.api.cancel_order(self.trades[order_id])
 
-    def get_position(self):
+    def get_position(self) -> Position:
 
         if self.api.stock_account is None:
-            raise ValueError("SinopacAccount: stock_account is None, please login first.")
+            raise ValueError(
+                "SinopacAccount: stock_account is None, please login first."
+            )
 
-        position = self.api.list_positions(
-            self.api.stock_account, unit=SJUnit.Share
-        )
+        position = self.api.list_positions(self.api.stock_account, unit=SJUnit.Share)
 
         order_conditions = {
             "Cash": OrderCondition.CASH,
@@ -615,33 +657,38 @@ class SinopacAccount(Account, RealtimeProvider):
             if not isinstance(p, SJStockPosition):
                 continue
 
-            ret.append({
-                "stock_id": p.code,
-                "quantity": (
-                    Decimal(p.quantity) / 1000
-                    if p.direction == "Buy"
-                    else -Decimal(p.quantity) / 1000
-                ),
-                "order_condition": order_conditions.get(p.cond, OrderCondition.CASH),
-            })
+            ret.append(
+                {
+                    "stock_id": p.code,
+                    "quantity": (
+                        Decimal(p.quantity) / 1000
+                        if p.direction == "Buy"
+                        else -Decimal(p.quantity) / 1000
+                    ),
+                    "order_condition": order_conditions.get(
+                        p.cond, OrderCondition.CASH
+                    ),
+                }
+            )
         return Position.from_list(ret)
 
-
-    def get_orders(self) -> Dict[str, Order]:
+    def get_orders(self) -> dict[str, Order]:
         self.update_trades()
         return {t.status.id: trade_to_order(t) for name, t in self.trades.items()}
 
-    def get_stocks(self, stock_ids):
+    def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
         contracts = [
             SJStock(security_type=SJSecurityType.Stock, code=s, exchange=SJExchange.TSE)
             for s in stock_ids
         ]
         try:
             snapshots = self.api.snapshots(list(contracts))
-        except:
+        except Exception:
             time.sleep(10)
             contracts = [
-                SJStock(security_type=SJSecurityType.Stock, code=s, exchange=SJExchange.TSE)
+                SJStock(
+                    security_type=SJSecurityType.Stock, code=s, exchange=SJExchange.TSE
+                )
                 for s in stock_ids
             ]
             snapshots = self.api.snapshots(list(contracts))
@@ -651,11 +698,11 @@ class SinopacAccount(Account, RealtimeProvider):
     def get_total_balance(self) -> int:
 
         if self.api.stock_account is None:
-            raise ValueError("SinopacAccount: stock_account is None, please login first.")
+            raise ValueError(
+                "SinopacAccount: stock_account is None, please login first."
+            )
 
-        lp = self.api.list_positions(
-            self.api.stock_account, unit=SJUnit.Share
-        )
+        lp = self.api.list_positions(self.api.stock_account, unit=SJUnit.Share)
 
         ac_pos = pd.DataFrame([p.dict() for p in lp])
 
@@ -680,33 +727,37 @@ class SinopacAccount(Account, RealtimeProvider):
     def get_settlement(self) -> int:
 
         if self.api.stock_account is None:
-            raise ValueError("SinopacAccount: stock_account is None, please login first.")
+            raise ValueError(
+                "SinopacAccount: stock_account is None, please login first."
+            )
 
         tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
         settlements = self.api.settlements(self.api.stock_account)
 
         # Settlement time is at 3:00 AM
-        def settlement_time(date):
+        def settlement_time(date: datetime.date) -> datetime.datetime:
             t = datetime.time(3, 0)
             return datetime.datetime.combine(date, t)
-        
+
         total = 0
         for settlement in settlements:
             if not isinstance(settlement, SJSettlementV1):
-                logger.warning(f"Settlement {settlement} is not an instance of SettlementV1, skipping.")
+                logger.warning(
+                    f"Settlement {settlement} is not an instance of SettlementV1, skipping."
+                )
                 continue
             if settlement_time(settlement.date) > tw_now:
                 total += int(settlement.amount)
         return total
 
-    def sep_odd_lot_order(self):
+    def sep_odd_lot_order(self) -> bool:
         return True
 
-    def get_market(self):
+    def get_market(self) -> TWMarket:
         return TWMarket()
 
 
-def map_trade_status(status):
+def map_trade_status(status: str) -> OrderStatus:
     return {
         "PendingSubmit": OrderStatus.NEW,
         "PreSubmitted": OrderStatus.NEW,
@@ -719,7 +770,7 @@ def map_trade_status(status):
     }[status]
 
 
-def map_order_condition(order_condition):
+def map_order_condition(order_condition: str) -> OrderCondition:
     return {
         "Cash": OrderCondition.CASH,
         "MarginTrading": OrderCondition.MARGIN_TRADING,
@@ -727,18 +778,18 @@ def map_order_condition(order_condition):
     }[order_condition]
 
 
-def map_action(action):
+def map_action(action: str) -> Action:
     return {"Buy": Action.BUY, "Sell": Action.SELL}[action]
 
 
-def trade_to_order(trade):
+def trade_to_order(trade: SJTrade) -> Order:
     """將 shioaji package 的委託單轉換成 finlab 格式"""
     action = map_action(trade.order.action)
     status = map_trade_status(trade.status.status)
     order_condition = map_order_condition(trade.order.order_cond)
 
     # calculate order condition
-    if trade.order.daytrade_short == True and order_condition == OrderCondition.CASH:
+    if trade.order.daytrade_short and order_condition == OrderCondition.CASH:
         order_condition = OrderCondition.DAY_TRADING_SHORT
 
     # calculate quantity
@@ -751,26 +802,24 @@ def trade_to_order(trade):
         filled_quantity /= 1000
 
     return Order(
-        **{
-            "order_id": trade.status.id,
-            "stock_id": trade.contract.code,
-            "action": action,
-            "price": (
-                trade.order.price
-                if trade.status.modified_price == 0
-                else trade.status.modified_price
-            ),
-            "quantity": quantity,
-            "filled_quantity": filled_quantity,
-            "status": status,
-            "order_condition": order_condition,
-            "time": trade.status.order_datetime,
-            "org_order": trade,
-        }
+        order_id=trade.status.id,
+        stock_id=trade.contract.code,
+        action=action,
+        price=(
+            trade.order.price
+            if trade.status.modified_price == 0
+            else trade.status.modified_price
+        ),
+        quantity=quantity,
+        filled_quantity=filled_quantity,
+        status=status,
+        order_condition=order_condition,
+        time=trade.status.order_datetime,
+        org_order=trade,
     )
 
 
-def snapshot_to_stock(snapshot):
+def snapshot_to_stock(snapshot: Any) -> Stock:
     """將 shioaji 股價行情轉換成 finlab 格式"""
     d = snapshot
     return Stock(
@@ -783,5 +832,5 @@ def snapshot_to_stock(snapshot):
         ask_price=d.sell_price,
         bid_volume=d.buy_volume,
         ask_volume=d.sell_volume,
-        pct_change=to_optional_float(getattr(d, 'change_rate', None)),
+        pct_change=to_optional_float(getattr(d, "change_rate", None)),
     )

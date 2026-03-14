@@ -1,9 +1,17 @@
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
-import math
 
-def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
 
+def greedy_allocation(
+    weights: Mapping[str, float] | pd.Series,
+    latest_prices: Mapping[str, float] | pd.Series,
+    total_portfolio_value: float = 10000,
+) -> tuple[dict[str, int], float]:
     """
     original source code: PyPortfolioOpt
     https://pypi.org/project/pyportfolioopt/
@@ -11,14 +19,16 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
 
     weights = pd.Series(weights)
 
-    weights.index = weights.index.to_series().astype(str)\
-            .str.split(' ').str[0]
+    weights.index = weights.index.to_series().astype(str).str.split(" ").str[0]
     latest_prices = pd.Series(latest_prices)
-    latest_prices.index = latest_prices.index.to_series().astype(str)\
-            .str.split(' ').str[0]
-    
+    latest_prices.index = (
+        latest_prices.index.to_series().astype(str).str.split(" ").str[0]
+    )
+
     weights = weights.loc[weights.index.isin(latest_prices.index)]
-    weights = weights.loc[latest_prices.loc[weights.index].replace([np.inf, -np.inf, 0], np.nan).notna()]
+    weights = weights.loc[
+        latest_prices.loc[weights.index].replace([np.inf, -np.inf, 0], np.nan).notna()
+    ]
     weights = list(weights.items())
 
     if len(weights) == 0:
@@ -36,7 +46,6 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
              along with the amount of funds leftover.
     :rtype: (dict, float)
     """
-    reinvest = False
     verbose = False
     # Sort in descending order of weight
     weights.sort(key=lambda x: x[1], reverse=True)
@@ -70,13 +79,15 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
         #     latest_prices[shorts.keys()],
         #     total_portfolio_value=short_val,
         # )
-        short_alloc, short_leftover = greedy_allocation(shorts, latest_prices, short_val)
+        short_alloc, short_leftover = greedy_allocation(
+            shorts, latest_prices, short_val
+        )
         short_alloc = {t: -w for t, w in short_alloc.items()}
 
         # Combine and return
         allocation = long_alloc.copy()
         allocation.update(short_alloc)
-        allocation = {t:w for t, w in allocation.items() if w != 0}
+        allocation = {t: w for t, w in allocation.items() if w != 0}
 
         return allocation, long_leftover + short_leftover
 
@@ -142,12 +153,11 @@ def greedy_allocation(weights, latest_prices, total_portfolio_value=10000):
     allocation = dict(zip([i[0] for i in weights], shares_bought))
 
     if verbose:
-        print("Funds remaining: {:.2f}".format(available_funds))
+        print(f"Funds remaining: {available_funds:.2f}")
     return allocation, available_funds
 
 
-
-def round_tw_price(price:float) -> float:
+def round_tw_price(price: float) -> float:
     """Round tw price to the nearest tick size according to the following rules:
     0.01 for price <= 10
     0.05 for price <= 50
@@ -188,10 +198,10 @@ def round_tw_price(price:float) -> float:
     return result
 
 
-def estimate_stock_price(cost_per_quantity:float) -> float:
+def estimate_stock_price(cost_per_quantity: float) -> float:
 
-    stock_price_org = cost_per_quantity / (1+1.425/1000) / 1000
-    stock_price_2 = (cost_per_quantity+1) / (1+1.425/1000) / 1000
+    stock_price_org = cost_per_quantity / (1 + 1.425 / 1000) / 1000
+    stock_price_2 = (cost_per_quantity + 1) / (1 + 1.425 / 1000) / 1000
 
     c1 = round_tw_price(stock_price_org)
     c2 = round_tw_price(stock_price_2)

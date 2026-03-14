@@ -1,6 +1,9 @@
 """Integration tests for Position.from_report workflow."""
 
+from __future__ import annotations
+
 import os
+from typing import Any
 
 import pytest
 
@@ -18,11 +21,13 @@ pytestmark = [pytest.mark.slow]
 _HAS_AUTH = bool(os.environ.get("FINLAB_API_TOKEN")) or auth.get_session() is not None
 if not _HAS_AUTH:
     pytestmark.append(
-        pytest.mark.skip(reason="FinLab auth session/token is required for data.get/backtest integration tests")
+        pytest.mark.skip(
+            reason="FinLab auth session/token is required for data.get/backtest integration tests"
+        )
     )
 
 
-def _check_action_and_position(report):
+def _check_action_and_position(report: Any) -> None:
     report.actions.index = report.actions.index.map(lambda x: x[:4])
     _ = Position.from_report(report, 50000, odd_lot=True).position
 
@@ -34,7 +39,7 @@ def _check_action_and_position(report):
         assert p["stock_id"] not in check_sl_tp[check_sl_tp].index
 
 
-def test_strategy1_from_report():
+def test_strategy1_from_report() -> None:
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
     vol_ma = vol.average(10)
@@ -67,7 +72,7 @@ def test_strategy1_from_report():
     _check_action_and_position(report)
 
 
-def test_strategy2_from_report():
+def test_strategy2_from_report() -> None:
     close = data.get("price:收盤價")
     vol = data.get("price:成交股數")
     rev = data.get("monthly_revenue:當月營收")
@@ -80,9 +85,13 @@ def test_strategy2_from_report():
 
     conditions = condition1 & condition2 & condition3
     position = rev_yoy_growth * conditions
-    position = position[position > 0].is_largest(10).reindex(
-        rev.index_str_to_date().index,
-        method="ffill",
+    position = (
+        position[position > 0]
+        .is_largest(10)
+        .reindex(
+            rev.index_str_to_date().index,
+            method="ffill",
+        )
     )
 
     report = sim(

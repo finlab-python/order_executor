@@ -1,10 +1,12 @@
 """Unit tests for calculate_price_with_extra_bid."""
 
+from __future__ import annotations
+
 from finlab.online.base_account import Action
 from finlab.online.order_executor import calculate_price_with_extra_bid
 
 
-def test_calculate_price_with_extra_bid_cases():
+def test_calculate_price_with_extra_bid_cases() -> None:
     test_data = {
         "test_1": {
             "price": 5.2,
@@ -80,7 +82,7 @@ def test_calculate_price_with_extra_bid_cases():
         },
     }
 
-    for _, test_case in test_data.items():
+    for test_case in test_data.values():
         price = test_case["price"]
         extra_bid_pct = test_case["extra_bid_pct"]
         action = test_case["action"]
@@ -93,7 +95,7 @@ def test_calculate_price_with_extra_bid_cases():
         assert result == expected_result
 
 
-def test_extra_bid_and_up_down_limit():
+def test_extra_bid_and_up_down_limit() -> None:
     action = Action.BUY
     last_close = 68
     now_price = 73

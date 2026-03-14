@@ -4,14 +4,24 @@ FubonAccount 模組
 實現與富邦證券 API 交互的 Account 類
 """
 
+from __future__ import annotations
+
 import datetime
 import logging
-import time
 import os
+import time
+from collections.abc import Callable
 from decimal import Decimal
 from functools import wraps
+from typing import Any
 
-from finlab.online.core.account import Account, Stock, Order
+from fubon_neo.constant import BSAction, MarketType, OrderType, PriceType, TimeInForce
+from fubon_neo.sdk import FubonSDK
+from fubon_neo.sdk import Order as FBOrder
+
+from finlab import data
+from finlab.markets.tw import TWMarket
+from finlab.online.core.account import Account, Order, Stock
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_helpers import (
@@ -32,27 +42,28 @@ from finlab.online.core.realtime_normalizers import (
     to_optional_float,
 )
 from finlab.online.core.realtime_provider import RealtimeProvider
-from finlab import data
-from finlab.markets.tw import TWMarket
-from fubon_neo.sdk import FubonSDK, Order as FBOrder
-from fubon_neo.constant import TimeInForce, OrderType, PriceType, MarketType, BSAction
-
 
 # 常數定義
 STOCK_LOT_SIZE = 1000  # 一張股票的股數
 ODD_LOT_THRESHOLD = STOCK_LOT_SIZE  # 零股判斷閾值
 
-def handle_exceptions(default_return=None, log_prefix=""):
+
+def handle_exceptions(
+    default_return: Any = None, log_prefix: str = ""
+) -> Callable[..., Any]:
     """錯誤處理裝飾器"""
-    def decorator(func):
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 logging.warning(f"{log_prefix}{func.__name__}: {e}")
                 return default_return
+
         return wrapper
+
     return decorator
 
 
@@ -62,16 +73,18 @@ class FubonAccount(Account, RealtimeProvider):
     實現與富邦證券 API 的交互
     """
 
-    required_module = 'fubon_neo'  # 需要的 Python 包名稱
-    module_version = '1.0.0'  # 需要的版本號
+    required_module = "fubon_neo"  # 需要的 Python 包名稱
+    module_version = "1.0.0"  # 需要的版本號
 
-    def __init__(self,
-                 base_url=None,
-                 national_id=None,
-                 account=None,
-                 account_pass=None,
-                 cert_path=None,
-                 cert_pass=None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        national_id: str | None = None,
+        account: str | None = None,
+        account_pass: str | None = None,
+        cert_path: str | None = None,
+        cert_pass: str | None = None,
+    ) -> None:
         """
         初始化富邦證券賬戶
 
@@ -83,45 +96,47 @@ class FubonAccount(Account, RealtimeProvider):
             cert_pass (str, optional): 憑證密碼。預設從環境變數獲取。
         """
         # 從參數或環境變數獲取登錄信息
-        self.base_url = base_url or os.environ.get('FUBON_BASE_URL')
-        self.national_id = national_id or os.environ.get('FUBON_NATIONAL_ID')
-        self.account = account or os.environ.get('FUBON_ACCOUNT')
-        self.account_pass = account_pass or os.environ.get('FUBON_ACCOUNT_PASS')
-        self.cert_path = cert_path or os.environ.get('FUBON_CERT_PATH')
-        self.cert_pass = cert_pass or os.environ.get('FUBON_CERT_PASS')
+        self.base_url = base_url or os.environ.get("FUBON_BASE_URL")
+        self.national_id = national_id or os.environ.get("FUBON_NATIONAL_ID")
+        self.account = account or os.environ.get("FUBON_ACCOUNT")
+        self.account_pass = account_pass or os.environ.get("FUBON_ACCOUNT_PASS")
+        self.cert_path = cert_path or os.environ.get("FUBON_CERT_PATH")
+        self.cert_pass = cert_pass or os.environ.get("FUBON_CERT_PASS")
 
         if not all([self.national_id, self.account_pass, self.cert_path]):
             raise ValueError(
-                "缺少必要的登錄信息。請確保設置了 FUBON_NATIONAL_ID, FUBON_ACCOUNT_PASS, FUBON_CERT_PATH 環境變數或直接提供參數")
+                "缺少必要的登錄信息。請確保設置了 FUBON_NATIONAL_ID, FUBON_ACCOUNT_PASS, FUBON_CERT_PATH 環境變數或直接提供參數"
+            )
 
         # 初始化市場和時間戳
-        self.market = 'tw_stock'
+        self.market = "tw_stock"
         self.order_records = {}
         self.timestamp_for_get_position = datetime.datetime(2021, 1, 1)
         self._tick_pct_change_cache = {}
 
         # 初始化 SDK 和帳戶
         logging.info("初始化富邦 SDK...")
-        self.sdk = FubonSDK(30,2,self.base_url)
+        self.sdk = FubonSDK(30, 2, self.base_url)
 
         # 登入
         try:
             self.accounts = self.sdk.login(
-                self.national_id,
-                self.account_pass,
-                self.cert_path,
-                self.cert_pass
+                self.national_id, self.account_pass, self.cert_path, self.cert_pass
             )
         except Exception as e:
-            logging.error(f"登入失敗: {e}")
-            raise Exception(f"無法登入富邦證券: {e}")
+            logging.exception(f"登入失敗: {e}")
+            raise Exception(f"無法登入富邦證券: {e}") from e
 
         # 選擇帳戶
         if self.account:
-            self.target_account = next((acc for acc in self.accounts.data if acc.account == self.account), None)
+            self.target_account = next(
+                (acc for acc in self.accounts.data if acc.account == self.account), None
+            )
             if not self.target_account:
                 logging.warning(f"未找到指定帳號 {self.account}，將使用第一個帳號")
-                self.target_account = self.accounts.data[0] if self.accounts.data else None
+                self.target_account = (
+                    self.accounts.data[0] if self.accounts.data else None
+                )
         else:
             self.target_account = self.accounts.data[0] if self.accounts.data else None
 
@@ -143,7 +158,7 @@ class FubonAccount(Account, RealtimeProvider):
     # ── RealtimeProvider implementation ──────────────────────────────
 
     @staticmethod
-    def _parse_market_event_time(payload):
+    def _parse_market_event_time(payload: Any) -> datetime.datetime:
         raw = get_field_value(payload, "time")
         if isinstance(raw, datetime.datetime):
             return raw
@@ -160,12 +175,12 @@ class FubonAccount(Account, RealtimeProvider):
             return datetime.datetime.now()
 
     @staticmethod
-    def _parse_realtime_action(value):
+    def _parse_realtime_action(value: Any) -> Action:
         text = str(value).upper()
         return Action.BUY if text in ("B", "BUY", "BSACTION.BUY") else Action.SELL
 
     @staticmethod
-    def _parse_realtime_order_condition(value):
+    def _parse_realtime_order_condition(value: Any) -> OrderCondition:
         text = str(value).upper()
         if "MARGIN" in text:
             return OrderCondition.MARGIN_TRADING
@@ -176,7 +191,7 @@ class FubonAccount(Account, RealtimeProvider):
         return OrderCondition.CASH
 
     @staticmethod
-    def _quantity_divisor(payload):
+    def _quantity_divisor(payload: Any) -> float:
         market_type = str(
             get_field_value(payload, "market_type")
             or get_field_value(payload, "marketType")
@@ -186,23 +201,24 @@ class FubonAccount(Account, RealtimeProvider):
             return 1.0
         return float(STOCK_LOT_SIZE)
 
-    def _parse_realtime_order_time(self, payload):
+    def _parse_realtime_order_time(self, payload: Any) -> datetime.datetime:
         date_value = get_field_value(payload, "date")
-        time_value = (
-            get_field_value(payload, "last_time")
-            or get_field_value(payload, "filled_time")
+        time_value = get_field_value(payload, "last_time") or get_field_value(
+            payload, "filled_time"
         )
         if date_value and time_value:
             try:
                 year, month, day = self._parse_date(str(date_value))
                 hour, minute, second, microsecond = self._parse_time(str(time_value))
-                return datetime.datetime(year, month, day, hour, minute, second, microsecond)
+                return datetime.datetime(
+                    year, month, day, hour, minute, second, microsecond
+                )
             except Exception:
                 pass
         return datetime.datetime.now()
 
     @staticmethod
-    def _map_realtime_operation(payload):
+    def _map_realtime_operation(payload: Any) -> str:
         function_type = int(get_first_valid_float(payload, "function_type") or -1)
         mapping = {
             0: "new",
@@ -215,7 +231,7 @@ class FubonAccount(Account, RealtimeProvider):
         }
         return mapping.get(function_type, "")
 
-    def _map_realtime_status(self, payload):
+    def _map_realtime_status(self, payload: Any) -> OrderStatus:
         status_code = int(get_first_valid_float(payload, "status") or -1)
         status_map = {
             0: OrderStatus.NEW,
@@ -239,8 +255,12 @@ class FubonAccount(Account, RealtimeProvider):
         status = status_map.get(status_code, OrderStatus.NEW)
 
         divisor = self._quantity_divisor(payload)
-        filled_qty = (get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0) / divisor
-        after_qty = (get_first_valid_float(payload, "after_qty", "quantity", "org_qty") or 0.0) / divisor
+        filled_qty = (
+            get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0
+        ) / divisor
+        after_qty = (
+            get_first_valid_float(payload, "after_qty", "quantity", "org_qty") or 0.0
+        ) / divisor
 
         if status == OrderStatus.NEW and filled_qty > 0:
             if after_qty > 0 and filled_qty >= after_qty:
@@ -250,11 +270,20 @@ class FubonAccount(Account, RealtimeProvider):
             return OrderStatus.PARTIALLY_FILLED
         return status
 
-    def _build_realtime_order_update(self, payload):
+    def _build_realtime_order_update(self, payload: Any) -> OrderUpdate:
         divisor = self._quantity_divisor(payload)
-        quantity = (get_first_valid_float(payload, "after_qty", "quantity", "org_qty") or 0.0) / divisor
-        filled_quantity = (get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0) / divisor
-        price = get_first_valid_float(payload, "after_price", "price", "od_price", "order_price") or 0.0
+        quantity = (
+            get_first_valid_float(payload, "after_qty", "quantity", "org_qty") or 0.0
+        ) / divisor
+        filled_quantity = (
+            get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0
+        ) / divisor
+        price = (
+            get_first_valid_float(
+                payload, "after_price", "price", "od_price", "order_price"
+            )
+            or 0.0
+        )
 
         return OrderUpdate(
             order_id=str(
@@ -263,9 +292,7 @@ class FubonAccount(Account, RealtimeProvider):
                 or ""
             ),
             stock_id=str(get_field_value(payload, "stock_no") or ""),
-            action=self._parse_realtime_action(
-                get_field_value(payload, "buy_sell")
-            ),
+            action=self._parse_realtime_action(get_field_value(payload, "buy_sell")),
             price=price,
             quantity=quantity,
             filled_quantity=filled_quantity,
@@ -278,9 +305,11 @@ class FubonAccount(Account, RealtimeProvider):
             org_event=payload,
         )
 
-    def _build_realtime_fill(self, payload):
+    def _build_realtime_fill(self, payload: Any) -> Fill:
         divisor = self._quantity_divisor(payload)
-        quantity = (get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0) / divisor
+        quantity = (
+            get_first_valid_float(payload, "filled_qty", "mat_qty") or 0.0
+        ) / divisor
         return Fill(
             order_id=str(
                 get_field_value(payload, "order_no")
@@ -288,16 +317,15 @@ class FubonAccount(Account, RealtimeProvider):
                 or ""
             ),
             stock_id=str(get_field_value(payload, "stock_no") or ""),
-            action=self._parse_realtime_action(
-                get_field_value(payload, "buy_sell")
-            ),
-            price=get_first_valid_float(payload, "filled_price", "mat_price", "price") or 0.0,
+            action=self._parse_realtime_action(get_field_value(payload, "buy_sell")),
+            price=get_first_valid_float(payload, "filled_price", "mat_price", "price")
+            or 0.0,
             quantity=quantity,
             time=self._parse_realtime_order_time(payload),
             org_event=payload,
         )
 
-    def _get_realtime_balance(self):
+    def _get_realtime_balance(self) -> BalanceUpdate | None:
         result = self.sdk.accounting.bank_remain(self.target_account)
         if not result or not result.is_success or not result.data:
             return None
@@ -333,106 +361,127 @@ class FubonAccount(Account, RealtimeProvider):
             return
 
         # Quote websocket: tick (trades channel)
-        def _on_message(message):
+        def _on_message(message: Any) -> None:
             try:
                 payload = message
-                nested_data = get_field_value(message, 'data')
-                if nested_data is not None and get_field_value(message, 'symbol') is None:
+                nested_data = get_field_value(message, "data")
+                if (
+                    nested_data is not None
+                    and get_field_value(message, "symbol") is None
+                ):
                     payload = nested_data
 
-                symbol = get_field_value(payload, 'symbol')
+                symbol = get_field_value(payload, "symbol")
                 if symbol:
                     symbol = str(symbol)
                     native_pct_change = get_first_valid_float(
                         payload,
-                        'pct_change',
-                        'pctChange',
-                        'change_percent',
-                        'changePercent',
-                        'change_rate',
+                        "pct_change",
+                        "pctChange",
+                        "change_percent",
+                        "changePercent",
+                        "change_rate",
                     )
                     if native_pct_change is not None:
                         self._tick_pct_change_cache[symbol] = native_pct_change
 
                     trade_like = (
-                        get_field_value(payload, 'price') is not None
-                        or get_field_value(payload, 'size') is not None
+                        get_field_value(payload, "price") is not None
+                        or get_field_value(payload, "size") is not None
                     )
                     if not trade_like:
                         return
 
                     price = get_first_valid_float(
-                        payload, 'price', 'close', 'close_price', 'closePrice', 'lastPrice'
+                        payload,
+                        "price",
+                        "close",
+                        "close_price",
+                        "closePrice",
+                        "lastPrice",
                     )
-                    volume = int(to_optional_float(get_field_value(payload, 'size')) or 0)
-                    total_volume_value = get_field_value(payload, 'total_volume')
+                    volume = int(
+                        to_optional_float(get_field_value(payload, "size")) or 0
+                    )
+                    total_volume_value = get_field_value(payload, "total_volume")
                     if total_volume_value is None:
-                        total_volume_value = get_field_value(payload, 'totalVolume')
-                    total_volume = int(
-                        to_optional_float(total_volume_value) or 0
+                        total_volume_value = get_field_value(payload, "totalVolume")
+                    total_volume = int(to_optional_float(total_volume_value) or 0)
+                    open_price = get_first_valid_float(
+                        payload, "open", "open_price", "openPrice"
                     )
-                    open_price = get_first_valid_float(payload, 'open', 'open_price', 'openPrice')
-                    high_price = get_first_valid_float(payload, 'high', 'high_price', 'highPrice')
-                    low_price = get_first_valid_float(payload, 'low', 'low_price', 'lowPrice')
+                    high_price = get_first_valid_float(
+                        payload, "high", "high_price", "highPrice"
+                    )
+                    low_price = get_first_valid_float(
+                        payload, "low", "low_price", "lowPrice"
+                    )
                     if native_pct_change is None:
                         native_pct_change = self._tick_pct_change_cache.get(symbol)
-                    self._emit_tick(Tick(
-                        stock_id=symbol,
-                        price=price if price is not None else 0.0,
-                        volume=volume,
-                        total_volume=total_volume,
-                        time=self._parse_market_event_time(payload),
-                        open=open_price if open_price is not None else 0.0,
-                        high=high_price if high_price is not None else 0.0,
-                        low=low_price if low_price is not None else 0.0,
-                        pct_change=native_pct_change,
-                        source="trade",
-                    ))
+                    self._emit_tick(
+                        Tick(
+                            stock_id=symbol,
+                            price=price if price is not None else 0.0,
+                            volume=volume,
+                            total_volume=total_volume,
+                            time=self._parse_market_event_time(payload),
+                            open=open_price if open_price is not None else 0.0,
+                            high=high_price if high_price is not None else 0.0,
+                            low=low_price if low_price is not None else 0.0,
+                            pct_change=native_pct_change,
+                            source="trade",
+                        )
+                    )
             except Exception:
                 logging.exception("Error in Fubon tick handler")
 
-        def _on_book_message(message):
+        def _on_book_message(message: Any) -> None:
             try:
                 payload = message
-                nested_data = get_field_value(message, 'data')
-                if nested_data is not None and get_field_value(message, 'symbol') is None:
+                nested_data = get_field_value(message, "data")
+                if (
+                    nested_data is not None
+                    and get_field_value(message, "symbol") is None
+                ):
                     payload = nested_data
 
-                stock_id = get_field_value(payload, 'symbol')
+                stock_id = get_field_value(payload, "symbol")
                 if not stock_id:
                     return
 
-                bids = get_field_value(payload, 'bids') or []
-                asks = get_field_value(payload, 'asks') or []
-                self._emit_bidask(BidAsk(
-                    stock_id=str(stock_id),
-                    bid_prices=[get_field_value(b, 'price') or 0.0 for b in bids],
-                    bid_volumes=[get_field_value(b, 'size') or 0 for b in bids],
-                    ask_prices=[get_field_value(a, 'price') or 0.0 for a in asks],
-                    ask_volumes=[get_field_value(a, 'size') or 0 for a in asks],
-                    time=self._parse_market_event_time(payload),
-                ))
+                bids = get_field_value(payload, "bids") or []
+                asks = get_field_value(payload, "asks") or []
+                self._emit_bidask(
+                    BidAsk(
+                        stock_id=str(stock_id),
+                        bid_prices=[get_field_value(b, "price") or 0.0 for b in bids],
+                        bid_volumes=[get_field_value(b, "size") or 0 for b in bids],
+                        ask_prices=[get_field_value(a, "price") or 0.0 for a in asks],
+                        ask_volumes=[get_field_value(a, "size") or 0 for a in asks],
+                        time=self._parse_market_event_time(payload),
+                    )
+                )
             except Exception:
                 logging.exception("Error in Fubon bidask handler")
 
         ws_client = self.sdk.marketdata.websocket_client.stock
-        ws_client.on('message', _on_message)
-        ws_client.on('book', _on_book_message)
+        ws_client.on("message", _on_message)
+        ws_client.on("book", _on_book_message)
 
         # Order/fill callbacks
-        def _on_order(data):
+        def _on_order(data: Any) -> None:
             try:
                 self._emit_order_update(self._build_realtime_order_update(data))
             except Exception:
                 logging.exception("Error in Fubon order handler")
 
-        def _on_filled(data):
+        def _on_filled(data: Any) -> None:
             try:
                 self._emit_fill(self._build_realtime_fill(data))
             except Exception:
                 logging.exception("Error in Fubon fill handler")
 
-        def _on_event(data, event_type):
+        def _on_event(data: Any, event_type: Any) -> None:
             event_key = str(event_type).lower()
             if event_key in {"disconnect", "disconnected", "close"}:
                 self._emit_connection(ConnectionState.DISCONNECTED, str(data))
@@ -465,31 +514,37 @@ class FubonAccount(Account, RealtimeProvider):
         self._emit_connection(ConnectionState.DISCONNECTED)
         logging.info("Fubon realtime disconnected")
 
-    def subscribe_ticks(self, stock_ids):
+    def subscribe_ticks(self, stock_ids: list[str]) -> None:
         ws_client = self.sdk.marketdata.websocket_client.stock
         for sid in stock_ids:
-            ws_client.subscribe({'channel': 'trades', 'symbol': sid})
+            ws_client.subscribe({"channel": "trades", "symbol": sid})
             # Fubon stock pct change is documented in aggregates.changePercent.
-            ws_client.subscribe({'channel': 'aggregates', 'symbol': sid})
+            ws_client.subscribe({"channel": "aggregates", "symbol": sid})
 
-    def unsubscribe_ticks(self, stock_ids):
+    def unsubscribe_ticks(self, stock_ids: list[str]) -> None:
         ws_client = self.sdk.marketdata.websocket_client.stock
         for sid in stock_ids:
-            ws_client.unsubscribe({'channel': 'trades', 'symbol': sid})
-            ws_client.unsubscribe({'channel': 'aggregates', 'symbol': sid})
+            ws_client.unsubscribe({"channel": "trades", "symbol": sid})
+            ws_client.unsubscribe({"channel": "aggregates", "symbol": sid})
             self._tick_pct_change_cache.pop(sid, None)
 
-    def subscribe_bidask(self, stock_ids):
+    def subscribe_bidask(self, stock_ids: list[str]) -> None:
         ws_client = self.sdk.marketdata.websocket_client.stock
         for sid in stock_ids:
-            ws_client.subscribe({'channel': 'books', 'symbol': sid})
+            ws_client.subscribe({"channel": "books", "symbol": sid})
 
-    def unsubscribe_bidask(self, stock_ids):
+    def unsubscribe_bidask(self, stock_ids: list[str]) -> None:
         ws_client = self.sdk.marketdata.websocket_client.stock
         for sid in stock_ids:
-            ws_client.unsubscribe({'channel': 'books', 'symbol': sid})
+            ws_client.unsubscribe({"channel": "books", "symbol": sid})
 
-    def backfill_ticks(self, stock_ids, start_time=None, end_time=None, emit=True):
+    def backfill_ticks(
+        self,
+        stock_ids: list[str],
+        start_time: Any = None,
+        end_time: Any = None,
+        emit: bool = True,
+    ) -> dict[str, list[Tick]]:
         if not self._ensure_marketdata_connection():
             return {}
 
@@ -522,8 +577,12 @@ class FubonAccount(Account, RealtimeProvider):
                 limit = 500
                 seen_pages = set()
                 while True:
-                    payload = intraday.trades(symbol=stock_id, limit=limit, offset=offset)
-                    page_rows = payload.get("data", []) if isinstance(payload, dict) else []
+                    payload = intraday.trades(
+                        symbol=stock_id, limit=limit, offset=offset
+                    )
+                    page_rows = (
+                        payload.get("data", []) if isinstance(payload, dict) else []
+                    )
                     if not page_rows:
                         break
 
@@ -553,7 +612,9 @@ class FubonAccount(Account, RealtimeProvider):
                 )
 
             except Exception:
-                logging.exception("backfill_ticks: 無法回補股票 %s 的盤中 ticks", stock_id)
+                logging.exception(
+                    "backfill_ticks: 無法回補股票 %s 的盤中 ticks", stock_id
+                )
                 ticks = []
 
             backfilled[stock_id] = ticks
@@ -563,7 +624,9 @@ class FubonAccount(Account, RealtimeProvider):
 
         return backfilled
 
-    def get_bidask_snapshot(self, stock_ids, emit=True):
+    def get_bidask_snapshot(
+        self, stock_ids: list[str], emit: bool = True
+    ) -> dict[str, BidAsk]:
         if not self._ensure_marketdata_connection():
             return {}
 
@@ -578,27 +641,26 @@ class FubonAccount(Account, RealtimeProvider):
                 if emit:
                     self._emit_bidask(bidask)
             except Exception:
-                logging.exception("get_bidask_snapshot: 無法取得股票 %s 的五檔快照", stock_id)
+                logging.exception(
+                    "get_bidask_snapshot: 無法取得股票 %s 的五檔快照", stock_id
+                )
 
         return snapshots
 
     # ── End RealtimeProvider ──────────────────────────────────────
 
-    def __del__(self):
+    def __del__(self) -> None:
         """
         當物件被刪除時，確保登出
         """
         try:
-            if hasattr(self, 'sdk'):
-                # 確保登出
-                if hasattr(self.sdk, 'logout'):
-                    self.sdk.logout()
+            if hasattr(self, "sdk") and hasattr(self.sdk, "logout"):
+                self.sdk.logout()
         except Exception as e:
             logging.warning(f"登出時發生錯誤: {e}")
-            pass
 
     @handle_exceptions(default_return=0, log_prefix="get_cash: ")
-    def get_cash(self):
+    def get_cash(self) -> float:
         """
         獲取可用資金
 
@@ -607,11 +669,11 @@ class FubonAccount(Account, RealtimeProvider):
         """
         result = self.sdk.accounting.bank_remain(self.target_account)
         if result and result.is_success and result.data:
-            return float(getattr(result.data, 'available_balance', 0))
+            return float(getattr(result.data, "available_balance", 0))
         raise ValueError("無法獲取可用資金")
 
     @handle_exceptions(default_return={}, log_prefix="get_orders: ")
-    def get_orders(self):
+    def get_orders(self) -> dict[str, Order]:
         """
         獲取所有委託單
 
@@ -630,7 +692,7 @@ class FubonAccount(Account, RealtimeProvider):
 
         return order_dict
 
-    def _map_order_action(self, order):
+    def _map_order_action(self, order: Any) -> Action:
         """
         將富邦買賣別映射到 finlab Action
 
@@ -640,22 +702,21 @@ class FubonAccount(Account, RealtimeProvider):
         Returns:
             Action: finlab 買賣操作
         """
-        buy_sell = getattr(order, 'buy_sell', None)
+        buy_sell = getattr(order, "buy_sell", None)
         if buy_sell == BSAction.Buy:
             return Action.BUY
-        elif buy_sell == BSAction.Sell:
+        if buy_sell == BSAction.Sell:
             return Action.SELL
-        else:
-            # 無法識別買賣別時，嘗試從其他欄位判斷
-            if hasattr(order, 'buy_sell') and isinstance(order.buy_sell, str):
-                if order.buy_sell.upper() in ['B', 'BUY']:
-                    return Action.BUY
-                elif order.buy_sell.upper() in ['S', 'SELL']:
-                    return Action.SELL
+        # 無法識別買賣別時，嘗試從其他欄位判斷
+        if hasattr(order, "buy_sell") and isinstance(order.buy_sell, str):
+            if order.buy_sell.upper() in ["B", "BUY"]:
+                return Action.BUY
+            if order.buy_sell.upper() in ["S", "SELL"]:
+                return Action.SELL
 
-            raise ValueError(f"無法識別買賣別: {buy_sell}")
+        raise ValueError(f"無法識別買賣別: {buy_sell}")
 
-    def _map_order_condition(self, order):
+    def _map_order_condition(self, order: Any) -> OrderCondition:
         """
         將富邦委託類型映射到 finlab OrderCondition
 
@@ -665,33 +726,32 @@ class FubonAccount(Account, RealtimeProvider):
         Returns:
             OrderCondition: finlab 委託條件
         """
-        order_type = getattr(order, 'order_type', None)
+        order_type = getattr(order, "order_type", None)
 
         if order_type == OrderType.Stock:
             return OrderCondition.CASH
-        elif order_type == OrderType.Margin:
+        if order_type == OrderType.Margin:
             return OrderCondition.MARGIN_TRADING
-        elif order_type == OrderType.Short:
+        if order_type == OrderType.Short:
             return OrderCondition.SHORT_SELLING
-        elif order_type == OrderType.DayTrade:
+        if order_type == OrderType.DayTrade:
             return OrderCondition.DAY_TRADING_SHORT
-        else:
-            # 嘗試從字串類型判斷
-            if isinstance(order_type, str):
-                order_type = order_type.upper()
-                if "現股" in order_type or "STOCK" in order_type:
-                    return OrderCondition.CASH
-                elif "融資" in order_type or "MARGIN" in order_type:
-                    return OrderCondition.MARGIN_TRADING
-                elif "融券" in order_type or "SHORT" in order_type:
-                    return OrderCondition.SHORT_SELLING
-                elif "當沖" in order_type or "DAYTRADE" in order_type:
-                    return OrderCondition.DAY_TRADING_SHORT
+        # 嘗試從字串類型判斷
+        if isinstance(order_type, str):
+            order_type = order_type.upper()
+            if "現股" in order_type or "STOCK" in order_type:
+                return OrderCondition.CASH
+            if "融資" in order_type or "MARGIN" in order_type:
+                return OrderCondition.MARGIN_TRADING
+            if "融券" in order_type or "SHORT" in order_type:
+                return OrderCondition.SHORT_SELLING
+            if "當沖" in order_type or "DAYTRADE" in order_type:
+                return OrderCondition.DAY_TRADING_SHORT
 
-            # 默認為現股
-            return OrderCondition.CASH
+        # 默認為現股
+        return OrderCondition.CASH
 
-    def _create_finlab_order(self, order):
+    def _create_finlab_order(self, order: Any) -> Order:
         """
         將富邦委託單轉換為 finlab Order 格式
 
@@ -701,10 +761,10 @@ class FubonAccount(Account, RealtimeProvider):
         Returns:
             Order: finlab 格式的委託單
         """
-        order_id = getattr(order, 'seq_no', '')
-        stock_id = getattr(order, 'stock_no', '')
-        price = float(getattr(order, 'price', 0) or 0)
-        
+        order_id = getattr(order, "seq_no", "")
+        stock_id = getattr(order, "stock_no", "")
+        price = float(getattr(order, "price", 0) or 0)
+
         status = self._parse_order_status(order)
         quantity, filled_quantity = self._parse_quantities(order)
         order_time = self._parse_order_time(order)
@@ -721,77 +781,77 @@ class FubonAccount(Account, RealtimeProvider):
             status=status,
             order_condition=order_condition,
             time=order_time,
-            org_order=order
+            org_order=order,
         )
 
-    def _parse_order_status(self, order):
+    def _parse_order_status(self, order: Any) -> OrderStatus:
         """解析委託狀態"""
-        status_code = getattr(order, 'status', 0)
+        status_code = getattr(order, "status", 0)
         status_map = {
-            10: OrderStatus.NEW,     # 委託成功
+            10: OrderStatus.NEW,  # 委託成功
             30: OrderStatus.CANCEL,  # 刪單成功
             50: OrderStatus.FILLED,  # 完全成交
             90: OrderStatus.CANCEL,  # 失敗
         }
         status = status_map.get(status_code, OrderStatus.NEW)
-        
+
         # 檢查部分成交
-        filled_qty = float(getattr(order, 'filled_qty', 0) or 0)
-        after_qty = float(getattr(order, 'after_qty', 0) or 0)
-        
+        filled_qty = float(getattr(order, "filled_qty", 0) or 0)
+        after_qty = float(getattr(order, "after_qty", 0) or 0)
+
         if filled_qty > 0 and filled_qty < after_qty and status != OrderStatus.CANCEL:
             status = OrderStatus.PARTIALLY_FILLED
-            
+
         return status
 
-    def _parse_quantities(self, order):
+    def _parse_quantities(self, order: Any) -> tuple[float, float]:
         """解析委託數量和成交數量"""
-        after_qty = float(getattr(order, 'after_qty', 0) or 0)
-        filled_qty = float(getattr(order, 'filled_qty', 0) or 0)
-        
+        after_qty = float(getattr(order, "after_qty", 0) or 0)
+        filled_qty = float(getattr(order, "filled_qty", 0) or 0)
+
         return after_qty / STOCK_LOT_SIZE, filled_qty / STOCK_LOT_SIZE
 
-    def _parse_order_time(self, order):
+    def _parse_order_time(self, order: Any) -> datetime.datetime:
         """解析委託時間"""
-        date_str = getattr(order, 'date', '')
-        time_str = getattr(order, 'last_time', '')
-        
+        date_str = getattr(order, "date", "")
+        time_str = getattr(order, "last_time", "")
+
         if not date_str or not time_str:
             return datetime.datetime.now()
-            
+
         try:
             year, month, day = self._parse_date(date_str)
             hour, minute, second, microsecond = self._parse_time(time_str)
-            return datetime.datetime(year, month, day, hour, minute, second, microsecond)
+            return datetime.datetime(
+                year, month, day, hour, minute, second, microsecond
+            )
         except Exception as e:
             logging.warning(f"_parse_order_time: 解析委託時間失敗: {e}, 使用當前時間")
             return datetime.datetime.now()
 
-    def _parse_date(self, date_str):
+    def _parse_date(self, date_str: str) -> tuple[int, int, int]:
         """解析日期字串"""
-        if '/' in date_str:
-            date_parts = date_str.split('/')
+        if "/" in date_str:
+            date_parts = date_str.split("/")
             if len(date_parts) == 3:
                 return int(date_parts[0]), int(date_parts[1]), int(date_parts[2])
-            else:
-                return datetime.datetime.now().year, int(date_parts[0]), int(date_parts[1])
-        else:
-            # 格式: YYYYMMDD
-            return int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8])
+            return datetime.datetime.now().year, int(date_parts[0]), int(date_parts[1])
+        # 格式: YYYYMMDD
+        return int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8])
 
-    def _parse_time(self, time_str):
+    def _parse_time(self, time_str: str) -> tuple[int, int, int, int]:
         """解析時間字串"""
-        time_parts = time_str.split(':')
+        time_parts = time_str.split(":")
         hour = int(time_parts[0])
         minute = int(time_parts[1])
-        
-        second_parts = time_parts[2].split('.')
+
+        second_parts = time_parts[2].split(".")
         second = int(second_parts[0])
         microsecond = int(second_parts[1]) * 1000 if len(second_parts) > 1 else 0
-        
+
         return hour, minute, second, microsecond
 
-    def get_stocks(self, stock_ids):
+    def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
         """
         獲取股票即時報價
 
@@ -803,7 +863,7 @@ class FubonAccount(Account, RealtimeProvider):
         """
         if not self._ensure_marketdata_connection():
             return {}
-            
+
         ret = {}
         for stock_id in stock_ids:
             try:
@@ -817,30 +877,36 @@ class FubonAccount(Account, RealtimeProvider):
 
         return ret
 
-    def _ensure_marketdata_connection(self):
+    def _ensure_marketdata_connection(self) -> bool:
         """確保行情連線已初始化"""
-        if not hasattr(self.sdk, 'marketdata') or not hasattr(self.sdk.marketdata, 'rest_client'):
+        if not hasattr(self.sdk, "marketdata") or not hasattr(
+            self.sdk.marketdata, "rest_client"
+        ):
             logging.warning("get_stocks: 行情連線尚未初始化，嘗試重新初始化")
             try:
                 self.sdk.init_realtime()
                 return True
             except Exception as e:
-                logging.error(f"get_stocks: 無法初始化行情連線: {e}")
+                logging.exception(f"get_stocks: 無法初始化行情連線: {e}")
                 return False
         return True
 
-    def _get_stock_quote(self, stock_id):
+    def _get_stock_quote(self, stock_id: str) -> Any:
         """獲取單一股票報價"""
         rest_stock = self.sdk.marketdata.rest_client.stock
-        if not hasattr(rest_stock, 'intraday') or not hasattr(rest_stock.intraday, 'quote'):
+        if not hasattr(rest_stock, "intraday") or not hasattr(
+            rest_stock.intraday, "quote"
+        ):
             logging.warning("get_stocks: SDK 無法存取 intraday.quote 方法")
             return None
-            
+
         quote = rest_stock.intraday.quote(symbol=stock_id)
         logging.debug(quote)
         return quote
 
-    def _create_finlab_stock(self, quote, original_stock_id=None):
+    def _create_finlab_stock(
+        self, quote: Any, original_stock_id: str | None = None
+    ) -> Stock:
         """
         將富邦行情轉換為 finlab Stock 格式
 
@@ -859,7 +925,7 @@ class FubonAccount(Account, RealtimeProvider):
             bid_ask_data = self._extract_bid_ask_data(quote)
 
             # 提取漲跌幅
-            pct_change = get_first_valid_float(quote, 'changePercent', 'change_rate')
+            pct_change = get_first_valid_float(quote, "changePercent", "change_rate")
 
             return Stock(
                 stock_id=stock_id,
@@ -871,72 +937,91 @@ class FubonAccount(Account, RealtimeProvider):
             logging.warning(f"_create_finlab_stock: 轉換時發生錯誤: {e}")
             return self._create_empty_stock(original_stock_id)
 
-    def _extract_price_data(self, quote, original_stock_id):
+    def _extract_price_data(
+        self, quote: Any, original_stock_id: str | None
+    ) -> tuple[str | None, dict[str, float]]:
         """提取價格數據"""
         if isinstance(quote, dict):
-            stock_id = quote.get('symbol', original_stock_id)
+            stock_id = quote.get("symbol", original_stock_id)
             price_data = {
-                'open': float(quote.get('openPrice', 0) or 0),
-                'high': float(quote.get('highPrice', 0) or 0),
-                'low': float(quote.get('lowPrice', 0) or 0),
-                'close': float(quote.get('closePrice', 0) or 0)
+                "open": float(quote.get("openPrice", 0) or 0),
+                "high": float(quote.get("highPrice", 0) or 0),
+                "low": float(quote.get("lowPrice", 0) or 0),
+                "close": float(quote.get("closePrice", 0) or 0),
             }
         else:
-            stock_id = getattr(quote, 'symbol', original_stock_id or '')
+            stock_id = getattr(quote, "symbol", original_stock_id or "")
             price_data = {
-                'open': float(getattr(quote, 'open_price', getattr(quote, 'openPrice', 0)) or 0),
-                'high': float(getattr(quote, 'high_price', getattr(quote, 'highPrice', 0)) or 0),
-                'low': float(getattr(quote, 'low_price', getattr(quote, 'lowPrice', 0)) or 0),
-                'close': float(getattr(quote, 'close_price', getattr(quote, 'closePrice', getattr(quote, 'lastPrice', 0))) or 0)
+                "open": float(
+                    getattr(quote, "open_price", getattr(quote, "openPrice", 0)) or 0
+                ),
+                "high": float(
+                    getattr(quote, "high_price", getattr(quote, "highPrice", 0)) or 0
+                ),
+                "low": float(
+                    getattr(quote, "low_price", getattr(quote, "lowPrice", 0)) or 0
+                ),
+                "close": float(
+                    getattr(
+                        quote,
+                        "close_price",
+                        getattr(quote, "closePrice", getattr(quote, "lastPrice", 0)),
+                    )
+                    or 0
+                ),
             }
-        
+
         return stock_id or original_stock_id, price_data
 
-    def _extract_bid_ask_data(self, quote):
+    def _extract_bid_ask_data(self, quote: Any) -> dict[str, float]:
         """提取委買委賣數據"""
         if isinstance(quote, dict):
-            bids = quote.get('bids', [])
-            asks = quote.get('asks', [])
+            bids = quote.get("bids", [])
+            asks = quote.get("asks", [])
         else:
-            bids = getattr(quote, 'bids', [])
-            asks = getattr(quote, 'asks', [])
+            bids = getattr(quote, "bids", [])
+            asks = getattr(quote, "asks", [])
 
         bid_data = self._extract_first_bid_ask(bids[0] if bids else None)
         ask_data = self._extract_first_bid_ask(asks[0] if asks else None)
-        
+
         return {
-            'bid_price': bid_data['price'],
-            'bid_volume': bid_data['volume'],
-            'ask_price': ask_data['price'],
-            'ask_volume': ask_data['volume']
+            "bid_price": bid_data["price"],
+            "bid_volume": bid_data["volume"],
+            "ask_price": ask_data["price"],
+            "ask_volume": ask_data["volume"],
         }
 
-    def _extract_first_bid_ask(self, item):
+    def _extract_first_bid_ask(self, item: Any) -> dict[str, float]:
         """提取第一檔委買或委賣數據"""
         if not item:
-            return {'price': 0, 'volume': 0}
-            
+            return {"price": 0, "volume": 0}
+
         if isinstance(item, dict):
             return {
-                'price': float(item.get('price', 0) or 0),
-                'volume': float(item.get('size', 0) or 0)
+                "price": float(item.get("price", 0) or 0),
+                "volume": float(item.get("size", 0) or 0),
             }
-        else:
-            return {
-                'price': float(getattr(item, 'price', 0) or 0),
-                'volume': float(getattr(item, 'size', 0) or 0)
-            }
+        return {
+            "price": float(getattr(item, "price", 0) or 0),
+            "volume": float(getattr(item, "size", 0) or 0),
+        }
 
-    def _create_empty_stock(self, stock_id):
+    def _create_empty_stock(self, stock_id: str | None) -> Stock:
         """創建空的股票數據"""
         return Stock(
             stock_id=stock_id,
-            open=0, high=0, low=0, close=0,
-            bid_price=0, ask_price=0,
-            bid_volume=0, ask_volume=0
+            open=0,
+            high=0,
+            low=0,
+            close=0,
+            bid_price=0,
+            ask_price=0,
+            bid_volume=0,
+            ask_volume=0,
         )
 
-    def get_position(self):
+    def get_position(self) -> Position:
         """
         獲取當前持有部位
 
@@ -951,19 +1036,21 @@ class FubonAccount(Account, RealtimeProvider):
                 return Position({})
 
             unrealized_data = result.data
-            logging.debug(f"get_position: unrealized_gains_and_loses API 回傳: {result}")
-            
+            logging.debug(
+                f"get_position: unrealized_gains_and_loses API 回傳: {result}"
+            )
+
             positions = []
 
             for position_data in unrealized_data:
                 try:
                     # 處理每個持倉項目
-                    stock_id = getattr(position_data, 'stock_no', '')
+                    stock_id = getattr(position_data, "stock_no", "")
                     if not stock_id:
                         continue
 
                     # 判斷委託類型
-                    order_type = getattr(position_data, 'order_type', None)
+                    order_type = getattr(position_data, "order_type", None)
                     order_condition = OrderCondition.CASH  # 默認為現股
 
                     if order_type == OrderType.Margin:
@@ -974,27 +1061,36 @@ class FubonAccount(Account, RealtimeProvider):
                         order_condition = OrderCondition.DAY_TRADING_SHORT
 
                     # 獲取持倉數量 - 使用 today_qty 作為目前持倉
-                    today_qty = getattr(position_data, 'today_qty', 0)
+                    today_qty = getattr(position_data, "today_qty", 0)
                     if today_qty and float(today_qty) != 0:
                         # 根據買賣別和委託類型決定數量正負號
-                        buy_sell = getattr(position_data, 'buy_sell', None)
+                        buy_sell = getattr(position_data, "buy_sell", None)
                         quantity_sign = 1
-                        
-                        # 融券或賣出部位為負數
-                        if order_condition == OrderCondition.SHORT_SELLING or buy_sell == BSAction.Sell:
-                            quantity_sign = -1
-                            
-                        # today_qty 是股數，需要轉換為張
-                        quantity = Decimal(str(today_qty)) / STOCK_LOT_SIZE * quantity_sign
 
-                        positions.append({
-                            'stock_id': stock_id,
-                            'quantity': float(quantity),
-                            'order_condition': order_condition
-                        })
+                        # 融券或賣出部位為負數
+                        if (
+                            order_condition == OrderCondition.SHORT_SELLING
+                            or buy_sell == BSAction.Sell
+                        ):
+                            quantity_sign = -1
+
+                        # today_qty 是股數，需要轉換為張
+                        quantity = (
+                            Decimal(str(today_qty)) / STOCK_LOT_SIZE * quantity_sign
+                        )
+
+                        positions.append(
+                            {
+                                "stock_id": stock_id,
+                                "quantity": float(quantity),
+                                "order_condition": order_condition,
+                            }
+                        )
 
                 except Exception as e:
-                    logging.warning(f"get_position: 處理持倉項目 {getattr(position_data, 'stock_no', '未知')} 時發生錯誤: {e}")
+                    logging.warning(
+                        f"get_position: 處理持倉項目 {getattr(position_data, 'stock_no', '未知')} 時發生錯誤: {e}"
+                    )
 
             logging.info(f"get_position: 成功獲取持倉，共 {len(positions)} 筆")
             return Position.from_list(positions)
@@ -1003,7 +1099,7 @@ class FubonAccount(Account, RealtimeProvider):
             logging.warning(f"get_position: 獲取持倉失敗: {e}")
             return Position({})
 
-    def get_settlement(self):
+    def get_settlement(self) -> float:
         """
         獲取未交割款項
 
@@ -1023,24 +1119,33 @@ class FubonAccount(Account, RealtimeProvider):
 
                 # 取得交割款資料
                 settlement_data = result.data
-                if not hasattr(settlement_data, 'details') or not settlement_data.details:
+                if (
+                    not hasattr(settlement_data, "details")
+                    or not settlement_data.details
+                ):
                     return 0
 
                 # 處理每一筆交割款資料
                 for detail in settlement_data.details:
                     try:
                         # 交割日為空時表示無交割資訊
-                        if not getattr(detail, 'settlement_date', None):
+                        if not getattr(detail, "settlement_date", None):
                             continue
 
                         # 使用合計交割金額欄位
-                        total_settlement_amount = getattr(detail, 'total_settlement_amount', None)
+                        total_settlement_amount = getattr(
+                            detail, "total_settlement_amount", None
+                        )
                         if total_settlement_amount is not None:
                             # 加入總交割款
                             total_settlement += float(total_settlement_amount)
-                            logging.debug(f"get_settlement: 加入交割款 {total_settlement_amount}, 日期: {getattr(detail, 'settlement_date', 'unknown')}")
+                            logging.debug(
+                                f"get_settlement: 加入交割款 {total_settlement_amount}, 日期: {getattr(detail, 'settlement_date', 'unknown')}"
+                            )
                     except Exception as e:
-                        logging.warning(f"get_settlement: 處理交割款明細時發生錯誤: {e}")
+                        logging.warning(
+                            f"get_settlement: 處理交割款明細時發生錯誤: {e}"
+                        )
             except Exception as e:
                 logging.warning(f"get_settlement: 查詢 3d 交割款失敗: {e}")
 
@@ -1051,7 +1156,7 @@ class FubonAccount(Account, RealtimeProvider):
             logging.warning(f"get_settlement: 獲取未交割款項失敗: {e}")
             return 0
 
-    def get_total_balance(self):
+    def get_total_balance(self) -> float:
         """
         計算帳戶總淨值
 
@@ -1069,17 +1174,21 @@ class FubonAccount(Account, RealtimeProvider):
 
             # 獲取持倉市值
             total_position_value = 0
-            
+
             try:
                 # 使用未實現損益 API 獲取持倉資訊
-                result = self.sdk.accounting.unrealized_gains_and_loses(self.target_account)
+                result = self.sdk.accounting.unrealized_gains_and_loses(
+                    self.target_account
+                )
                 if not result or not result.is_success:
                     logging.warning("get_total_balance: 無法獲取持倉資訊")
                     return cash + settlements
 
                 # 打印調試資訊
-                logging.debug(f"get_total_balance: unrealized_gains_and_loses API 回傳: {result}")
-                
+                logging.debug(
+                    f"get_total_balance: unrealized_gains_and_loses API 回傳: {result}"
+                )
+
                 if not result.data:
                     logging.info("get_total_balance: 目前沒有持倉")
                     return cash + settlements
@@ -1087,8 +1196,8 @@ class FubonAccount(Account, RealtimeProvider):
                 # 計算所有持倉的市值
                 for position_data in result.data:
                     try:
-                        stock_id = getattr(position_data, 'stock_no', '')
-                        today_qty = getattr(position_data, 'today_qty', 0)
+                        stock_id = getattr(position_data, "stock_no", "")
+                        today_qty = getattr(position_data, "today_qty", 0)
 
                         if not stock_id or not today_qty or float(today_qty) == 0:
                             continue
@@ -1100,23 +1209,37 @@ class FubonAccount(Account, RealtimeProvider):
                                 current_price = stock_data[stock_id].close
                                 if current_price:
                                     # 計算市值 (股數 * 現價)
-                                    position_value = abs(float(today_qty)) * current_price
+                                    position_value = (
+                                        abs(float(today_qty)) * current_price
+                                    )
                                     total_position_value += position_value
-                                    logging.info(f"get_total_balance: {stock_id} 數量={today_qty}, 現價={current_price}, 市值={position_value}")
+                                    logging.info(
+                                        f"get_total_balance: {stock_id} 數量={today_qty}, 現價={current_price}, 市值={position_value}"
+                                    )
                                 else:
-                                    logging.warning(f"get_total_balance: {stock_id} 無法獲取有效價格")
+                                    logging.warning(
+                                        f"get_total_balance: {stock_id} 無法獲取有效價格"
+                                    )
                             else:
-                                logging.warning(f"get_total_balance: 無法獲取 {stock_id} 的股價資訊")
+                                logging.warning(
+                                    f"get_total_balance: 無法獲取 {stock_id} 的股價資訊"
+                                )
                         except Exception as e:
-                            logging.warning(f"get_total_balance: 計算 {stock_id} 市值時發生錯誤: {e}")
+                            logging.warning(
+                                f"get_total_balance: 計算 {stock_id} 市值時發生錯誤: {e}"
+                            )
 
                     except Exception as e:
-                        logging.warning(f"get_total_balance: 處理持倉項目時發生錯誤: {e}")
+                        logging.warning(
+                            f"get_total_balance: 處理持倉項目時發生錯誤: {e}"
+                        )
 
                 # 計算總淨值：持倉市值 + 現金 + 未交割款項
                 total_balance = total_position_value + cash + settlements
 
-                logging.info(f"總淨值計算: 持倉市值={total_position_value}, 現金={cash}, 未交割款項={settlements}, 總淨值={total_balance}")
+                logging.info(
+                    f"總淨值計算: 持倉市值={total_position_value}, 現金={cash}, 未交割款項={settlements}, 總淨值={total_balance}"
+                )
 
                 return total_balance
 
@@ -1128,9 +1251,17 @@ class FubonAccount(Account, RealtimeProvider):
             logging.warning(f"get_total_balance: 獲取總資產失敗: {e}")
             return 0
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False,
-                     best_price_limit=False, market_order=False,
-                     order_cond=OrderCondition.CASH):
+    def create_order(
+        self,
+        action: Action,
+        stock_id: str,
+        quantity: float,
+        price: float | None = None,
+        odd_lot: bool = False,
+        best_price_limit: bool = False,
+        market_order: bool = False,
+        order_cond: OrderCondition = OrderCondition.CASH,
+    ) -> str | None:
         """
         創建委託單
 
@@ -1198,13 +1329,15 @@ class FubonAccount(Account, RealtimeProvider):
                 market_type=market_type,
                 price_type=price_type,
                 time_in_force=time_in_force,
-                order_type=order_type
+                order_type=order_type,
             )
 
             # 送出委託單
             result = self.sdk.stock.place_order(self.target_account, order)
             if not result or not result.is_success:
-                logging.warning(f"create_order: 送出委託單失敗: {result.message if result else '未知錯誤'}")
+                logging.warning(
+                    f"create_order: 送出委託單失敗: {result.message if result else '未知錯誤'}"
+                )
                 return None
 
             order_id = self._get_order_id(result.data)
@@ -1214,24 +1347,23 @@ class FubonAccount(Account, RealtimeProvider):
         except Exception as e:
             logging.warning(f"create_order: 無法創建委託單: {e}")
             return None
-    
-    def _determine_market_type(self, odd_lot):
+
+    def _determine_market_type(self, odd_lot: bool) -> MarketType:
         """確定市場類型"""
         now = datetime.datetime.now()
         current_time = datetime.time(now.hour, now.minute)
-        
+
         if odd_lot:
             # 盤後零股處理 (13:40-14:30)
             if datetime.time(13, 40) < current_time < datetime.time(14, 30):
                 return MarketType.Odd
             return MarketType.IntradayOdd
-        else:
-            # 定盤處理 (14:00-14:30)
-            if datetime.time(14, 0) < current_time < datetime.time(14, 30):
-                return MarketType.Fixing
-            return MarketType.Common
+        # 定盤處理 (14:00-14:30)
+        if datetime.time(14, 0) < current_time < datetime.time(14, 30):
+            return MarketType.Fixing
+        return MarketType.Common
 
-    def _get_order_id(self, order):
+    def _get_order_id(self, order: Any) -> str:
         """
         從委託單對象中獲取委託單編號
 
@@ -1242,14 +1374,19 @@ class FubonAccount(Account, RealtimeProvider):
             str: 委託單編號
         """
         # 對於物件式資料，假設有 order_no 屬性
-        if hasattr(order, 'seq_no'):
+        if hasattr(order, "seq_no"):
             return order.seq_no
 
         # 無法找到委託單編號
         logging.warning(f"無法從委託單中獲取編號: {order}")
         return f"unknown_{int(time.time())}"
 
-    def update_order(self, order_id, price=None, quantity=None):
+    def update_order(
+        self,
+        order_id: str,
+        price: float | None = None,
+        quantity: float | None = None,
+    ) -> None:
         """
         更新委託單
 
@@ -1261,44 +1398,72 @@ class FubonAccount(Account, RealtimeProvider):
         try:
             # 獲取委託單
             order = self.get_orders()[order_id]
-            logging.debug(f"#update_order price: {price}, qty: {quantity}, order({order_id}): {order}")
+            logging.debug(
+                f"#update_order price: {price}, qty: {quantity}, order({order_id}): {order}"
+            )
 
             # 更新價格
             if price:
                 order_record = order.org_order
                 # 判斷是否為零股
-                if getattr(order_record, 'market_type', '') in [MarketType.IntradayOdd, MarketType.Odd, MarketType.EmgOdd]:
+                if getattr(order_record, "market_type", "") in [
+                    MarketType.IntradayOdd,
+                    MarketType.Odd,
+                    MarketType.EmgOdd,
+                ]:
                     # 零股模式需要特別處理：取消原委託單並重新創建
                     action = order.action
                     stock_id = order.stock_id
-                    filled_qty = getattr(order_record, 'filled_qty', 0)
-                    org_qty = getattr(order_record, 'quantity', 0)
+                    filled_qty = getattr(order_record, "filled_qty", 0)
+                    org_qty = getattr(order_record, "quantity", 0)
                     qty = float(org_qty) - float(filled_qty)
 
-                    modify_qty_obj = self.sdk.stock.make_modify_quantity_obj(order_record, 0)
-                    cancel_result = self.sdk.stock.modify_quantity(self.target_account, modify_qty_obj)
+                    modify_qty_obj = self.sdk.stock.make_modify_quantity_obj(
+                        order_record, 0
+                    )
+                    cancel_result = self.sdk.stock.modify_quantity(
+                        self.target_account, modify_qty_obj
+                    )
                     if cancel_result and cancel_result.is_success:
                         logging.info(f"已將零股委託單 {order_id} 數量修改為0以進行取消")
                     else:
                         message = cancel_result.message if cancel_result else "未知錯誤"
-                        logging.warning(f"update_order: 無法取消零股委託單 {order_id}: {message}")
+                        logging.warning(
+                            f"update_order: 無法取消零股委託單 {order_id}: {message}"
+                        )
                         return
 
                     # 創建新委託單
                     if qty > 0:
-                        self.create_order(action=action, stock_id=stock_id, quantity=qty, price=price, odd_lot=True)
-                        logging.info(f"已以新價格 {price} 重新創建零股委託單 {stock_id}")
+                        self.create_order(
+                            action=action,
+                            stock_id=stock_id,
+                            quantity=qty,
+                            price=price,
+                            odd_lot=True,
+                        )
+                        logging.info(
+                            f"已以新價格 {price} 重新創建零股委託單 {stock_id}"
+                        )
                 else:
                     # 整股模式使用 make_modify_price_obj 及 modify_price
                     try:
                         # 使用 make_modify_price_obj 建立修改價格物件
-                        modify_price_obj = self.sdk.stock.make_modify_price_obj(order_record, str(price))
+                        modify_price_obj = self.sdk.stock.make_modify_price_obj(
+                            order_record, str(price)
+                        )
                         # 呼叫 modify_price 方法
-                        result = self.sdk.stock.modify_price(self.target_account, modify_price_obj)
+                        result = self.sdk.stock.modify_price(
+                            self.target_account, modify_price_obj
+                        )
                         if not result or not result.is_success:
-                            logging.warning(f"update_order: 無法更新委託單 {order_id} 的價格: {result.message if result else '未知錯誤'}")
+                            logging.warning(
+                                f"update_order: 無法更新委託單 {order_id} 的價格: {result.message if result else '未知錯誤'}"
+                            )
                         else:
-                            logging.info(f"已成功更新委託單 {order_id} 的價格為 {price}")
+                            logging.info(
+                                f"已成功更新委託單 {order_id} 的價格為 {price}"
+                            )
                     except Exception as e:
                         logging.warning(f"update_order: 修改價格時發生錯誤: {e}")
 
@@ -1307,9 +1472,13 @@ class FubonAccount(Account, RealtimeProvider):
                 try:
                     order_record = order.org_order
                     # 根據市場類型確定數量單位
-                    market_type = getattr(order_record, 'market_type', None)
-                    is_odd_lot = market_type in [MarketType.IntradayOdd, MarketType.Odd, MarketType.EmgOdd]
-                    filled_qty = float(getattr(order_record, 'filled_qty', 0))
+                    market_type = getattr(order_record, "market_type", None)
+                    is_odd_lot = market_type in [
+                        MarketType.IntradayOdd,
+                        MarketType.Odd,
+                        MarketType.EmgOdd,
+                    ]
+                    filled_qty = float(getattr(order_record, "filled_qty", 0))
 
                     # 計算新的委託數量 - 注意文檔中說明「修改後數量包含此委託單已成交部份」
                     if is_odd_lot:
@@ -1320,20 +1489,28 @@ class FubonAccount(Account, RealtimeProvider):
                         new_qty = int(quantity * STOCK_LOT_SIZE) + int(filled_qty)
 
                     # 使用 make_modify_quantity_obj 建立修改數量物件
-                    modify_qty_obj = self.sdk.stock.make_modify_quantity_obj(order_record, new_qty)
+                    modify_qty_obj = self.sdk.stock.make_modify_quantity_obj(
+                        order_record, new_qty
+                    )
                     # 呼叫 modify_quantity 方法
-                    result = self.sdk.stock.modify_quantity(self.target_account, modify_qty_obj)
+                    result = self.sdk.stock.modify_quantity(
+                        self.target_account, modify_qty_obj
+                    )
                     if not result or not result.is_success:
-                        logging.warning(f"update_order: 無法更新委託單 {order_id} 的數量: {result.message if result else '未知錯誤'}")
+                        logging.warning(
+                            f"update_order: 無法更新委託單 {order_id} 的數量: {result.message if result else '未知錯誤'}"
+                        )
                     else:
-                        logging.info(f"已成功更新委託單 {order_id} 的數量為 {quantity} (總數量為 {new_qty})")
+                        logging.info(
+                            f"已成功更新委託單 {order_id} 的數量為 {quantity} (總數量為 {new_qty})"
+                        )
                 except Exception as e:
                     logging.warning(f"update_order: 修改數量時發生錯誤: {e}")
 
         except Exception as e:
             logging.warning(f"update_order: 更新委託單 {order_id} 時發生錯誤: {e}")
 
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: str) -> None:
         """
         取消委託單
 
@@ -1353,13 +1530,14 @@ class FubonAccount(Account, RealtimeProvider):
             logging.debug(f"#cancel_order order({order_id}): {order}")
 
             # 檢查是否可以取消
-            can_cancel = getattr(org_order, 'can_cancel', True)  # 預設可取消
+            can_cancel = getattr(org_order, "can_cancel", True)  # 預設可取消
 
             if can_cancel:
                 result = self.sdk.stock.cancel_order(self.target_account, org_order)
                 if not result or not result.is_success:
                     logging.warning(
-                        f"cancel_order: 無法取消委託單 {order_id}: {result.message if result else '未知錯誤'}")
+                        f"cancel_order: 無法取消委託單 {order_id}: {result.message if result else '未知錯誤'}"
+                    )
                 else:
                     logging.info(f"已取消委託單 {order_id}")
             else:
@@ -1368,7 +1546,7 @@ class FubonAccount(Account, RealtimeProvider):
         except Exception as e:
             logging.warning(f"cancel_order: 取消委託單 {order_id} 時發生錯誤: {e}")
 
-    def _get_order_timestamp(self, order):
+    def _get_order_timestamp(self, order: Any) -> datetime.datetime:
         """
         從委託單對象中獲取時間戳
 
@@ -1380,18 +1558,22 @@ class FubonAccount(Account, RealtimeProvider):
         """
         try:
             # 嘗試獲取日期和時間
-            date_str = getattr(order, 'date', '')
-            time_str = getattr(order, 'last_time', getattr(order, 'order_time', ''))
+            date_str = getattr(order, "date", "")
+            time_str = getattr(order, "last_time", getattr(order, "order_time", ""))
 
             if not date_str or not time_str:
                 return datetime.datetime.now()
 
             # 解析日期
-            if '/' in date_str:
+            if "/" in date_str:
                 # 假設格式為 MM/DD 或 YYYY/MM/DD
-                date_parts = date_str.split('/')
+                date_parts = date_str.split("/")
                 if len(date_parts) == 3:
-                    year, month, day = int(date_parts[0]), int(date_parts[1]), int(date_parts[2])
+                    year, month, day = (
+                        int(date_parts[0]),
+                        int(date_parts[1]),
+                        int(date_parts[2]),
+                    )
                 else:
                     year = datetime.datetime.now().year
                     month, day = int(date_parts[0]), int(date_parts[1])
@@ -1406,28 +1588,32 @@ class FubonAccount(Account, RealtimeProvider):
                 year, month, day = now.year, now.month, now.day
 
             # 解析時間
-            if ':' in time_str:
+            if ":" in time_str:
                 # 假設格式為 HH:MM:SS 或 HH:MM:SS.mmm
-                time_parts = time_str.split(':')
+                time_parts = time_str.split(":")
                 hour = int(time_parts[0])
                 minute = int(time_parts[1])
 
                 if len(time_parts) > 2:
-                    second_parts = time_parts[2].split('.')
+                    second_parts = time_parts[2].split(".")
                     second = int(second_parts[0])
-                    microsecond = int(second_parts[1])*1000 if len(second_parts) > 1 else 0
+                    microsecond = (
+                        int(second_parts[1]) * 1000 if len(second_parts) > 1 else 0
+                    )
                 else:
                     second, microsecond = 0, 0
             else:
                 # 預設時間
                 hour, minute, second, microsecond = 0, 0, 0, 0
 
-            return datetime.datetime(year, month, day, hour, minute, second, microsecond)
+            return datetime.datetime(
+                year, month, day, hour, minute, second, microsecond
+            )
         except Exception as e:
             logging.warning(f"_get_order_timestamp: 解析時間戳失敗: {e}")
             return datetime.datetime.now()
 
-    def _get_buy_orders(self):
+    def _get_buy_orders(self) -> list[Order]:
         """
         獲取買入記錄
 
@@ -1449,26 +1635,32 @@ class FubonAccount(Account, RealtimeProvider):
             for i, position in enumerate(positions):
                 try:
                     # 獲取庫存明細
-                    stock_id = getattr(position, 'stock_no', '')
+                    stock_id = getattr(position, "stock_no", "")
                     if not stock_id:
                         continue
 
                     # 查詢持倉明細
-                    detail_result = self.sdk.accounting.inventory_details(self.target_account, getattr(position, 'id', ''), stock_id)
-                    if not detail_result or not detail_result.is_success or not detail_result.data:
+                    detail_result = self.sdk.accounting.inventory_details(
+                        self.target_account, getattr(position, "id", ""), stock_id
+                    )
+                    if (
+                        not detail_result
+                        or not detail_result.is_success
+                        or not detail_result.data
+                    ):
                         continue
 
                     position_details = detail_result.data
 
                     for detail in position_details:
                         # 判斷數量
-                        quantity = getattr(detail, 'qty', 0)
+                        quantity = getattr(detail, "qty", 0)
                         if not quantity or float(quantity) == 0:
                             continue
 
                         # 交易條件
                         order_condition = OrderCondition.CASH
-                        trade_type = getattr(position, 'order_type', '')
+                        trade_type = getattr(position, "order_type", "")
                         if trade_type == OrderType.Margin:
                             order_condition = OrderCondition.MARGIN_TRADING
                         elif trade_type == OrderType.Short:
@@ -1477,37 +1669,56 @@ class FubonAccount(Account, RealtimeProvider):
                             order_condition = OrderCondition.DAY_TRADING_SHORT
 
                         # 交易日期
-                        date_str = getattr(detail, 'order_date', getattr(detail, 'date', ''))
+                        date_str = getattr(
+                            detail, "order_date", getattr(detail, "date", "")
+                        )
                         trade_date = datetime.datetime.now()
                         if date_str:
                             try:
-                                if len(date_str) == 8 and date_str.isdigit():  # YYYYMMDD
-                                    trade_date = datetime.datetime.strptime(date_str, '%Y%m%d')
+                                if (
+                                    len(date_str) == 8 and date_str.isdigit()
+                                ):  # YYYYMMDD
+                                    trade_date = datetime.datetime.strptime(
+                                        date_str, "%Y%m%d"
+                                    )
                                 else:
-                                    trade_date = datetime.datetime.strptime(date_str, '%Y/%m/%d')
-                            except:
+                                    trade_date = datetime.datetime.strptime(
+                                        date_str, "%Y/%m/%d"
+                                    )
+                            except (ValueError, TypeError):
                                 pass
 
                         # 產生買入單的續碼
-                        order_id = getattr(detail, 'order_no', getattr(detail, 'seq_no', f"fb_buy_{int(time.time())}_{i}"))
+                        order_id = getattr(
+                            detail,
+                            "order_no",
+                            getattr(detail, "seq_no", f"fb_buy_{int(time.time())}_{i}"),
+                        )
 
                         # 判斷是否為零股
-                        is_odd_lot = getattr(detail, 'odd_lot', False) or quantity < STOCK_LOT_SIZE
+                        is_odd_lot = (
+                            getattr(detail, "odd_lot", False)
+                            or quantity < STOCK_LOT_SIZE
+                        )
                         divisor = 1 if is_odd_lot else STOCK_LOT_SIZE
 
                         # 轉換為 finlab Order 格式
-                        buy_orders.append(Order(
-                            order_id=order_id,
-                            stock_id=stock_id,
-                            action=Action.BUY,
-                            price=float(getattr(detail, 'price', 0)),
-                            quantity=float(quantity) / divisor,  # 轉換為張
-                            filled_quantity=float(quantity) / divisor,  # 轉換為張
-                            status=OrderStatus.FILLED,
-                            order_condition=order_condition,
-                            time=market.market_close_at_timestamp(trade_date).to_pydatetime().replace(hour=13, minute=30),
-                            org_order=detail
-                        ))
+                        buy_orders.append(
+                            Order(
+                                order_id=order_id,
+                                stock_id=stock_id,
+                                action=Action.BUY,
+                                price=float(getattr(detail, "price", 0)),
+                                quantity=float(quantity) / divisor,  # 轉換為張
+                                filled_quantity=float(quantity) / divisor,  # 轉換為張
+                                status=OrderStatus.FILLED,
+                                order_condition=order_condition,
+                                time=market.market_close_at_timestamp(trade_date)
+                                .to_pydatetime()
+                                .replace(hour=13, minute=30),
+                                org_order=detail,
+                            )
+                        )
                 except Exception as e:
                     logging.warning(f"_get_buy_orders: 處理持倉明細時發生錯誤: {e}")
 
@@ -1520,7 +1731,11 @@ class FubonAccount(Account, RealtimeProvider):
             logging.warning(f"_get_buy_orders: 獲取買入記錄失敗: {e}")
             return []
 
-    def _get_sell_orders(self, start=None, end=None):
+    def _get_sell_orders(
+        self,
+        start: datetime.datetime | str | None = None,
+        end: datetime.datetime | str | None = None,
+    ) -> list[Order]:
         """
         獲取賣出記錄
 
@@ -1532,25 +1747,29 @@ class FubonAccount(Account, RealtimeProvider):
             list: 賣出記錄列表
         """
         if start is None:
-            start = datetime.datetime.now() - datetime.timedelta(days=90)  # 預設查詢過去 90 天
+            start = datetime.datetime.now() - datetime.timedelta(
+                days=90
+            )  # 預設查詢過去 90 天
 
         if end is None:
             end = datetime.datetime.now()
 
         # 轉換日期格式為 YYYYMMDD
-        if hasattr(start, 'strftime'):
-            start_str = start.strftime('%Y%m%d')
+        if hasattr(start, "strftime"):
+            start_str = start.strftime("%Y%m%d")
         else:
             start_str = start
 
-        if hasattr(end, 'strftime'):
-            end_str = end.strftime('%Y%m%d')
+        if hasattr(end, "strftime"):
+            end_str = end.strftime("%Y%m%d")
         else:
             end_str = end
 
         try:
             # 獲取已實現損益
-            result = self.sdk.accounting.realized_pnl_detail(self.target_account, start_str, end_str)
+            result = self.sdk.accounting.realized_pnl_detail(
+                self.target_account, start_str, end_str
+            )
             if not result or not result.is_success or not result.data:
                 logging.warning("_get_sell_orders: 無法獲取已實現損益資訊")
                 return []
@@ -1562,17 +1781,23 @@ class FubonAccount(Account, RealtimeProvider):
             for i, record in enumerate(profit_loss):
                 try:
                     # 取得日期和代碼
-                    date_str = getattr(record, 'date', getattr(record, 'trade_date', ''))
+                    date_str = getattr(
+                        record, "date", getattr(record, "trade_date", "")
+                    )
                     if not date_str:
                         continue
 
-                    stock_id = getattr(record, 'stock_no', getattr(record, 'symbol', ''))
+                    stock_id = getattr(
+                        record, "stock_no", getattr(record, "symbol", "")
+                    )
                     if not stock_id:
                         continue
 
                     # 交易條件
                     order_condition = OrderCondition.CASH
-                    trade_type = getattr(record, 'trade_type', getattr(record, 'cond', ''))
+                    trade_type = getattr(
+                        record, "trade_type", getattr(record, "cond", "")
+                    )
                     if trade_type == OrderType.Margin:
                         order_condition = OrderCondition.MARGIN_TRADING
                     elif trade_type == OrderType.Short:
@@ -1584,35 +1809,49 @@ class FubonAccount(Account, RealtimeProvider):
                     trade_date = datetime.datetime.now()
                     try:
                         if len(date_str) == 8 and date_str.isdigit():  # YYYYMMDD
-                            trade_date = datetime.datetime.strptime(date_str, '%Y%m%d')
+                            trade_date = datetime.datetime.strptime(date_str, "%Y%m%d")
                         else:  # 假設為 YYYY/MM/DD
-                            trade_date = datetime.datetime.strptime(date_str, '%Y/%m/%d')
-                    except:
+                            trade_date = datetime.datetime.strptime(
+                                date_str, "%Y/%m/%d"
+                            )
+                    except (ValueError, TypeError):
                         pass
 
                     # 判斷是否為零股
-                    quantity = getattr(record, 'qty', getattr(record, 'quantity', 0))
-                    is_odd_lot = getattr(record, 'odd_lot', False) or quantity < STOCK_LOT_SIZE
+                    quantity = getattr(record, "qty", getattr(record, "quantity", 0))
+                    is_odd_lot = (
+                        getattr(record, "odd_lot", False) or quantity < STOCK_LOT_SIZE
+                    )
                     divisor = 1 if is_odd_lot else STOCK_LOT_SIZE
 
                     # 產生賣出單的續碼
-                    order_id = getattr(record, 'order_no', getattr(record, 'seq_no', f"fb_sell_{int(time.time())}_{i}"))
+                    order_id = getattr(
+                        record,
+                        "order_no",
+                        getattr(record, "seq_no", f"fb_sell_{int(time.time())}_{i}"),
+                    )
 
                     # 轉換為 finlab Order 格式
-                    sell_orders.append(Order(
-                        order_id=order_id,
-                        stock_id=stock_id,
-                        action=Action.SELL,
-                        price=float(getattr(record, 'price', 0)),
-                        quantity=float(quantity) / divisor,  # 轉換為張
-                        filled_quantity=float(quantity) / divisor,  # 轉換為張
-                        status=OrderStatus.FILLED,
-                        order_condition=order_condition,
-                        time=market.market_close_at_timestamp(trade_date).to_pydatetime().replace(hour=13, minute=30),
-                        org_order=record
-                    ))
+                    sell_orders.append(
+                        Order(
+                            order_id=order_id,
+                            stock_id=stock_id,
+                            action=Action.SELL,
+                            price=float(getattr(record, "price", 0)),
+                            quantity=float(quantity) / divisor,  # 轉換為張
+                            filled_quantity=float(quantity) / divisor,  # 轉換為張
+                            status=OrderStatus.FILLED,
+                            order_condition=order_condition,
+                            time=market.market_close_at_timestamp(trade_date)
+                            .to_pydatetime()
+                            .replace(hour=13, minute=30),
+                            org_order=record,
+                        )
+                    )
                 except Exception as e:
-                    logging.warning(f"_get_sell_orders: 處理已實現損益紀錄時發生錯誤: {e}")
+                    logging.warning(
+                        f"_get_sell_orders: 處理已實現損益紀錄時發生錯誤: {e}"
+                    )
 
                 # 每處理 20 筆後休息一下，避免請求過於頻繁
                 if i % 20 == 19 and i != len(profit_loss) - 1:
@@ -1623,7 +1862,9 @@ class FubonAccount(Account, RealtimeProvider):
             logging.warning(f"_get_sell_orders: 獲取賣出記錄失敗: {e}")
             return []
 
-    def get_trades(self, start, end):
+    def get_trades(
+        self, start: datetime.datetime | str, end: datetime.datetime | str
+    ) -> list[Order]:
         """
         獲取歷史交易記錄
 
@@ -1665,7 +1906,7 @@ class FubonAccount(Account, RealtimeProvider):
             logging.warning(f"get_trades: 獲取交易記錄失敗: {e}")
             return []
 
-    def support_day_trade_condition(self):
+    def support_day_trade_condition(self) -> bool:
         """
         是否支援當沖交易
 
@@ -1674,7 +1915,7 @@ class FubonAccount(Account, RealtimeProvider):
         """
         return True
 
-    def sep_odd_lot_order(self):
+    def sep_odd_lot_order(self) -> bool:
         """
         是否支援零股交易
 
@@ -1684,7 +1925,7 @@ class FubonAccount(Account, RealtimeProvider):
         # 富邦證券支援零股交易
         return True
 
-    def get_price_info(self):
+    def get_price_info(self) -> dict[str, Any]:
         """
         獲取價格信息
 
@@ -1693,14 +1934,14 @@ class FubonAccount(Account, RealtimeProvider):
         """
         try:
             # 從 finlab 導入參考價格資料
-            ref = data.get('reference_price')
-            return ref.set_index('stock_id').to_dict(orient='index')
+            ref = data.get("reference_price")
+            return ref.set_index("stock_id").to_dict(orient="index")
         except Exception as e:
             logging.warning(f"get_price_info: 獲取價格信息失敗: {e}")
             # 如果失敗，返回空字典
             return {}
 
-    def get_market(self):
+    def get_market(self) -> TWMarket:
         """
         獲取市場信息
 

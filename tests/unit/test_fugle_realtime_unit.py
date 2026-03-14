@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import importlib
 import sys
 import types
+from typing import Any
 
 
-def _import_fugle_module_with_fake_sdk(monkeypatch):
+def _import_fugle_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     sdk_module = types.ModuleType("esun_trade.sdk")
     sdk_module.SDK = object
 
@@ -39,21 +42,23 @@ def _import_fugle_module_with_fake_sdk(monkeypatch):
 
 
 class _FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload: Any) -> None:
         self.payload = payload
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         return None
 
-    def json(self):
+    def json(self) -> Any:
         return self.payload
 
 
-def test_fugle_backfill_ticks_uses_marketdata_http_api(monkeypatch):
+def test_fugle_backfill_ticks_uses_marketdata_http_api(monkeypatch: Any) -> None:
     fugle_module = _import_fugle_module_with_fake_sdk(monkeypatch)
     FugleAccount = fugle_module.FugleAccount
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(
+        url: str, headers: dict | None = None, params: dict | None = None
+    ) -> _FakeResponse:
         assert headers == {"X-API-KEY": "demo-key"}
         if url.endswith("/stock/intraday/quote/2330"):
             return _FakeResponse(
@@ -118,11 +123,13 @@ def test_fugle_backfill_ticks_uses_marketdata_http_api(monkeypatch):
     assert [tick.price for tick in ticks] == [100.5, 101.0]
 
 
-def test_fugle_get_bidask_snapshot_uses_marketdata_http_api(monkeypatch):
+def test_fugle_get_bidask_snapshot_uses_marketdata_http_api(monkeypatch: Any) -> None:
     fugle_module = _import_fugle_module_with_fake_sdk(monkeypatch)
     FugleAccount = fugle_module.FugleAccount
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(
+        url: str, headers: dict | None = None, params: dict | None = None
+    ) -> _FakeResponse:
         assert headers == {"X-API-KEY": "demo-key"}
         if url.endswith("/stock/intraday/quote/2330"):
             return _FakeResponse(

@@ -1,53 +1,65 @@
-import pocket as pk
+from __future__ import annotations
+
+import contextlib
 import datetime
-import time
+import logging
 import os
 import re
-import math
-import logging
-import pandas as pd
+import time
 from decimal import Decimal
+from typing import Any
 
-from finlab.online.core.account import Account, Stock, Order
-from finlab.online.core.realtime_normalizers import to_optional_float
-from finlab.online.core.utils import estimate_stock_price
-from finlab.online.core.enums import *
-from finlab.online.core.position import Position
+import pocket as pk
+
 from finlab import data
 from finlab.markets.tw import TWMarket
+from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.enums import *
+from finlab.online.core.position import Position
+from finlab.online.core.realtime_normalizers import to_optional_float
+from finlab.online.core.utils import estimate_stock_price
 
-pattern = re.compile(r'(?<!^)(?=[A-Z])')
+pattern = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 class PocketAccount(Account):
-
     # required_module = 'pocket'
     # module_version = '1.0.0'
 
-    def __init__(self, api_key=None, secret_key=None,
-                 certificate_person_id=None,
-                 certificate_password=None,
-                 certificate_path=None,):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        secret_key: str | None = None,
+        certificate_person_id: str | None = None,
+        certificate_password: str | None = None,
+        certificate_path: str | None = None,
+    ) -> None:
 
-        api_key = api_key or os.environ.get('POCKET_API_KEY')
-        secret_key = secret_key or os.environ.get('POCKET_SECRET_KEY') or os.environ.get('POCKET_API_SECRET')
+        api_key = api_key or os.environ.get("POCKET_API_KEY")
+        secret_key = (
+            secret_key
+            or os.environ.get("POCKET_SECRET_KEY")
+            or os.environ.get("POCKET_API_SECRET")
+        )
 
         certificate_password = certificate_password or os.environ.get(
-            'POCKET_CERT_PASSWORD')
-        certificate_path = certificate_path or os.environ.get(
-            'POCKET_CERT_PATH')
+            "POCKET_CERT_PASSWORD"
+        )
+        certificate_path = certificate_path or os.environ.get("POCKET_CERT_PATH")
         certificate_person_id = certificate_person_id or os.environ.get(
-            'POCKET_CERT_PERSON_ID')
+            "POCKET_CERT_PERSON_ID"
+        )
 
         # test (for mac)
-        certificate_simu_ca = os.environ.get('POCKET_SIMU_CA')
+        certificate_simu_ca = os.environ.get("POCKET_SIMU_CA")
 
         self.api = pk.Pocket()
-        self.trades = {}
+        self.trades: dict[str, Any] = {}
 
         if not certificate_simu_ca:
             self.accounts = self.api.login(
-                api_key=api_key, password=secret_key)  # fetch_contract=False
+                api_key=api_key, password=secret_key
+            )  # fetch_contract=False
             self.api.activate_ca(
                 ca_path=certificate_path,
                 ca_passwd=certificate_password,
@@ -55,18 +67,24 @@ class PocketAccount(Account):
             )
         else:
             self.accounts = self.api.login(
-                api_key=api_key, password=secret_key, simu_ca=certificate_simu_ca)
+                api_key=api_key, password=secret_key, simu_ca=certificate_simu_ca
+            )
 
-
-    def __del__(self):
-        try:
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):
             self.api.logout()
-        except:
-            pass
 
-
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, market_order=False,
-                     best_price_limit=False, order_cond=OrderCondition.CASH):
+    def create_order(
+        self,
+        action: Action,
+        stock_id: str,
+        quantity: int,
+        price: float | None = None,
+        odd_lot: bool = False,
+        market_order: bool = False,
+        best_price_limit: bool = False,
+        order_cond: OrderCondition = OrderCondition.CASH,
+    ) -> str | None:
 
         contract = self.api.Contracts.Stocks.get(stock_id)
 
@@ -74,11 +92,11 @@ class PocketAccount(Account):
 
         if stock_id not in pinfo:
             logging.warning(f"stock {stock_id} not in price info")
-            return
+            return None
 
-        limitup = float(pinfo[stock_id]['漲停價'])
-        limitdn = float(pinfo[stock_id]['跌停價'])
-        last_close = float(pinfo[stock_id]['收盤價'])
+        limitup = float(pinfo[stock_id]["漲停價"])
+        limitdn = float(pinfo[stock_id]["跌停價"])
+        float(pinfo[stock_id]["收盤價"])
 
         if quantity <= 0:
             raise Exception(f"quantity must be positive, got {quantity}")
@@ -98,34 +116,44 @@ class PocketAccount(Account):
             elif action == Action.SELL:
                 price = limitup
 
-        action = 'Buy' if action == Action.BUY else 'Sell'
+        action = "Buy" if action == Action.BUY else "Sell"
 
         order_cond = {
-            OrderCondition.CASH: 'Cash',
-            OrderCondition.MARGIN_TRADING: 'MarginTrading',
-            OrderCondition.SHORT_SELLING: 'ShortSelling',
-            OrderCondition.DAY_TRADING_LONG: 'Cash',
-            OrderCondition.DAY_TRADING_SHORT: 'Cash'
+            OrderCondition.CASH: "Cash",
+            OrderCondition.MARGIN_TRADING: "MarginTrading",
+            OrderCondition.SHORT_SELLING: "ShortSelling",
+            OrderCondition.DAY_TRADING_LONG: "Cash",
+            OrderCondition.DAY_TRADING_SHORT: "Cash",
         }[order_cond]
 
-        order_lot = 'IntradayOdd' if odd_lot else 'Common'
+        order_lot = "IntradayOdd" if odd_lot else "Common"
 
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        if datetime.time(13, 40) < datetime.time(now.hour, now.minute) < datetime.time(14, 30) and odd_lot:
-            order_lot = 'Odd'
-        if datetime.time(14, 00) < datetime.time(now.hour, now.minute) < datetime.time(14, 30) and not odd_lot:
-            order_lot = 'Fixing'
+        if (
+            datetime.time(13, 40)
+            < datetime.time(now.hour, now.minute)
+            < datetime.time(14, 30)
+            and odd_lot
+        ):
+            order_lot = "Odd"
+        if (
+            datetime.time(14, 00)
+            < datetime.time(now.hour, now.minute)
+            < datetime.time(14, 30)
+            and not odd_lot
+        ):
+            order_lot = "Fixing"
 
         order = self.api.Order(
             price=price,
             quantity=quantity,
             action=action,
-            price_type='MKT' if market_order else 'LMT',
-            order_type='ROD',
+            price_type="MKT" if market_order else "LMT",
+            order_type="ROD",
             order_cond=order_cond,
             account=self.api.stock_account,
             order_lot=order_lot,
-            custom_field="FiNlAB"
+            custom_field="FiNlAB",
         )
 
         trade = self.api.place_order(contract, order)
@@ -133,11 +161,11 @@ class PocketAccount(Account):
         self.trades[trade.order.entid] = trade
         return trade.order.entid
 
-    def get_price_info(self):
-        ref = data.get('reference_price')
-        return ref.set_index('stock_id').to_dict(orient='index')
+    def get_price_info(self) -> dict[str, dict[str, Any]]:
+        ref = data.get("reference_price")
+        return ref.set_index("stock_id").to_dict(orient="index")
 
-    def update_trades(self):
+    def update_trades(self) -> None:
         """
         在取得 Trade 狀態前，必須先利用 update_status 進行更新
         api.list_trades() 查詢當日委託
@@ -152,45 +180,58 @@ class PocketAccount(Account):
         self.api.update_status(self.api.stock_account)
         self.trades = {t.order.entid: t for t in self.api.list_trades()}
 
-    def update_order(self, order_id, price):
+    def update_order(self, order_id: str, price: float) -> None:
         self.update_trades()
         trade = self.trades[order_id]
         try:
             self.api.update_order(trade, price=price)
         except ValueError as ve:
-            logging.warning(f"update_order: Cannot update price of order {order_id}: {ve}")
+            logging.warning(
+                f"update_order: Cannot update price of order {order_id}: {ve}"
+            )
 
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: str) -> None:
         self.update_trades()
         self.api.cancel_order(self.trades[order_id])
 
-    def get_position(self):
+    def get_position(self) -> Position:
         positions = self.api.list_positions(self.api.stock_account)
-        return Position.from_list([{
-            'stock_id': p.code,
-            'quantity': Decimal(p.quantity) / 1000 if p.direction == 'Buy' else -Decimal(p.quantity) / 1000,
-            'order_condition': self._map_order_condition(p.cond)
-        } for p in positions])
+        return Position.from_list(
+            [
+                {
+                    "stock_id": p.code,
+                    "quantity": Decimal(p.quantity) / 1000
+                    if p.direction == "Buy"
+                    else -Decimal(p.quantity) / 1000,
+                    "order_condition": self._map_order_condition(p.cond),
+                }
+                for p in positions
+            ]
+        )
 
-    def get_orders(self):
+    def get_orders(self) -> dict[str, Order]:
         self.update_trades()
         return {t.order.entid: trade_to_order(t) for t in self.trades.values()}
 
-    def get_stocks(self, stock_ids):
+    def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
         try:
-            contracts = [pk.contracts.Contract(
-                security_type='STK', code=s, exchange='TSE') for s in stock_ids]
+            contracts = [
+                pk.contracts.Contract(security_type="STK", code=s, exchange="TSE")
+                for s in stock_ids
+            ]
             snapshots = self.api.snapshots(contracts)
 
-        except:
+        except Exception:
             time.sleep(10)
-            contracts = [pk.contracts.Contract(
-                security_type='STK', code=s, exchange='TSE') for s in stock_ids]
+            contracts = [
+                pk.contracts.Contract(security_type="STK", code=s, exchange="TSE")
+                for s in stock_ids
+            ]
             snapshots = self.api.snapshots(contracts)
 
         return {s.code: snapshot_to_stock(s) for s in snapshots}
 
-    def get_total_balance(self):
+    def get_total_balance(self) -> int:
         positions = self.api.list_positions(self.api.stock_account)
 
         if not positions:
@@ -198,113 +239,129 @@ class PocketAccount(Account):
 
         position_value = sum(
             p.last_price * p.quantity * (1 - 0.001425) * (1 - 0.003)
-            - p.margin_purchase_amount - p.interest
+            - p.margin_purchase_amount
+            - p.interest
             for p in positions
         )
 
         return position_value + self.get_settlement() + self.get_cash()
 
-    def get_cash(self):
+    def get_cash(self) -> int:
         return self.api.account_balance().acc_balance
 
-    def get_settlement(self):
+    def get_settlement(self) -> int:
         settlements = self.api.settlements(self.api.stock_account)
         tw_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        return sum(int(s.amount) for s in settlements
-                   if datetime.datetime.combine(s.date, datetime.time(3, 0)) > tw_now)
+        return sum(
+            int(s.amount)
+            for s in settlements
+            if datetime.datetime.combine(s.date, datetime.time(3, 0)) > tw_now
+        )
 
-
-    def sep_odd_lot_order(self):
+    def sep_odd_lot_order(self) -> bool:
         return True
 
-
-    def get_market(self):
+    def get_market(self) -> TWMarket:
         return TWMarket()
 
-
     @staticmethod
-    def _map_order_condition(order_condition):
+    def _map_order_condition(order_condition: str) -> OrderCondition:
         return {
-            'Cash': OrderCondition.CASH,
-            'MarginTrading': OrderCondition.MARGIN_TRADING,
-            'ShortSelling': OrderCondition.SHORT_SELLING,
+            "Cash": OrderCondition.CASH,
+            "MarginTrading": OrderCondition.MARGIN_TRADING,
+            "ShortSelling": OrderCondition.SHORT_SELLING,
         }[order_condition]
 
-
-    def _get_sell_orders(self, start=None, end=None):
+    def _get_sell_orders(
+        self,
+        start: datetime.datetime | str | None = None,
+        end: datetime.datetime | str | None = None,
+    ) -> list[Order]:
 
         if start is None:
-            start = (datetime.datetime.now() - datetime.timedelta(days=90))
+            start = datetime.datetime.now() - datetime.timedelta(days=90)
 
         if end is None:
             end = datetime.datetime.now()
 
-        if hasattr(start, 'strftime'):
-            start = start.strftime('%Y-%m-%d')
+        if hasattr(start, "strftime"):
+            start = start.strftime("%Y-%m-%d")
 
-        if hasattr(end, 'strftime'):
-            end = end.strftime('%Y-%m-%d')
+        if hasattr(end, "strftime"):
+            end = end.strftime("%Y-%m-%d")
 
         profitloss = self.api.list_profit_loss(self.api.stock_account, start, end)
         market = self.get_market()
 
-        sell_orders = []
+        sell_orders: list[Order] = []
         for p in profitloss:
-            sell_orders.append(Order(
-                order_id=p.dseq,
-                stock_id=p.code,
-                action=Action.SELL,
-                price=p.price,
-                quantity=p.quantity,
-                filled_quantity=p.quantity,
-                status=OrderStatus.FILLED,
-                order_condition=self._map_order_condition(p.cond) \
-                    if hasattr(p, 'cond') else OrderCondition.CASH,
-                time=market.market_close_at_timestamp(
-                    datetime.datetime.strptime(p.date, '%Y%m%d')) \
-                    .to_pydatetime().replace(hour=13, minute=30),
-                org_order=p
-            ))
+            sell_orders.append(
+                Order(
+                    order_id=p.dseq,
+                    stock_id=p.code,
+                    action=Action.SELL,
+                    price=p.price,
+                    quantity=p.quantity,
+                    filled_quantity=p.quantity,
+                    status=OrderStatus.FILLED,
+                    order_condition=self._map_order_condition(p.cond)
+                    if hasattr(p, "cond")
+                    else OrderCondition.CASH,
+                    time=market.market_close_at_timestamp(
+                        datetime.datetime.strptime(p.date, "%Y%m%d")
+                    )
+                    .to_pydatetime()
+                    .replace(hour=13, minute=30),
+                    org_order=p,
+                )
+            )
         return sell_orders
 
+    def _get_buy_orders(self) -> list[Order]:
 
-    def _get_buy_orders(self):
-
-        buy_orders = []
+        buy_orders: list[Order] = []
 
         market = self.get_market()
         position = self.api.list_positions(self.api.stock_account)
 
         for i, p in enumerate(position):
-            position_detail = self.api.list_position_detail(self.api.stock_account, p.id)
+            position_detail = self.api.list_position_detail(
+                self.api.stock_account, p.id
+            )
 
             for pp in position_detail:
-
                 if pp.quantity == 0:
                     continue
 
-                buy_orders.append(Order(
-                    order_id=pp.dseq,
-                    stock_id=pp.code,
-                    action=Action.BUY,
-                    price=estimate_stock_price(pp.price / pp.quantity),
-                    quantity=pp.quantity,
-                    filled_quantity=pp.quantity,
-                    status=OrderStatus.FILLED,
-                    order_condition=map_order_condition(p.cond),
-                    time=market.market_close_at_timestamp(
-                        datetime.datetime.strptime(pp.date, '%Y-%m-%d')) \
-                        .to_pydatetime().replace(hour=13, minute=30),
-                    org_order=pp
-                ))
+                buy_orders.append(
+                    Order(
+                        order_id=pp.dseq,
+                        stock_id=pp.code,
+                        action=Action.BUY,
+                        price=estimate_stock_price(pp.price / pp.quantity),
+                        quantity=pp.quantity,
+                        filled_quantity=pp.quantity,
+                        status=OrderStatus.FILLED,
+                        order_condition=map_order_condition(p.cond),
+                        time=market.market_close_at_timestamp(
+                            datetime.datetime.strptime(pp.date, "%Y-%m-%d")
+                        )
+                        .to_pydatetime()
+                        .replace(hour=13, minute=30),
+                        org_order=pp,
+                    )
+                )
 
             if i % 20 == 19 and i != len(position) - 1:
                 time.sleep(5)
 
         return buy_orders
 
-
-    def get_trades(self, start, end):
+    def get_trades(
+        self,
+        start: datetime.datetime | str,
+        end: datetime.datetime | str,
+    ) -> list[Order]:
 
         if isinstance(start, str):
             start = datetime.datetime.fromisoformat(start)
@@ -319,45 +376,45 @@ class PocketAccount(Account):
         end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
 
         buy_orders = self._get_buy_orders()
-        sell_orders = sell_orders = self._get_sell_orders(start, end)
+        sell_orders = self._get_sell_orders(start, end)
         orders = buy_orders + sell_orders
 
         return [o for o in orders if start <= o.time <= end]
 
 
-def map_trade_status(status):
+def map_trade_status(status: str) -> OrderStatus:
     return {
-        'PendingSubmit': OrderStatus.NEW,
-        'PreSubmitted': OrderStatus.NEW,
-        'Submitted': OrderStatus.NEW,
-        'Failed': OrderStatus.CANCEL,
-        'Cancelled': OrderStatus.CANCEL,
-        'Filled': OrderStatus.FILLED,
-        'Filling': OrderStatus.PARTIALLY_FILLED,
-        'PartFilled': OrderStatus.PARTIALLY_FILLED,
+        "PendingSubmit": OrderStatus.NEW,
+        "PreSubmitted": OrderStatus.NEW,
+        "Submitted": OrderStatus.NEW,
+        "Failed": OrderStatus.CANCEL,
+        "Cancelled": OrderStatus.CANCEL,
+        "Filled": OrderStatus.FILLED,
+        "Filling": OrderStatus.PARTIALLY_FILLED,
+        "PartFilled": OrderStatus.PARTIALLY_FILLED,
     }[status]
 
-def map_order_condition(order_condition):
+
+def map_order_condition(order_condition: str) -> OrderCondition:
     return {
-        'Cash': OrderCondition.CASH,
-        'MarginTrading': OrderCondition.MARGIN_TRADING,
-        'ShortSelling': OrderCondition.SHORT_SELLING,
+        "Cash": OrderCondition.CASH,
+        "MarginTrading": OrderCondition.MARGIN_TRADING,
+        "ShortSelling": OrderCondition.SHORT_SELLING,
     }[order_condition]
 
-def map_action(action):
-    return {
-        'Buy': Action.BUY,
-        'Sell': Action.SELL
-    }[action]
 
-def trade_to_order(trade):
+def map_action(action: str) -> Action:
+    return {"Buy": Action.BUY, "Sell": Action.SELL}[action]
+
+
+def trade_to_order(trade: Any) -> Order:
     """將 Pocket package 的委託單轉換成 finlab 格式"""
     action = map_action(trade.order.action)
     status = map_trade_status(trade.status.status)
     order_condition = map_order_condition(trade.order.order_cond)
 
     # calculate order condition
-    if trade.order.daytrade_short == True and order_condition == OrderCondition.CASH:
+    if trade.order.daytrade_short and order_condition == OrderCondition.CASH:
         order_condition = OrderCondition.DAY_TRADING_SHORT
 
     # calculate quantity
@@ -365,27 +422,38 @@ def trade_to_order(trade):
     quantity = Decimal(trade.order.quantity)
     filled_quantity = Decimal(trade.status.deal_quantity)
 
-    if trade.order.order_lot == 'IntradayOdd':
+    if trade.order.order_lot == "IntradayOdd":
         quantity /= 1000
         filled_quantity /= 1000
 
-    return Order(**{
-        'order_id': trade.status.id,
-        'stock_id': trade.contract.code,
-        'action': action,
-        'price': trade.order.price if trade.status.modified_price == 0 else trade.status.modified_price,
-        'quantity': quantity,
-        'filled_quantity': filled_quantity,
-        'status': status,
-        'order_condition': order_condition,
-        'time': trade.status.order_datetime,
-        'org_order': trade
-    })
+    return Order(
+        order_id=trade.status.id,
+        stock_id=trade.contract.code,
+        action=action,
+        price=trade.order.price
+        if trade.status.modified_price == 0
+        else trade.status.modified_price,
+        quantity=quantity,
+        filled_quantity=filled_quantity,
+        status=status,
+        order_condition=order_condition,
+        time=trade.status.order_datetime,
+        org_order=trade,
+    )
 
 
-def snapshot_to_stock(snapshot):
+def snapshot_to_stock(snapshot: Any) -> Stock:
     """將 Pocket 股價行情轉換成 finlab 格式"""
     d = snapshot
-    return Stock(stock_id=d.code, open=d.open, high=d.high, low=d.low, close=d.close,
-                 bid_price=d.buy_price, ask_price=d.sell_price, bid_volume=d.buy_volume, ask_volume=d.sell_volume,
-                 pct_change=to_optional_float(getattr(d, 'change_rate', None)))
+    return Stock(
+        stock_id=d.code,
+        open=d.open,
+        high=d.high,
+        low=d.low,
+        close=d.close,
+        bid_price=d.buy_price,
+        ask_price=d.sell_price,
+        bid_volume=d.buy_volume,
+        ask_volume=d.sell_volume,
+        pct_change=to_optional_float(getattr(d, "change_rate", None)),
+    )

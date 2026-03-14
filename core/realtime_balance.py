@@ -1,9 +1,11 @@
 """Balance streaming mixin for realtime providers."""
 
-from typing import Callable, Optional
+from __future__ import annotations
+
 import datetime
 import logging
 import threading
+from collections.abc import Callable
 
 from .realtime_models import BalanceUpdate
 from .realtime_normalizers import get_field_value, to_optional_float
@@ -16,13 +18,13 @@ BalanceCallback = Callable[[BalanceUpdate], None]
 class BalanceStreamMixin:
     """Polling-based balance stream fallback shared across brokers."""
 
-    def _init_balance_stream(self):
+    def _init_balance_stream(self) -> None:
         self._balance_callbacks: list[BalanceCallback] = []
-        self._balance_polling_thread: Optional[threading.Thread] = None
+        self._balance_polling_thread: threading.Thread | None = None
         self._balance_polling_stop = threading.Event()
         self._balance_polling_interval = 3.0
         self._balance_emit_on_change = True
-        self._balance_last_snapshot: Optional[tuple] = None
+        self._balance_last_snapshot: tuple | None = None
 
     def subscribe_balances(
         self,
@@ -77,7 +79,7 @@ class BalanceStreamMixin:
                 logger.exception("Error while polling realtime balances")
             self._balance_polling_stop.wait(self._balance_polling_interval)
 
-    def _safe_call_number(self, method_name: str) -> Optional[float]:
+    def _safe_call_number(self, method_name: str) -> float | None:
         method = getattr(self, method_name, None)
         if method is None or not callable(method):
             return None
@@ -89,7 +91,7 @@ class BalanceStreamMixin:
 
     def _resolve_realtime_account_id(self) -> str:
         if hasattr(self, "target_account"):
-            account_obj = getattr(self, "target_account")
+            account_obj = self.target_account
             account_id = get_field_value(account_obj, "account")
             if account_id:
                 return str(account_id)
@@ -99,7 +101,7 @@ class BalanceStreamMixin:
                 return str(value)
         return ""
 
-    def _fetch_balance_update(self) -> Optional[BalanceUpdate]:
+    def _fetch_balance_update(self) -> BalanceUpdate | None:
         broker_mapper = getattr(self, "_get_realtime_balance", None)
         if callable(broker_mapper):
             custom = broker_mapper()
@@ -125,7 +127,7 @@ class BalanceStreamMixin:
     def on_balance(self, callback: BalanceCallback) -> None:
         self._balance_callbacks.append(callback)
 
-    def _emit_balance(self, balance: BalanceUpdate):
+    def _emit_balance(self, balance: BalanceUpdate) -> None:
         for cb in self._balance_callbacks:
             try:
                 cb(balance)

@@ -1,24 +1,36 @@
-from binance import client
-from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET
+from __future__ import annotations
 
-from finlab.online.core.account import OrderCondition, Account, Action, Order, Stock, OrderStatus
-from finlab.online.core.position import Position
-from finlab.online.core.realtime_normalizers import to_optional_float
+import datetime
+import logging
+import math
 import os
 import sys
 import time
-import math
-import logging
-import datetime
 import traceback
-import pandas as pd
-import cachetools.func
-from typing import Union
+from collections.abc import Callable
 from decimal import Decimal
+from typing import Any
+
+import cachetools.func
+import pandas as pd
+from binance import client
+from binance.enums import ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET, SIDE_BUY, SIDE_SELL
+
+from finlab.online.core.account import (
+    Account,
+    Action,
+    Order,
+    OrderCondition,
+    OrderStatus,
+    Stock,
+)
+from finlab.online.core.position import Position
+from finlab.online.core.realtime_normalizers import to_optional_float
 
 
-
-def round_step_size(quantity: Union[float, Decimal], step_size: Union[float, Decimal], round_up: bool = False) -> Decimal:
+def round_step_size(
+    quantity: float | Decimal, step_size: float | Decimal, round_up: bool = False
+) -> Decimal:
     """Rounds a given quantity to a specific step size, either rounding up or down.
 
     :param quantity: required
@@ -37,230 +49,306 @@ def round_step_size(quantity: Union[float, Decimal], step_size: Union[float, Dec
 
     return rounded_quantity.normalize()
 
-def retry(f, n_retry, *args, **argvs):
-  for i in range(1, n_retry + 1):
-    try:
-      return f(*args, **argvs)
-    except Exception as e:
-      exc_type, exc_obj, exc_tb = sys.exc_info()
-      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)
-      print(traceback.format_exc())
-      print(args, argvs)
 
-      if i != n_retry:
-        time.sleep(30)
+def retry(f: Callable[..., Any], n_retry: int, *args: Any, **argvs: Any) -> Any:
+    for i in range(1, n_retry + 1):
+        try:
+            return f(*args, **argvs)
+        except Exception:
+            _exc_type, _exc_obj, exc_tb = sys.exc_info()
+            os.path.split(exc_tb.tb_frame.f_code.co_filename)
+            print(traceback.format_exc())
+            print(args, argvs)
 
-class BinanceHelper(object):
-  
-  @staticmethod
-  def get_spot_balance(client):
+            if i != n_retry:
+                time.sleep(30)
+    return None
 
-    spot_account_balance = pd.DataFrame(retry(client.get_account, 3)['balances']).set_index('asset').astype(float)
-    spot_account_balance = spot_account_balance.sum(axis=1)[spot_account_balance.sum(axis=1)!=0]
-    spot_account_balance.index = spot_account_balance.index + 'USDT'
 
-    spot_tickers = BinanceHelper.get_spot_asset_price(client)
-    spot_tickers['USDTUSDT'] = 1
-    spot_tickers = pd.Series(spot_tickers)
-    return (spot_tickers.loc[spot_account_balance.index.intersection(spot_tickers.index)].astype(float) * spot_account_balance).sum()
-  
-  @staticmethod
-  def get_futures_balance(client):
-    
-    def list_select(list, key, value):
-      ret = [l for l in list if l[key] == value]
-      if len(ret) == 0:
-        return None
-      else:
+class BinanceHelper:
+    @staticmethod
+    def get_spot_balance(client: Any) -> float:
+
+        spot_account_balance = (
+            pd.DataFrame(retry(client.get_account, 3)["balances"])
+            .set_index("asset")
+            .astype(float)
+        )
+        spot_account_balance = spot_account_balance.sum(axis=1)[
+            spot_account_balance.sum(axis=1) != 0
+        ]
+        spot_account_balance.index = spot_account_balance.index + "USDT"
+
+        spot_tickers = BinanceHelper.get_spot_asset_price(client)
+        spot_tickers["USDTUSDT"] = 1
+        spot_tickers = pd.Series(spot_tickers)
+        return (
+            spot_tickers.loc[
+                spot_account_balance.index.intersection(spot_tickers.index)
+            ].astype(float)
+            * spot_account_balance
+        ).sum()
+
+    @staticmethod
+    def get_futures_balance(client: Any) -> float:
+
+        def list_select(
+            list: list[dict[str, Any]], key: str, value: str
+        ) -> dict[str, Any] | None:
+            ret = [l for l in list if l[key] == value]
+            if len(ret) == 0:
+                return None
+            return ret[0]
+
+        # calculate futures balance
+        futures_position_information = retry(client.futures_position_information, 3)
+        future_account_balance = retry(client.futures_account_balance, 3)
+        futures_position_information = pd.DataFrame(
+            futures_position_information
+        ).astype(
+            {"entryPrice": "float", "positionAmt": "float", "unRealizedProfit": "float"}
+        )
+        return (
+            futures_position_information.unRealizedProfit.sum()
+            + float(list_select(future_account_balance, "asset", "USDT")["balance"])
+            + float(list_select(future_account_balance, "asset", "BNB")["balance"])
+            * BinanceHelper.get_futures_asset_price(client)["BNBUSDT"]
+        )
+
+    @staticmethod
+    @cachetools.func.ttl_cache(ttl=60)
+    def get_spot_asset_price(client: Any) -> dict[str, Decimal]:
+        all_tickers = retry(client.get_all_tickers, 3)
+        return {d["symbol"]: Decimal(d["price"]) for d in all_tickers}
+
+    @staticmethod
+    @cachetools.func.ttl_cache(ttl=60)
+    def get_futures_asset_price(client: Any) -> dict[str, Decimal]:
+        all_tickers = retry(client.futures_mark_price, 3)
+        return {m["symbol"]: Decimal(m["markPrice"]) for m in all_tickers}
+
+    @staticmethod
+    def get_spot_position(client: Any) -> dict[str, Decimal]:
+        # spot balance
+        account = retry(client.get_account, 3)["balances"]
+        spot_balance = {
+            obj["asset"]: Decimal(obj["free"]) + Decimal(obj["locked"])
+            for obj in account
+            if Decimal(obj["free"]) != 0
+        }
+        return dict(spot_balance.items())
+
+    @staticmethod
+    def get_futures_position(client: Any) -> dict[str, float]:
+
+        futures_balance = client.futures_position_information()
+        futures_balance = pd.DataFrame(futures_balance).astype(
+            {"entryPrice": "float", "positionAmt": "float", "unRealizedProfit": "float"}
+        )
+
+        futures_balance = futures_balance.loc[futures_balance.symbol.str[-4:] == "USDT"]
+        futures_balance.index = futures_balance.symbol.str[:-4]
+        futures_balance = futures_balance.positionAmt.to_dict()
+        return {k: v for k, v in futures_balance.items() if v != 0}
+
+
+class BinanceSimpleClient:
+    def __init__(self, client: Any) -> None:
+        self.client = client
+
+        futures_exchange_info = retry(client.futures_exchange_info, 3)
+        exchange_info = retry(client.get_exchange_info, 3)
+
+        if futures_exchange_info is None:
+            raise Exception("Cannot connect to binance client.futures_exchange_info")
+
+        if exchange_info is None:
+            raise Exception("Cannot connect to binance client.exchange_info")
+
+        self.market_info = {
+            "FUTURES": pd.DataFrame(futures_exchange_info["symbols"]).set_index(
+                "symbol"
+            ),
+            "SPOT": pd.DataFrame(exchange_info["symbols"]).set_index("symbol"),
+        }
+
+    def round_price(
+        self,
+        symbol: str,
+        price: float | Decimal,
+        round_up: bool = False,
+        market_type: str = "SPOT",
+    ) -> Decimal:
+        info = self.market_info[market_type]
+        ticksize = Decimal(
+            self.list_select(info.loc[symbol].filters, "filterType", "PRICE_FILTER")[
+                "tickSize"
+            ]
+        )
+        # return round(int(price / ticksize) * ticksize, 9)
+        return round_step_size(price, ticksize, round_up=round_up)
+
+    def round_quantity(
+        self,
+        symbol: str,
+        quantity: float | Decimal,
+        round_up: bool = False,
+        market_type: str = "SPOT",
+    ) -> Decimal | int:
+
+        info = self.market_info[market_type]
+        symbol_info = self.list_select(
+            info.loc[symbol].filters, "filterType", "LOT_SIZE"
+        )
+        step_size = Decimal(symbol_info["stepSize"])
+        min_qty = Decimal(symbol_info["minQty"])
+
+        sign = (quantity < 0) * -2 + 1
+        ret = sign * round_step_size(abs(quantity), step_size, round_up=round_up)
+        # ret = round(sign * (int((quantity-min_qty) / step_size) * step_size + min_qty), 9)
+
+        if abs(ret) < min_qty:
+            ret = 0
+
+        return ret
+
+    @staticmethod
+    def list_select(
+        list: list[dict[str, Any]], key: str, value: str
+    ) -> dict[str, Any] | None:
+        ret = [l for l in list if l[key] == value]
+        if len(ret) == 0:
+            return None
         return ret[0]
-      
-    # calculate futures balance
-    futures_position_information = retry(client.futures_position_information, 3)
-    future_account_balance = retry(client.futures_account_balance, 3)
-    futures_position_information = pd.DataFrame(futures_position_information).astype({'entryPrice': 'float', 'positionAmt':'float', 'unRealizedProfit':'float'})
-    futures_total_balance = futures_position_information.unRealizedProfit.sum()+float(list_select(future_account_balance, 'asset', 'USDT')['balance'])\
-      +float(list_select(future_account_balance, 'asset', 'BNB')['balance']) * BinanceHelper.get_futures_asset_price(client)['BNBUSDT']
 
-    return futures_total_balance
-  
-  @staticmethod
-  @cachetools.func.ttl_cache(ttl=60)
-  def get_spot_asset_price(client):
-      all_tickers = retry(client.get_all_tickers, 3)
-      all_ticker_price = {d['symbol']: Decimal(d['price']) for d in all_tickers}
-      return all_ticker_price
-  
-  @staticmethod
-  @cachetools.func.ttl_cache(ttl=60)
-  def get_futures_asset_price(client):
-    all_tickers = retry(client.futures_mark_price, 3)
-    all_ticker_price = {m['symbol']: Decimal(m['markPrice']) for m in all_tickers}
-    return all_ticker_price
-  
-  @staticmethod
-  def get_spot_position(client):
-    # spot balance
-    account = retry(client.get_account, 3)['balances']
-    spot_balance = {obj['asset']:Decimal(obj['free']) + Decimal(obj['locked']) for obj in account if Decimal(obj['free']) != 0}
-    return {k:v for k, v in spot_balance.items()}
-  
-  @staticmethod
-  def get_futures_position(client):
+    def pass_min_notional(
+        self,
+        symbol: str,
+        quantity: float | Decimal,
+        market_type: str,
+        price: float | Decimal | None = None,
+    ) -> bool:
+        info = self.market_info[market_type]
+        notional = self.list_select(info.loc[symbol].filters, "filterType", "NOTIONAL")
+        min_notional = Decimal(notional.get("minNotional", notional.get("notional", 0)))
 
-    futures_balance = client.futures_position_information()
-    futures_balance = pd.DataFrame(futures_balance)\
-      .astype({'entryPrice': 'float', 'positionAmt':'float', 'unRealizedProfit':'float'})
+        present_price = price
+        if present_price is None:
+            if market_type == "SPOT":
+                present_price = BinanceHelper.get_spot_asset_price(self.client)[symbol]
+            elif market_type == "FUTURES":
+                present_price = BinanceHelper.get_futures_asset_price(self.client)[
+                    symbol
+                ]
 
-    futures_balance = futures_balance.loc[futures_balance.symbol.str[-4:] == 'USDT']
-    futures_balance.index = futures_balance.symbol.str[:-4]
-    futures_balance = futures_balance.positionAmt.to_dict()
-    return {k:v for k, v in futures_balance.items() if v != 0}
+        return not abs(quantity) * present_price < min_notional
 
+    def create_order(
+        self,
+        symbol: str,
+        quantity: float | Decimal,
+        market_type: str,
+        price: float | Decimal | None = None,
+        stop_price: float | Decimal | None = None,
+    ) -> dict[str, Any] | None:
 
-class BinanceSimpleClient():
+        if symbol == "NBTUSDT":
+            return None
 
-  def __init__(self, client):
-    self.client = client
-    
-    futures_exchange_info = retry(client.futures_exchange_info, 3)
-    exchange_info = retry(client.get_exchange_info, 3)
+        side = SIDE_BUY if quantity > 0 else SIDE_SELL
 
-    if futures_exchange_info is None:
-        raise Exception('Cannot connect to binance client.futures_exchange_info')
-    
-    if exchange_info is None:
-        raise Exception('Cannot connect to binance client.exchange_info')
+        if stop_price is not None:
+            assert price is not None
 
-    self.market_info = {
-      'FUTURES': pd.DataFrame(futures_exchange_info['symbols']).set_index('symbol'),
-      'SPOT': pd.DataFrame(exchange_info['symbols']).set_index('symbol'),
-    }
+        ORDER_TYPE_STOP = "STOP"
 
-  def round_price(self, symbol, price, round_up=False, market_type='SPOT'):
-    info = self.market_info[market_type]
-    ticksize = Decimal(self.list_select(info.loc[symbol].filters, 'filterType', 'PRICE_FILTER')['tickSize'])
-    #return round(int(price / ticksize) * ticksize, 9)
-    return round_step_size(price, ticksize, round_up=round_up)
+        order_type = (
+            ORDER_TYPE_STOP
+            if stop_price is not None
+            else ORDER_TYPE_LIMIT
+            if price is not None
+            else ORDER_TYPE_MARKET
+        )
 
-  def round_quantity(self, symbol, quantity, round_up=False, market_type='SPOT'):
+        if price is not None:
+            price = self.round_price(
+                symbol, price, round_up=False, market_type=market_type
+            )
 
-    info = self.market_info[market_type]
-    symbol_info = self.list_select(info.loc[symbol].filters, 'filterType', 'LOT_SIZE')
-    step_size = Decimal(symbol_info['stepSize'])
-    min_qty = Decimal(symbol_info['minQty'])
-    
-    sign = (quantity < 0) * -2 + 1
-    ret = sign * round_step_size(abs(quantity), step_size, round_up=round_up)
-    # ret = round(sign * (int((quantity-min_qty) / step_size) * step_size + min_qty), 9)
-    
-    if abs(ret) < min_qty:
-      ret = 0
-      
-    return ret
-  
-  @staticmethod
-  def list_select(list, key, value):
-    ret = [l for l in list if l[key] == value]
-    if len(ret) == 0:
-      return None
-    else:
-      return ret[0]
+        if stop_price is not None:
+            stop_price = self.round_price(
+                symbol, stop_price, round_up=False, market_type=market_type
+            )
 
-  def pass_min_notional(self, symbol, quantity, market_type, price=None):
-    info = self.market_info[market_type]
-    notional = self.list_select(info.loc[symbol].filters, 'filterType', 'NOTIONAL')
-    min_notional = Decimal(notional.get('minNotional', notional.get('notional', 0)))
-    
-    present_price = price
-    if present_price is None:
-      if market_type == 'SPOT':
-        present_price = BinanceHelper.get_spot_asset_price(self.client)[symbol]
-      elif market_type == 'FUTURES':
-        present_price = BinanceHelper.get_futures_asset_price(self.client)[symbol]
+        # recalculate amount according to step size
+        quantity = self.round_quantity(
+            symbol, quantity, round_up=False, market_type=market_type
+        )
+        icebergQty = self.round_quantity(
+            symbol, quantity / Decimal("9.5"), round_up=False, market_type=market_type
+        )
 
-    if abs(quantity) * present_price < min_notional:
-        return False
-    return True
+        # check min invest value (notional)
 
-  def create_order(self, symbol, quantity, market_type, price=None, stop_price=None):
+        pass_notional = self.pass_min_notional(
+            symbol, quantity, market_type=market_type, price=price
+        )
 
-    if symbol == 'NBTUSDT':
-      return None
+        min_notional_iceberg = 0.05 if symbol[-3:] == "BTC" else 1000
 
-    side = SIDE_BUY if quantity > 0 else SIDE_SELL
+        use_iceberg = (abs(quantity) * abs(price) > min_notional_iceberg) & (
+            abs(icebergQty) * 10 > abs(quantity)
+        )
 
-    if stop_price is not None:
-        assert price is not None
+        params = {
+            "side": side,
+            "type": order_type,
+            "symbol": symbol,
+            "quantity": format(abs(quantity), "f")
+            if isinstance(quantity, Decimal)
+            else abs(quantity),
+        }
 
-    ORDER_TYPE_STOP = 'STOP'
+        if use_iceberg and market_type == "SPOT" and icebergQty != 0:
+            params["icebergQty"] = (
+                format(abs(icebergQty), "f")
+                if isinstance(icebergQty, Decimal)
+                else abs(icebergQty)
+            )
 
-    order_type = ORDER_TYPE_STOP if stop_price is not None else \
-        ORDER_TYPE_LIMIT if price is not None else ORDER_TYPE_MARKET
+        if market_type == "FUTURES" and side == SIDE_BUY:
+            params["reduceOnly"] = "true"
 
-    
-    if price is not None:
-      price = self.round_price(symbol, price, round_up=False, market_type=market_type)
+        if price is not None:
+            precision = 8
+            price_str = "{:0.0{}f}".format(price, precision)
+            params["price"] = price_str
+            params["timeInForce"] = (
+                "GTC"  # if order_type != ORDER_TYPE_LIMIT else 'GTX'
+            )
 
-    if stop_price is not None:
-      stop_price = self.round_price(symbol, stop_price, round_up=False, market_type=market_type)
+        if stop_price is not None:
+            params["stopPrice"] = stop_price
 
-    # recalculate amount according to step size
-    quantity = self.round_quantity(symbol, quantity, round_up=False, market_type=market_type)
-    icebergQty = self.round_quantity(symbol, quantity/Decimal('9.5'), round_up=False, market_type=market_type)
+        if market_type == "SPOT":
+            order_func = self.client.create_order
+        elif market_type == "FUTURES":
+            order_func = self.client.futures_create_order
+        else:
+            raise Exception('market_type not in ["SPOT", "FUTURES"]')
 
-    # check min invest value (notional)
-    
-    pass_notional = self.pass_min_notional(symbol, quantity, market_type=market_type, price=price)
+        if (not pass_notional or quantity == 0) and "reduceOnly" not in params:
+            return None
 
-    min_notional_iceberg = 0.05 if symbol[-3:] == 'BTC' else 1000 if symbol[-4:] == 'USDT' else 1000
-
-    use_iceberg = (abs(quantity) * abs(price) > min_notional_iceberg) & (abs(icebergQty)*10 > abs(quantity))
-    
-    params = {
-      'side':side,
-      'type':order_type,
-      'symbol':symbol,
-      'quantity': format(abs(quantity), 'f') if isinstance(quantity, Decimal) else abs(quantity),
-    }
-    
-    if use_iceberg and market_type == 'SPOT' and icebergQty != 0:
-      params['icebergQty'] = format(abs(icebergQty), 'f') if isinstance(icebergQty, Decimal) else abs(icebergQty)
-
-    if market_type == 'FUTURES' and side == SIDE_BUY:
-      params['reduceOnly'] = 'true'
-
-    if price is not None:
-
-      precision = 8
-      price_str = '{:0.0{}f}'.format(price, precision)
-      params['price'] = price_str
-      params['timeInForce'] = 'GTC' #if order_type != ORDER_TYPE_LIMIT else 'GTX'
-
-    if stop_price is not None:
-      params['stopPrice'] = stop_price
-
-    if market_type == 'SPOT':
-      order_func = self.client.create_order
-    elif market_type == 'FUTURES':
-      order_func = self.client.futures_create_order
-    else:
-      raise Exception('market_type not in ["SPOT", "FUTURES"]')
-    
-    if (not pass_notional or quantity == 0) and 'reduceOnly' not in params:
-      return None
-
-    order = retry(order_func, 1, **params)
-
-    return order
+        return retry(order_func, 1, **params)
 
 
 class BinanceAccount(Account):
+    def __init__(self, base_currency: str = "USDT") -> None:
 
-    def __init__(self, base_currency='USDT'):
-
-        if 'BINANCE_API_KEY' in os.environ:
-            key = os.environ['BINANCE_API_KEY']
-            secret = os.environ['BINANCE_API_SECRET']
+        if "BINANCE_API_KEY" in os.environ:
+            key = os.environ["BINANCE_API_KEY"]
+            secret = os.environ["BINANCE_API_SECRET"]
             self.simple_client = BinanceSimpleClient(client.Client(key, secret))
         else:
             self.simple_client = BinanceSimpleClient(client.Client())
@@ -268,43 +356,60 @@ class BinanceAccount(Account):
         self.threading = None
         self.base_currency = base_currency
 
-    def create_order(self, action, stock_id, quantity, price=None, odd_lot=False, best_price_limit=False, market_order=False, order_cond=OrderCondition.CASH, extra_bid_pct=0) -> str:
+    def create_order(
+        self,
+        action: Action,
+        stock_id: str,
+        quantity: float,
+        price: float | None = None,
+        odd_lot: bool = False,
+        best_price_limit: bool = False,
+        market_order: bool = False,
+        order_cond: OrderCondition = OrderCondition.CASH,
+        extra_bid_pct: float = 0,
+    ) -> str:
 
         if quantity <= 0:
             raise ValueError("quantity should be larger than zero")
 
         if best_price_limit and market_order:
             raise ValueError(
-                "The flags best_price_limit and  market_order should not both be True")
+                "The flags best_price_limit and  market_order should not both be True"
+            )
 
         if not market_order:
             assert price is not None
 
         if action == Action.SELL:
-            quantity = - abs(quantity)
+            quantity = -abs(quantity)
 
         # create_order(self, symbol, quantity, market_type, price=None, stop_price=None):
 
         args = {
-            'symbol': stock_id+self.base_currency,
-            'quantity': quantity,
-            'market_type': 'SPOT',
+            "symbol": stock_id + self.base_currency,
+            "quantity": quantity,
+            "market_type": "SPOT",
         }
 
         if not market_order:
-            args['price'] = price
-        
+            args["price"] = price
+
         order = self.simple_client.create_order(**args)
 
-        if not order or not 'orderId' in order:
-            print('client order not success')
-            return ''
+        if not order or "orderId" not in order:
+            print("client order not success")
+            return ""
 
-        return stock_id + '|' + str(order['orderId'])
+        return stock_id + "|" + str(order["orderId"])
 
-    def update_order(self, order_id, price=None, quantity=None):
+    def update_order(
+        self,
+        order_id: str,
+        price: float | Decimal | None = None,
+        quantity: float | None = None,
+    ) -> None:
 
-        stock_id, order_id = order_id.split('|')
+        stock_id, order_id = order_id.split("|")
 
         if isinstance(price, int):
             price = Decimal(price)
@@ -313,86 +418,121 @@ class BinanceAccount(Account):
         self.simple_client.client.cancel_order(symbol=stock_id, orderId=order_id)
 
         if quantity:
-          quantity = quantity - order['executedQty']
+            quantity = quantity - order["executedQty"]
         else:
-          quantity = (order['executedQty'] - order['origQty']) * ((order['side'] == 'BUY')*2 - 1)
+            quantity = (order["executedQty"] - order["origQty"]) * (
+                (order["side"] == "BUY") * 2 - 1
+            )
 
-        self.simple_client.create_order(symbol=stock_id, quantity=quantity, price=price, market_type='SPOT')
-        return
+        self.simple_client.create_order(
+            symbol=stock_id, quantity=quantity, price=price, market_type="SPOT"
+        )
 
-    def cancel_order(self, order_id):
-        stock_id, order_id = order_id.split('|')
+    def cancel_order(self, order_id: str) -> None:
+        stock_id, order_id = order_id.split("|")
 
         try:
             self.simple_client.client.cancel_order(symbol=stock_id, orderId=order_id)
         except Exception as e:
             logging.warning(f"cancel_order: Cannot cancel order {order_id}: {e}")
 
-    def get_orders(self):
+    def get_orders(self) -> dict[str, Order]:
 
         orders = self.simple_client.client.get_open_orders()
         ret = {}
         for o in orders:
             status = OrderStatus.NEW
-            if o['executedQty'] == 0:
+            if o["executedQty"] == 0:
                 status = OrderStatus.NEW
-            elif o['origQty'] != o['executedQty']:
-                status = 'Filling'
+            elif o["origQty"] != o["executedQty"]:
+                status = "Filling"
                 status = OrderStatus.PARTIALLY_FILLED
             else:
                 status = OrderStatus.FILLED
 
-            if o['status'] == 'CANCELED':
+            if o["status"] == "CANCELED":
                 status = OrderStatus.CANCEL
 
-            ret[str(o['symbol'])+'|'+str(o['orderId'])] = Order(order_id=o['orderId'], action=o['side'], price=o['price'], 
-                quantity=o['origQty'], filled_quantity=o['executedQty'], status=status, 
-                time=datetime.datetime.fromtimestamp(int(o['time'])/1000), 
-                stock_id=o['symbol'], order_condition=OrderCondition.CASH, org_order=o)
+            ret[str(o["symbol"]) + "|" + str(o["orderId"])] = Order(
+                order_id=o["orderId"],
+                action=o["side"],
+                price=o["price"],
+                quantity=o["origQty"],
+                filled_quantity=o["executedQty"],
+                status=status,
+                time=datetime.datetime.fromtimestamp(int(o["time"]) / 1000),
+                stock_id=o["symbol"],
+                order_condition=OrderCondition.CASH,
+                org_order=o,
+            )
         return ret
 
-    def get_stocks(self, stock_ids):
+    def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
 
         if not stock_ids:
             return {}
 
         ret = {}
 
-        all_symbols = set(t['symbol'] for t in self.simple_client.client.get_all_tickers())
+        all_symbols = {t["symbol"] for t in self.simple_client.client.get_all_tickers()}
 
-        symbols = '["'+ '","'.join([s+self.base_currency for s in stock_ids if s+self.base_currency in all_symbols]) + '"]'
+        symbols = (
+            '["'
+            + '","'.join(
+                [
+                    s + self.base_currency
+                    for s in stock_ids
+                    if s + self.base_currency in all_symbols
+                ]
+            )
+            + '"]'
+        )
         tickers = self.simple_client.client.get_ticker(symbols=symbols)
 
         for t in tickers:
-            asset = t['symbol'].replace(self.base_currency, '')
-            ret[asset] = Stock(stock_id=asset, open=Decimal(t['openPrice']),
-                               high=Decimal(t['highPrice']), low=Decimal(t['lowPrice']),
-                close=Decimal(t['lastPrice']), bid_price=Decimal(t['bidPrice']), bid_volume=Decimal(t['bidQty']),
-                ask_price=Decimal(t['askPrice']), ask_volume=Decimal(t['askQty']),
-                pct_change=to_optional_float(t.get('priceChangePercent')))
-            
+            asset = t["symbol"].replace(self.base_currency, "")
+            ret[asset] = Stock(
+                stock_id=asset,
+                open=Decimal(t["openPrice"]),
+                high=Decimal(t["highPrice"]),
+                low=Decimal(t["lowPrice"]),
+                close=Decimal(t["lastPrice"]),
+                bid_price=Decimal(t["bidPrice"]),
+                bid_volume=Decimal(t["bidQty"]),
+                ask_price=Decimal(t["askPrice"]),
+                ask_volume=Decimal(t["askQty"]),
+                pct_change=to_optional_float(t.get("priceChangePercent")),
+            )
+
         return ret
 
-    def get_position(self):
+    def get_position(self) -> Position:
         ret = BinanceHelper.get_spot_position(self.simple_client.client)
-        return Position.from_list([
-           {'stock_id': sym, 'quantity': amount, 'order_condition': OrderCondition.CASH} 
-           for sym, amount in ret.items()])
-        
-    def get_total_balance(self):
-        
+        return Position.from_list(
+            [
+                {
+                    "stock_id": sym,
+                    "quantity": amount,
+                    "order_condition": OrderCondition.CASH,
+                }
+                for sym, amount in ret.items()
+            ]
+        )
+
+    def get_total_balance(self) -> float:
+
         return BinanceHelper.get_spot_balance(self.simple_client.client)
 
-    def support_day_trade_condition(self):
+    def support_day_trade_condition(self) -> bool:
         return True
 
-    def on_trades(self, func):
+    def on_trades(self, func: Callable[..., Any]) -> None:
         pass
-    
-    def sep_odd_lot_order(self):
+
+    def sep_odd_lot_order(self) -> bool:
         return False
 
-    def get_cash(self):
+    def get_cash(self) -> float:
 
         position = self.get_position()
         for p in position.position:
@@ -400,6 +540,5 @@ class BinanceAccount(Account):
                 return p.quantity
         return 0
 
-    def get_settlement(self):
+    def get_settlement(self) -> int:
         return 0
-      

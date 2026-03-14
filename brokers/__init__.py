@@ -1,9 +1,8 @@
 """Broker-specific account adapters with lazy imports."""
 
 from importlib import import_module
-from typing import Dict, Tuple
 
-_EXPORTS: Dict[str, Tuple[str, str]] = {
+_EXPORTS: dict[str, tuple[str, str]] = {
     "BinanceAccount": ("finlab.online.brokers.binance", "BinanceAccount"),
     "EsunAccount": ("finlab.online.brokers.esun", "EsunAccount"),
     "FubonAccount": ("finlab.online.brokers.fubon", "FubonAccount"),
@@ -14,10 +13,19 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "SinopacAccount": ("finlab.online.brokers.sinopac", "SinopacAccount"),
 }
 
-__all__ = sorted(_EXPORTS.keys())
+__all__ = [
+    "BinanceAccount",
+    "EsunAccount",
+    "FubonAccount",
+    "FugleAccount",
+    "MasterlinkAccount",
+    "PocketAccount",
+    "SchwabAccount",
+    "SinopacAccount",
+]
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> type:
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

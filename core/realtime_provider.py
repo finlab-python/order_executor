@@ -1,9 +1,13 @@
 """Realtime provider base class and callback orchestration."""
 
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List
-import logging
+from __future__ import annotations
 
+import logging
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import Any
+
+from .realtime_balance import BalanceCallback, BalanceStreamMixin
 from .realtime_models import (
     BidAsk,
     ConnectionState,
@@ -11,7 +15,6 @@ from .realtime_models import (
     OrderUpdate,
     Tick,
 )
-from .realtime_balance import BalanceCallback, BalanceStreamMixin
 
 logger = logging.getLogger(__name__)
 
@@ -26,61 +29,61 @@ ConnectionCallback = Callable[[ConnectionState, str], None]
 class RealtimeProvider(BalanceStreamMixin, ABC):
     """Abstract base for realtime market data, order events, and connection state."""
 
-    def _init_realtime(self):
+    def _init_realtime(self) -> None:
         """Call from subclass __init__ to initialize realtime state."""
-        self._tick_callbacks: List[TickCallback] = []
-        self._trade_callbacks: List[TradeCallback] = []
-        self._bidask_callbacks: List[BidAskCallback] = []
-        self._order_update_callbacks: List[OrderUpdateCallback] = []
-        self._fill_callbacks: List[FillCallback] = []
-        self._connection_callbacks: List[ConnectionCallback] = []
+        self._tick_callbacks: list[TickCallback] = []
+        self._trade_callbacks: list[TradeCallback] = []
+        self._bidask_callbacks: list[BidAskCallback] = []
+        self._order_update_callbacks: list[OrderUpdateCallback] = []
+        self._fill_callbacks: list[FillCallback] = []
+        self._connection_callbacks: list[ConnectionCallback] = []
         self._realtime_connected = False
         self._init_balance_stream()
 
     @abstractmethod
-    def subscribe_ticks(self, stock_ids: List[str]) -> None:
+    def subscribe_ticks(self, stock_ids: list[str]) -> None:
         """Start receiving Tick events for the given symbols."""
         ...
 
     @abstractmethod
-    def unsubscribe_ticks(self, stock_ids: List[str]) -> None:
+    def unsubscribe_ticks(self, stock_ids: list[str]) -> None:
         """Stop receiving Tick events for the given symbols."""
         ...
 
     @abstractmethod
-    def subscribe_bidask(self, stock_ids: List[str]) -> None:
+    def subscribe_bidask(self, stock_ids: list[str]) -> None:
         """Start receiving BidAsk events for the given symbols."""
         ...
 
     @abstractmethod
-    def unsubscribe_bidask(self, stock_ids: List[str]) -> None:
+    def unsubscribe_bidask(self, stock_ids: list[str]) -> None:
         """Stop receiving BidAsk events for the given symbols."""
         ...
 
-    def subscribe_trades(self, stock_ids: List[str]) -> None:
+    def subscribe_trades(self, stock_ids: list[str]) -> None:
         self.subscribe_ticks(stock_ids)
 
-    def unsubscribe_trades(self, stock_ids: List[str]) -> None:
+    def unsubscribe_trades(self, stock_ids: list[str]) -> None:
         self.unsubscribe_ticks(stock_ids)
 
     def backfill_ticks(
         self,
-        stock_ids: List[str],
+        stock_ids: list[str],
         start_time: Any = None,
         end_time: Any = None,
         emit: bool = True,
-    ) -> Dict[str, List[Tick]]:
+    ) -> dict[str, list[Tick]]:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support intraday tick backfill"
         )
 
     def subscribe_ticks_with_backfill(
         self,
-        stock_ids: List[str],
+        stock_ids: list[str],
         start_time: Any = None,
         end_time: Any = None,
         emit: bool = True,
-    ) -> Dict[str, List[Tick]]:
+    ) -> dict[str, list[Tick]]:
         backfilled = self.backfill_ticks(
             stock_ids,
             start_time=start_time,
@@ -92,18 +95,18 @@ class RealtimeProvider(BalanceStreamMixin, ABC):
 
     def get_bidask_snapshot(
         self,
-        stock_ids: List[str],
+        stock_ids: list[str],
         emit: bool = True,
-    ) -> Dict[str, BidAsk]:
+    ) -> dict[str, BidAsk]:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support bidask snapshot"
         )
 
     def subscribe_bidask_with_snapshot(
         self,
-        stock_ids: List[str],
+        stock_ids: list[str],
         emit: bool = True,
-    ) -> Dict[str, BidAsk]:
+    ) -> dict[str, BidAsk]:
         snapshots = self.get_bidask_snapshot(stock_ids, emit=emit)
         self.subscribe_bidask(stock_ids)
         return snapshots
@@ -126,7 +129,7 @@ class RealtimeProvider(BalanceStreamMixin, ABC):
     def on_connection(self, callback: ConnectionCallback) -> None:
         self._connection_callbacks.append(callback)
 
-    def _emit_tick(self, tick: Tick):
+    def _emit_tick(self, tick: Tick) -> None:
         for cb in self._tick_callbacks:
             try:
                 cb(tick)
@@ -139,28 +142,28 @@ class RealtimeProvider(BalanceStreamMixin, ABC):
                 except Exception:
                     logger.exception("Error in trade callback")
 
-    def _emit_bidask(self, bidask: BidAsk):
+    def _emit_bidask(self, bidask: BidAsk) -> None:
         for cb in self._bidask_callbacks:
             try:
                 cb(bidask)
             except Exception:
                 logger.exception("Error in bidask callback")
 
-    def _emit_order_update(self, update: OrderUpdate):
+    def _emit_order_update(self, update: OrderUpdate) -> None:
         for cb in self._order_update_callbacks:
             try:
                 cb(update)
             except Exception:
                 logger.exception("Error in order_update callback")
 
-    def _emit_fill(self, fill: Fill):
+    def _emit_fill(self, fill: Fill) -> None:
         for cb in self._fill_callbacks:
             try:
                 cb(fill)
             except Exception:
                 logger.exception("Error in fill callback")
 
-    def _emit_connection(self, state: ConnectionState, message: str = ""):
+    def _emit_connection(self, state: ConnectionState, message: str = "") -> None:
         for cb in self._connection_callbacks:
             try:
                 cb(state, message)

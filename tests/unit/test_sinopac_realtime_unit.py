@@ -1,37 +1,41 @@
+from __future__ import annotations
+
 import importlib
 import sys
 import types
+
+import pytest
 
 from finlab.online.core.enums import Action, OrderStatus
 from finlab.online.core.realtime_models import ConnectionState
 
 
 class _FakeQuote:
-    def __init__(self):
+    def __init__(self) -> None:
         self.event_cb = None
-        self.subscriptions = []
-        self.unsubscriptions = []
+        self.subscriptions: list[tuple[str, str | None]] = []
+        self.unsubscriptions: list[tuple[str, str | None]] = []
 
-    def on_event(self, callback):
+    def on_event(self, callback: object) -> object:
         self.event_cb = callback
         return callback
 
-    def subscribe(self, contract, quote_type=None):
+    def subscribe(self, contract: object, quote_type: str | None = None) -> None:
         self.subscriptions.append((contract.code, quote_type))
 
-    def unsubscribe(self, contract, quote_type=None):
+    def unsubscribe(self, contract: object, quote_type: str | None = None) -> None:
         self.unsubscriptions.append((contract.code, quote_type))
 
 
 class _FakeShioaji:
-    def __init__(self):
+    def __init__(self) -> None:
         self.tick_cb = None
         self.bidask_cb = None
         self.order_cb = None
         self.quote = _FakeQuote()
         self.stock_account = types.SimpleNamespace(account_id="9809789")
 
-    def ticks(self, contract, date=None):
+    def ticks(self, contract: object, date: str | None = None) -> types.SimpleNamespace:
         return types.SimpleNamespace(
             ts=[1_700_000_000_000_000, 1_700_000_001_000_000],
             close=[581.0, 582.0],
@@ -39,23 +43,27 @@ class _FakeShioaji:
             tick_type=[1, 2],
         )
 
-    def on_tick_stk_v1(self):
-        def decorator(callback):
+    def on_tick_stk_v1(self) -> object:
+        def decorator(callback: object) -> object:
             self.tick_cb = callback
             return callback
+
         return decorator
 
-    def on_bidask_stk_v1(self):
-        def decorator(callback):
+    def on_bidask_stk_v1(self) -> object:
+        def decorator(callback: object) -> object:
             self.bidask_cb = callback
             return callback
+
         return decorator
 
-    def set_order_callback(self, callback):
+    def set_order_callback(self, callback: object) -> None:
         self.order_cb = callback
 
 
-def _import_sinopac_module_with_fake_sdk(monkeypatch):
+def _import_sinopac_module_with_fake_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> types.ModuleType:
     shioaji_module = types.ModuleType("shioaji")
     shioaji_module.Shioaji = object
     shioaji_module.constant = types.SimpleNamespace(
@@ -80,7 +88,12 @@ def _import_sinopac_module_with_fake_sdk(monkeypatch):
     contracts_module = types.ModuleType("shioaji.contracts")
 
     class _FakeStockContract:
-        def __init__(self, security_type=None, code=None, exchange=None):
+        def __init__(
+            self,
+            security_type: str | None = None,
+            code: str | None = None,
+            exchange: str | None = None,
+        ) -> None:
             self.security_type = security_type
             self.code = code
             self.exchange = exchange
@@ -106,7 +119,9 @@ def _import_sinopac_module_with_fake_sdk(monkeypatch):
     return importlib.reload(module)
 
 
-def test_sinopac_realtime_callbacks_cover_tick_book_order_fill_and_connection(monkeypatch):
+def test_sinopac_realtime_callbacks_cover_tick_book_order_fill_and_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
     SinopacAccount = sinopac_module.SinopacAccount
 
@@ -123,7 +138,9 @@ def test_sinopac_realtime_callbacks_cover_tick_book_order_fill_and_connection(mo
     account.on_bidask(bidasks.append)
     account.on_order_update(updates.append)
     account.on_fill(fills.append)
-    account.on_connection(lambda state, message="": connections.append((state, message)))
+    account.on_connection(
+        lambda state, message="": connections.append((state, message))
+    )
 
     account.connect_realtime()
 
@@ -198,7 +215,7 @@ def test_sinopac_realtime_callbacks_cover_tick_book_order_fill_and_connection(mo
     assert connections[-1][0] == ConnectionState.CONNECTED
 
 
-def test_sinopac_subscribe_ticks_and_bidask(monkeypatch):
+def test_sinopac_subscribe_ticks_and_bidask(monkeypatch: pytest.MonkeyPatch) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
     SinopacAccount = sinopac_module.SinopacAccount
 
@@ -217,7 +234,9 @@ def test_sinopac_subscribe_ticks_and_bidask(monkeypatch):
     assert ("2330", "BidAsk") in account.api.quote.unsubscriptions
 
 
-def test_sinopac_backfill_ticks_uses_historical_tick_query(monkeypatch):
+def test_sinopac_backfill_ticks_uses_historical_tick_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
     SinopacAccount = sinopac_module.SinopacAccount
 

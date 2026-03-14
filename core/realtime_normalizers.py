@@ -1,14 +1,15 @@
 """Shared normalization helpers for realtime broker payloads."""
 
-from typing import Any, List, Optional
+from __future__ import annotations
+
 import datetime
 import math
-
+from typing import Any
 
 BOOK_DEPTH = 5
 
 
-def to_optional_float(value: Any) -> Optional[float]:
+def to_optional_float(value: Any) -> float | None:
     """Convert values from broker payloads to finite float, else None."""
     if value is None:
         return None
@@ -21,7 +22,7 @@ def to_optional_float(value: Any) -> Optional[float]:
     return converted
 
 
-def to_optional_int(value: Any) -> Optional[int]:
+def to_optional_int(value: Any) -> int | None:
     """Convert values from broker payloads to finite int, else None."""
     converted = to_optional_float(value)
     if converted is None:
@@ -36,7 +37,7 @@ def get_field_value(source: Any, field_name: str) -> Any:
     return getattr(source, field_name, None)
 
 
-def get_first_valid_float(source: Any, *field_names: str) -> Optional[float]:
+def get_first_valid_float(source: Any, *field_names: str) -> float | None:
     """Return first field that can be parsed as a finite float."""
     for name in field_names:
         value = get_field_value(source, name)
@@ -47,10 +48,10 @@ def get_first_valid_float(source: Any, *field_names: str) -> Optional[float]:
 
 
 def normalize_book_side(
-    prices: Optional[List[Any]],
-    volumes: Optional[List[Any]],
+    prices: list[Any] | None,
+    volumes: list[Any] | None,
     depth: int = BOOK_DEPTH,
-) -> tuple[List[float], List[int]]:
+) -> tuple[list[float], list[int]]:
     """Normalize book side values, preserving level alignment up to `depth`."""
     if depth <= 0:
         return [], []
@@ -67,8 +68,8 @@ def normalize_book_side(
     if last_meaningful_idx < 0:
         return [], []
 
-    normalized_prices: List[float] = []
-    normalized_volumes: List[int] = []
+    normalized_prices: list[float] = []
+    normalized_volumes: list[int] = []
 
     for idx in range(last_meaningful_idx + 1):
         price = to_optional_float(prices[idx]) if idx < len(prices) else None
@@ -79,7 +80,7 @@ def normalize_book_side(
     return normalized_prices, normalized_volumes
 
 
-def pad_levels(levels: List[Any], depth: int, fill_value: Any) -> List[Any]:
+def pad_levels(levels: list[Any], depth: int, fill_value: Any) -> list[Any]:
     """Return a fixed-length list without mutating source list."""
     if len(levels) >= depth:
         return list(levels[:depth])
@@ -89,7 +90,7 @@ def pad_levels(levels: List[Any], depth: int, fill_value: Any) -> List[Any]:
 def calculate_tick_pct_change(
     price: Any,
     prev_close: Any = None,
-) -> Optional[float]:
+) -> float | None:
     """Resolve tick pct change by priority: prev_close only."""
     p = to_optional_float(price)
     if p is None:
@@ -104,8 +105,8 @@ def calculate_tick_pct_change(
 
 def to_optional_datetime(
     value: Any,
-    default_date: Optional[datetime.date] = None,
-) -> Optional[datetime.datetime]:
+    default_date: datetime.date | None = None,
+) -> datetime.datetime | None:
     """Best-effort conversion for broker timestamps and HH:MM:SS strings."""
     if value is None:
         return None
@@ -167,7 +168,7 @@ def to_optional_datetime(
 def normalize_time_filter(
     value: Any,
     field_name: str,
-) -> Optional[datetime.time]:
+) -> datetime.time | None:
     """Normalize backfill filter inputs to `datetime.time`."""
     if value is None:
         return None
@@ -187,7 +188,7 @@ def normalize_time_filter(
 def normalize_backfill_window(
     start_time: Any = None,
     end_time: Any = None,
-) -> tuple[Optional[datetime.time], Optional[datetime.time]]:
+) -> tuple[datetime.time | None, datetime.time | None]:
     """Normalize and validate same-day intraday backfill time filters."""
     start = normalize_time_filter(start_time, "start_time")
     end = normalize_time_filter(end_time, "end_time")
@@ -198,19 +199,17 @@ def normalize_backfill_window(
 
 def is_within_backfill_window(
     value: datetime.datetime,
-    start_time: Optional[datetime.time] = None,
-    end_time: Optional[datetime.time] = None,
+    start_time: datetime.time | None = None,
+    end_time: datetime.time | None = None,
 ) -> bool:
     """Return whether `value` falls inside the requested time window."""
     current = value.time()
     if start_time is not None and current < start_time:
         return False
-    if end_time is not None and current > end_time:
-        return False
-    return True
+    return not (end_time is not None and current > end_time)
 
 
-def finalize_backfilled_ticks(ticks: List[Any]) -> List[Any]:
+def finalize_backfilled_ticks(ticks: list[Any]) -> list[Any]:
     """Sort backfilled ticks and repair missing cumulative volume values."""
     ordered = sorted(
         ticks,
