@@ -836,7 +836,7 @@ class FubonAccount(Account, RealtimeProvider):
             if len(date_parts) == 3:
                 return int(date_parts[0]), int(date_parts[1]), int(date_parts[2])
             return datetime.datetime.now().year, int(date_parts[0]), int(date_parts[1])
-        # 格式: YYYYMMDD
+        # 格式: YYYYMMDD  # noqa: ERA001
         return int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8])
 
     def _parse_time(self, time_str: str) -> tuple[int, int, int, int]:
@@ -1208,7 +1208,7 @@ class FubonAccount(Account, RealtimeProvider):
                             if stock_id in stock_data:
                                 current_price = stock_data[stock_id].close
                                 if current_price:
-                                    # 計算市值 (股數 * 現價)
+                                    # 計算市值 (股數 * 現價)  # noqa: ERA001
                                     position_value = (
                                         abs(float(today_qty)) * current_price
                                     )

@@ -71,7 +71,6 @@ class Dashboard:
         url = (
             "https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_set_portfolio"
         )
-        # url = 'http://127.0.0.1:8080'
         return requests.post(
             url,
             json={

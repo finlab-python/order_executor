@@ -546,8 +546,6 @@ class Position:
                 report.market.get_price("close", adj=True).iloc[-252:].copy()
             )
 
-        # find w.index not in price.keys()
-        # import pdb; pdb.set_trace()
         for s in w.index.tolist():
             if (
                 s.split(" ")[0] not in kwargs["price"]

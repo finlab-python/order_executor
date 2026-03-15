@@ -483,7 +483,6 @@ class SinopacAccount(Account, RealtimeProvider):
         order_cond: OrderCondition = OrderCondition.CASH,
     ) -> str:
 
-        # contract = self.api.Contracts.Stocks.get(stock_id)
         contract = SJStock(
             security_type=SJSecurityType.Stock,
             code=stock_id,

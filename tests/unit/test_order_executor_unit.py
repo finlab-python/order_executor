@@ -439,7 +439,7 @@ class TestCalculatePriceWithExtraBid(unittest.TestCase):
         """測試負向額外競價（折扣）"""
         from finlab.online.order_executor import calculate_price_with_extra_bid
 
-        # 測試 -3% 折扣
+        # 測試 -3% 折扣  # noqa: ERA001
         result = calculate_price_with_extra_bid(100.0, -0.03)
         self.assertAlmostEqual(result, 97.0, places=2)
 

@@ -185,7 +185,6 @@ class BinanceSimpleClient:
                 "tickSize"
             ]
         )
-        # return round(int(price / ticksize) * ticksize, 9)
         return round_step_size(price, ticksize, round_up=round_up)
 
     def round_quantity(
@@ -205,7 +204,6 @@ class BinanceSimpleClient:
 
         sign = (quantity < 0) * -2 + 1
         ret = sign * round_step_size(abs(quantity), step_size, round_up=round_up)
-        # ret = round(sign * (int((quantity-min_qty) / step_size) * step_size + min_qty), 9)
 
         if abs(ret) < min_qty:
             ret = 0

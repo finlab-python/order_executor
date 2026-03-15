@@ -67,18 +67,10 @@ def greedy_allocation(
 
         if verbose:
             print("\nAllocating long sub-portfolio...")
-        # da1 = DiscreteAllocation(
-        #     longs, latest_prices[longs.keys()], total_portfolio_value=long_val
-        # )
         long_alloc, long_leftover = greedy_allocation(longs, latest_prices, long_val)
 
         if verbose:
             print("\nAllocating short sub-portfolio...")
-        # da2 = DiscreteAllocation(
-        #     shorts,
-        #     latest_prices[shorts.keys()],
-        #     total_portfolio_value=short_val,
-        # )
         short_alloc, short_leftover = greedy_allocation(
             shorts, latest_prices, short_val
         )

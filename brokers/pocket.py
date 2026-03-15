@@ -23,9 +23,6 @@ pattern = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 class PocketAccount(Account):
-    # required_module = 'pocket'
-    # module_version = '1.0.0'
-
     def __init__(
         self,
         api_key: str | None = None,

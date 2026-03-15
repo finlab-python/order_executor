@@ -580,8 +580,6 @@ class FugleAccount(Account, RealtimeProvider):
 
         ret: list[dict[str, Any]] = []
         for i in inv:
-            # removed: position of stk_dats is not completed
-            # total_qty = sum([int(d['qty']) for d in i['stk_dats']]) / 1000
             total_qty = (
                 Decimal(int(i["qty_l"]) + int(i["qty_bm"]) - int(i["qty_sm"])) / 1000
             )
