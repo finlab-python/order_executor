@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import unittest
-from typing import Any
 
 from finlab.online.base_account import Action
 from finlab.online.enums import OrderCondition
