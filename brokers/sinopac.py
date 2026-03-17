@@ -110,6 +110,7 @@ class SinopacAccount(Account, RealtimeProvider):
         self.accounts = self.api.login(api_key, secret_key, fetch_contract=False)
 
         self.trades: dict[str, SJTrade] = {}
+        self._exchange_cache: dict[str, SJExchange] = {}
 
         self.api.activate_ca(
             ca_path=certificate_path,
@@ -355,42 +356,66 @@ class SinopacAccount(Account, RealtimeProvider):
         self._emit_connection(ConnectionState.DISCONNECTED)
         logger.info("Sinopac realtime disconnected")
 
+    def _resolve_exchange(self, stock_ids: list[str]) -> dict[str, SJExchange]:
+        """Resolve TSE vs OTC exchange for each stock via snapshot API."""
+        unknown = [sid for sid in stock_ids if sid not in self._exchange_cache]
+        if unknown:
+            contracts = [
+                SJStock(
+                    security_type=SJSecurityType.Stock,
+                    code=sid,
+                    exchange=SJExchange.TSE,
+                )
+                for sid in unknown
+            ]
+            try:
+                snapshots = self.api.snapshots(contracts)
+                for snap in snapshots:
+                    exchange_str = getattr(snap, "exchange", "TSE")
+                    self._exchange_cache[snap.code] = (
+                        SJExchange.OTC if str(exchange_str) == "OTC" else SJExchange.TSE
+                    )
+            except Exception:
+                pass
+        return {sid: self._exchange_cache.get(sid, SJExchange.TSE) for sid in stock_ids}
+
+    def _make_contract(self, sid: str, exchanges: dict[str, SJExchange]) -> SJStock:
+        return SJStock(
+            security_type=SJSecurityType.Stock,
+            code=sid,
+            exchange=exchanges.get(sid, SJExchange.TSE),
+        )
+
     def subscribe_ticks(self, stock_ids: list[str]) -> None:
+        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
-            contract = SJStock(
-                security_type=SJSecurityType.Stock,
-                code=sid,
-                exchange=SJExchange.TSE,
+            self.api.quote.subscribe(
+                self._make_contract(sid, exchanges),
+                quote_type=sj.constant.QuoteType.Tick,
             )
-            self.api.quote.subscribe(contract, quote_type=sj.constant.QuoteType.Tick)
 
     def unsubscribe_ticks(self, stock_ids: list[str]) -> None:
+        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
-            contract = SJStock(
-                security_type=SJSecurityType.Stock,
-                code=sid,
-                exchange=SJExchange.TSE,
+            self.api.quote.unsubscribe(
+                self._make_contract(sid, exchanges),
+                quote_type=sj.constant.QuoteType.Tick,
             )
-            self.api.quote.unsubscribe(contract, quote_type=sj.constant.QuoteType.Tick)
 
     def subscribe_bidask(self, stock_ids: list[str]) -> None:
+        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
-            contract = SJStock(
-                security_type=SJSecurityType.Stock,
-                code=sid,
-                exchange=SJExchange.TSE,
+            self.api.quote.subscribe(
+                self._make_contract(sid, exchanges),
+                quote_type=sj.constant.QuoteType.BidAsk,
             )
-            self.api.quote.subscribe(contract, quote_type=sj.constant.QuoteType.BidAsk)
 
     def unsubscribe_bidask(self, stock_ids: list[str]) -> None:
+        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
-            contract = SJStock(
-                security_type=SJSecurityType.Stock,
-                code=sid,
-                exchange=SJExchange.TSE,
-            )
             self.api.quote.unsubscribe(
-                contract, quote_type=sj.constant.QuoteType.BidAsk
+                self._make_contract(sid, exchanges),
+                quote_type=sj.constant.QuoteType.BidAsk,
             )
 
     def backfill_ticks(
@@ -408,11 +433,8 @@ class SinopacAccount(Account, RealtimeProvider):
         for stock_id in stock_ids:
             ticks: list[Tick] = []
             try:
-                contract = SJStock(
-                    security_type=SJSecurityType.Stock,
-                    code=stock_id,
-                    exchange=SJExchange.TSE,
-                )
+                exchanges = self._resolve_exchange([stock_id])
+                contract = self._make_contract(stock_id, exchanges)
                 ticks_data = self.api.ticks(contract, date=session_date_str)
                 prices = list(getattr(ticks_data, "close", []) or [])
                 volumes = list(getattr(ticks_data, "volume", []) or [])
