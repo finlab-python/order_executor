@@ -14,6 +14,12 @@ from finlab.compat import resolve_position_entry_symbol
 from finlab.online.order_executor import OrderExecutor, Position
 
 
+def _token_dict() -> dict[str, str]:
+    """Return {token_type: token} for use in request payloads."""
+    token, token_type = finlab.get_token()
+    return {token_type: token}
+
+
 class Dashboard:
     def __init__(
         self,
@@ -65,7 +71,7 @@ class Dashboard:
         url = (
             "https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_get_portfolio"
         )
-        return requests.post(url, json={"api_token": finlab.get_token()}).json()["msg"]
+        return requests.post(url, json=_token_dict()).json()["msg"]
 
     def set_portfolio(self, allocs: list[dict[str, Any]]) -> Any:
         url = (
@@ -73,10 +79,7 @@ class Dashboard:
         )
         return requests.post(
             url,
-            json={
-                "api_token": finlab.get_token(),
-                "allocs": allocs,
-            },
+            json={**_token_dict(), "allocs": allocs},
         ).json()["msg"]
 
     def get_present_qty(self) -> list[dict[str, Any]]:
@@ -162,7 +165,7 @@ class Dashboard:
                 json={
                     "target_qty": target_qty,
                     "present_qty": present_qty,
-                    "api_token": finlab.get_token(),
+                    **_token_dict(),
                     "pt": self.paper_trade,
                 },
             )
@@ -198,7 +201,7 @@ class Dashboard:
                 json={
                     "target_qty": [],
                     "present_qty": present_qty,
-                    "api_token": finlab.get_token(),
+                    **_token_dict(),
                     "pt": True,
                 },
             )
@@ -260,7 +263,7 @@ class Dashboard:
             url = "https://asia-east2-fdata-299302.cloudfunctions.net/dashboard_add_txn"
 
             json = {
-                "api_token": finlab.get_token(),
+                **_token_dict(),
                 "pt": self.paper_trade,
                 "symbol": {
                     "id": trade.symbol
