@@ -13,8 +13,10 @@ from .realtime_models import (
     ConnectionState,
     Fill,
     OrderUpdate,
+    PositionUpdate,
     Tick,
 )
+from .realtime_position import PositionCallback, PositionStreamMixin
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ FillCallback = Callable[[Fill], None]
 ConnectionCallback = Callable[[ConnectionState, str], None]
 
 
-class RealtimeProvider(BalanceStreamMixin, ABC):
+class RealtimeProvider(PositionStreamMixin, BalanceStreamMixin, ABC):
     """Abstract base for realtime market data, order events, and connection state."""
 
     def _init_realtime(self) -> None:
@@ -39,6 +41,7 @@ class RealtimeProvider(BalanceStreamMixin, ABC):
         self._connection_callbacks: list[ConnectionCallback] = []
         self._realtime_connected = False
         self._init_balance_stream()
+        self._init_position_stream()
 
     @abstractmethod
     def subscribe_ticks(self, stock_ids: list[str]) -> None:
@@ -187,6 +190,7 @@ __all__ = [
     "ConnectionCallback",
     "FillCallback",
     "OrderUpdateCallback",
+    "PositionCallback",
     "RealtimeProvider",
     "TickCallback",
     "TradeCallback",

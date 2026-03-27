@@ -180,6 +180,25 @@ class BalanceUpdate:
         )
 
 
+@dataclass
+class PositionUpdate:
+    """Realtime account position snapshot."""
+
+    account_id: str
+    broker: str
+    position: Any  # Position object from core.position
+    time: datetime.datetime = field(default_factory=datetime.datetime.now)
+    source: str = "poll"  # "poll" or "fill"
+
+    def snapshot_key(self) -> tuple:
+        pos = self.position
+        entries = getattr(pos, "position", [])
+        return tuple(
+            (e.get("stock_id", ""), float(e.get("quantity", 0)), e.get("order_condition"))
+            for e in sorted(entries, key=lambda x: (x.get("stock_id", ""), str(x.get("order_condition", ""))))
+        )
+
+
 class ConnectionState(Enum):
     CONNECTING = "connecting"
     CONNECTED = "connected"
@@ -195,5 +214,6 @@ __all__ = [
     "ConnectionState",
     "Fill",
     "OrderUpdate",
+    "PositionUpdate",
     "Tick",
 ]
