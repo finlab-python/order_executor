@@ -13,7 +13,6 @@ from .realtime_models import (
     ConnectionState,
     Fill,
     OrderUpdate,
-    PositionUpdate,
     Tick,
 )
 from .realtime_position import PositionCallback, PositionStreamMixin

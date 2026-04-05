@@ -49,9 +49,8 @@ def _apply_fill_to_position(position: Any, fill: Fill) -> Any:
             matched = True
             break
 
-    if not matched:
-        if delta != 0:
-            entries.append(_make_entry(fill.stock_id, delta, oc))
+    if not matched and delta != 0:
+        entries.append(_make_entry(fill.stock_id, delta, oc))
 
     # Remove zero-quantity entries
     entries = [e for e in entries if e.get("quantity", 0) != 0]
