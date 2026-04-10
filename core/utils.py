@@ -40,13 +40,10 @@ def greedy_allocation(
 
     :param reinvest: whether or not to reinvest cash gained from shorting
     :type reinvest: bool, defaults to False
-    :param verbose: print error analysis?
-    :type verbose: bool, defaults to False
     :return: the number of shares of each ticker that should be purchased,
              along with the amount of funds leftover.
     :rtype: (dict, float)
     """
-    verbose = False
     # Sort in descending order of weight
     weights.sort(key=lambda x: x[1], reverse=True)
 
@@ -65,12 +62,8 @@ def greedy_allocation(
         short_val = total_portfolio_value * short_total_weight
         long_val = total_portfolio_value * long_total_weight
 
-        if verbose:
-            print("\nAllocating long sub-portfolio...")
         long_alloc, long_leftover = greedy_allocation(longs, latest_prices, long_val)
 
-        if verbose:
-            print("\nAllocating short sub-portfolio...")
         short_alloc, short_leftover = greedy_allocation(
             shorts, latest_prices, short_val
         )
@@ -144,8 +137,6 @@ def greedy_allocation(
 
     allocation = dict(zip([i[0] for i in weights], shares_bought))
 
-    if verbose:
-        print(f"Funds remaining: {available_funds:.2f}")
     return allocation, available_funds
 
 

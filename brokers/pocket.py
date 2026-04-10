@@ -4,7 +4,6 @@ import contextlib
 import datetime
 import logging
 import os
-import re
 import time
 from decimal import Decimal
 from typing import Any
@@ -18,9 +17,6 @@ from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_normalizers import to_optional_float
 from finlab.online.core.utils import estimate_stock_price
-
-pattern = re.compile(r"(?<!^)(?=[A-Z])")
-
 
 class PocketAccount(Account):
     def __init__(

@@ -351,7 +351,6 @@ class BinanceAccount(Account):
         else:
             self.simple_client = BinanceSimpleClient(client.Client())
 
-        self.threading = None
         self.base_currency = base_currency
 
     def create_order(

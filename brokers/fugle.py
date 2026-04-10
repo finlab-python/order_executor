@@ -670,8 +670,6 @@ class FugleAccount(Account, RealtimeProvider):
 
                 func(o)
 
-        self.threading = Thread(target=self.sdk.connect_websocket)
-
     def sep_odd_lot_order(self) -> bool:
         return True
 
