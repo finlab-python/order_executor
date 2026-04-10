@@ -140,43 +140,36 @@ def greedy_allocation(
     return allocation, available_funds
 
 
-def round_tw_price(price: float) -> float:
-    """Round tw price to the nearest tick size according to the following rules:
-    0.01 for price <= 10
-    0.05 for price <= 50
-    0.1 for price <= 100
-    0.5 for price <= 500
-    1 for price <= 1000
-    5 for price > 1000
+def _round_to_tick(price: float, direction: str = "floor") -> float:
+    """Round price to Taiwan tick boundary.
+
+    Tick-size tiers: 0.01 (<=10), 0.05 (<=50), 0.1 (<=100),
+    0.5 (<=500), 1 (<=1000), 5 (>1000).
+
+    Args:
+        price: The price to round.
+        direction: "floor" to round down, "ceil" to round up.
     """
-    result = price
-    if result <= 10:
-        result = math.floor(round(result, 3) * 100) / 100
-    elif result <= 50:
-        result = math.floor(result * 20) / 20
-    elif result <= 100:
-        result = math.floor(result * 10) / 10
-    elif result <= 500:
-        result = math.floor(result * 2) / 2
-    elif result <= 1000:
-        result = math.floor(result)
+    fn = math.floor if direction == "floor" else math.ceil
+    if price <= 10:
+        return fn(round(price, 3) * 100) / 100
+    elif price <= 50:
+        return fn(price * 20) / 20
+    elif price <= 100:
+        return fn(price * 10) / 10
+    elif price <= 500:
+        return fn(price * 2) / 2
+    elif price <= 1000:
+        return fn(price)
     else:
-        result = math.floor(result / 5) * 5
+        return fn(price / 5) * 5
 
-    result2 = price
-    if result2 <= 10:
-        result2 = math.ceil(round(result, 3) * 100) / 100
-    elif result2 <= 50:
-        result2 = math.ceil(result * 20) / 20
-    elif result2 <= 100:
-        result2 = math.ceil(result * 10) / 10
-    elif result2 <= 500:
-        result2 = math.ceil(result * 2) / 2
-    elif result2 <= 1000:
-        result2 = math.ceil(result)
-    else:
-        result2 = math.ceil(result / 5) * 5
 
+def round_tw_price(price: float) -> float:
+    """Round tw price to the nearest tick size. Asserts the price is already
+    on a tick boundary (floor == ceil)."""
+    result = _round_to_tick(price, "floor")
+    result2 = _round_to_tick(price, "ceil")
     assert result == result2
     return result
 
