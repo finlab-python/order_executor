@@ -221,6 +221,7 @@ def test_sinopac_subscribe_ticks_and_bidask(monkeypatch: pytest.MonkeyPatch) -> 
 
     account = SinopacAccount.__new__(SinopacAccount)
     account.api = _FakeShioaji()
+    account._exchange_cache = {}
     account._init_realtime()
 
     account.subscribe_ticks(["2330"])
@@ -242,6 +243,7 @@ def test_sinopac_backfill_ticks_uses_historical_tick_query(
 
     account = SinopacAccount.__new__(SinopacAccount)
     account.api = _FakeShioaji()
+    account._exchange_cache = {}
     account._init_realtime()
 
     ticks = []
