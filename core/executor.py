@@ -271,7 +271,7 @@ class OrderExecutor:
                 continue
 
             if sid not in stocks:
-                logging.warning(sid + "not in stocks... skipped!")
+                logger.warning(sid + " not in stocks... skipped!")
                 continue
 
             stock = stocks[sid]

@@ -640,7 +640,7 @@ class FugleAccount(Account, RealtimeProvider):
             "A": OrderCondition.DAY_TRADING_SHORT,
         }
 
-        @self.acc.sdk.on("dealt")
+        @self.sdk.on("dealt")
         def on_dealt(data: dict[str, Any]) -> None:
             if isinstance(data, dict):
                 time = (

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import imp
+import importlib
 from typing import Any
 
 import ipywidgets as widgets
@@ -12,7 +12,7 @@ from finlab.compat import resolve_position_entry_symbol
 from finlab.online import enums, order_executor
 from finlab.online.order_executor import OrderExecutor, Position
 
-imp.reload(order_executor)
+importlib.reload(order_executor)
 
 
 def get_strategy_display_name(strategies: dict[str, Any], strategy_id: str) -> str:

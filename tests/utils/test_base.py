@@ -85,7 +85,7 @@ class AccountTestMixin:
 
     def assert_position_structure(self, position: Any) -> None:
         """驗證 Position 物件結構"""
-        self.assertTrue(hasattr(position, "items"), "Position 缺少 items 屬性")
+        self.assertTrue(hasattr(position, "position"), "Position 缺少 position 屬性")
         self.assertTrue(
             callable(getattr(position, "from_list", None)),
             "Position 缺少 from_list 方法",
