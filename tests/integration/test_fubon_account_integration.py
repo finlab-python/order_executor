@@ -21,14 +21,11 @@ from finlab.online.enums import Action, OrderStatus
 from finlab.online.order_executor import OrderExecutor, Position
 
 from ..fixtures.fubon_test_data import COMMON_TEST_SCENARIOS
-from ..test_config import TestConfig
+from ..conftest import FUBON_ENV_VARS, has_fubon_credentials, skip_if_no_fubon_credentials
 from ..utils.test_base import AccountTestMixin, IntegrationTestCase
 
-# 設定測試日誌
-TestConfig.setup_test_logging(level=logging.INFO)
 
-
-@TestConfig.skip_if_no_fubon_credentials()
+@skip_if_no_fubon_credentials
 class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
     """富邦帳戶整合測試類"""
 
@@ -380,7 +377,7 @@ class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
         logging.info(f"連續查詢餘額: {balances}")
 
 
-@TestConfig.skip_if_no_fubon_credentials()
+@skip_if_no_fubon_credentials
 class TestFubonAccountOrderExecutor(IntegrationTestCase):
     """富邦帳戶與 OrderExecutor 整合測試"""
 
@@ -636,10 +633,10 @@ class TestFubonAccountOrderExecutor(IntegrationTestCase):
 
 if __name__ == "__main__":
     # 檢查環境變數
-    if not TestConfig.has_fubon_credentials():
-        print("警告：缺少富邦證券測試憑證，將跳過所有測試")
-        print("需要設置以下環境變數：")
-        for var in TestConfig.FUBON_ENV_VARS:
+    if not has_fubon_credentials():
+        print("Missing Fubon credentials, all tests will be skipped.")
+        print("Required env vars:")
+        for var in FUBON_ENV_VARS:
             print(f"  - {var}")
 
     unittest.main(verbosity=2)
