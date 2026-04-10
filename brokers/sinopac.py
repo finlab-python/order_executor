@@ -622,7 +622,7 @@ class SinopacAccount(Account, RealtimeProvider):
                 if isinstance(trade.order, SJStockOrder)
                 else SJStockOrderLot.Common
             )
-            if order_lot == SJStockOrderLot.IntradayOdd:
+            if order_lot in (SJStockOrderLot.IntradayOdd, SJStockOrderLot.Odd):
                 action = order.action
                 stock_id = order.stock_id
                 q = typesafe_op(order.quantity, order.filled_quantity, "-")
@@ -818,7 +818,7 @@ def trade_to_order(trade: SJTrade) -> Order:
     quantity = Decimal(trade.order.quantity)
     filled_quantity = Decimal(trade.status.deal_quantity)
 
-    if trade.order.order_lot == "IntradayOdd":
+    if trade.order.order_lot in ("IntradayOdd", "Odd"):
         quantity /= 1000
         filled_quantity /= 1000
 
