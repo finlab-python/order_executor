@@ -193,6 +193,29 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         for order_id in expected_cancel_calls:
             self.assertIn(order_id, actual_cancel_calls)
 
+    def test_cancel_orders_buy_only_sell_only(self) -> None:
+        """測試 cancel_orders 只取消買單或只取消賣單"""
+        mock_orders = {
+            "buy1": Mock(status=OrderStatus.NEW, action=Action.BUY),
+            "buy2": Mock(status=OrderStatus.PARTIALLY_FILLED, action=Action.BUY),
+            "sell1": Mock(status=OrderStatus.NEW, action=Action.SELL),
+            "filled": Mock(status=OrderStatus.FILLED, action=Action.BUY),
+        }
+        self.mock_account.get_orders.return_value = mock_orders
+        oe = OrderExecutor(Position({}), self.mock_account)
+
+        oe.cancel_orders(buy_only=True)
+        cancelled = [c[0][0] for c in self.mock_account.cancel_order.call_args_list]
+        self.assertEqual(sorted(cancelled), ["buy1", "buy2"])
+
+        self.mock_account.cancel_order.reset_mock()
+        oe.cancel_orders(sell_only=True)
+        cancelled = [c[0][0] for c in self.mock_account.cancel_order.call_args_list]
+        self.assertEqual(cancelled, ["sell1"])
+
+        with self.assertRaises(ValueError):
+            oe.cancel_orders(buy_only=True, sell_only=True)
+
     def test_execute_orders_view_only(self) -> None:
         """測試 view_only 模式"""
         orders = [

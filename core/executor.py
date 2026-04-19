@@ -73,12 +73,28 @@ class OrderExecutor:
                         f"賣出 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}"
                     )
 
-    def cancel_orders(self) -> None:
-        """刪除所有未實現委託單"""
+    def cancel_orders(
+        self, buy_only: bool = False, sell_only: bool = False
+    ) -> None:
+        """刪除所有未實現委託單
+
+        Attributes:
+            buy_only (bool): 若設為 True，只取消買單
+            sell_only (bool): 若設為 True，只取消賣單
+        """
+        if buy_only and sell_only:
+            raise ValueError(
+                "The buy_only and sell_only parameters cannot be set to True at the same time."
+            )
         orders = self.account.get_orders()
         for oid, o in orders.items():
-            if o.status in (OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED):
-                self.account.cancel_order(oid)
+            if o.status not in (OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED):
+                continue
+            if buy_only and o.action == Action.SELL:
+                continue
+            if sell_only and o.action == Action.BUY:
+                continue
+            self.account.cancel_order(oid)
 
     @staticmethod
     def _convert_quantity_type(
