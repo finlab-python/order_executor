@@ -203,3 +203,49 @@ def test_position_from_report_does_not_use_future_next_weights_after_stop_event(
         )
 
     assert position.position == []
+
+
+def test_position_from_report_keeps_current_weights_not_stopped() -> None:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    weights = pd.Series(
+        [0.25, 0.25, 0.25, 0.25],
+        index=["9905 大華", "2897 王道銀行", "2916 滿心", "8433 弘帆"],
+        name=now - datetime.timedelta(days=30),
+    )
+    next_weights = pd.Series(
+        [0.25, 0.25, 0.25, 0.25],
+        index=["1342", "2248", "2432", "2637"],
+        name=now + datetime.timedelta(days=7),
+    )
+    report = SimpleNamespace(
+        weights=weights,
+        next_weights=next_weights,
+        actions=pd.Series(
+            ["sl_", "sl_", "sl"],
+            index=["4442 竣邦-KY", "2851 中再保", "2916 滿心"],
+            dtype=object,
+        ),
+        next_trading_date=now - datetime.timedelta(days=1),
+        market=_ReportMarket(),
+    )
+
+    cloud_report_module = types.ModuleType("finlab.portfolio.cloud_report")
+    cloud_report_module.CloudReport = type("CloudReport", (), {})
+    portfolio_module = types.ModuleType("finlab.portfolio")
+    portfolio_module.cloud_report = cloud_report_module
+
+    with patch.dict(
+        sys.modules,
+        {
+            "finlab.portfolio": portfolio_module,
+            "finlab.portfolio.cloud_report": cloud_report_module,
+        },
+    ):
+        position = Position.from_report(
+            report,
+            fund=1_000_000,
+            price={"9905": 21.3, "2897": 10.15, "2916": 46.0, "8433": 57.5},
+            odd_lot=True,
+        )
+
+    assert {p["stock_id"] for p in position.position} == {"9905", "2897", "8433"}
