@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import datetime
+import sys
+import types
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import pandas as pd
 from finlab.online.enums import OrderCondition
 from finlab.online.order_executor import Position
 
@@ -149,3 +155,51 @@ def test_position_from_weight() -> None:
         raise AssertionError
     except Exception:
         assert True
+
+
+class _ReportMarket:
+    def market_close_at_timestamp(self, timestamp):
+        if isinstance(timestamp, pd.Timestamp):
+            timestamp = timestamp.to_pydatetime()
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=datetime.timezone.utc)
+        return timestamp.astimezone(datetime.timezone.utc)
+
+    def get_board_lot_size(self):
+        return 1000
+
+
+def test_position_from_report_does_not_use_future_next_weights_after_stop_event() -> None:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    weights = pd.Series([1.0], index=["2330"], name=now - datetime.timedelta(days=30))
+    next_weights = pd.Series(
+        [1.0], index=["1101"], name=now + datetime.timedelta(days=7)
+    )
+    report = SimpleNamespace(
+        weights=weights,
+        next_weights=next_weights,
+        actions=pd.Series(["sl"], index=["2330"], dtype=object),
+        next_trading_date=now - datetime.timedelta(days=1),
+        market=_ReportMarket(),
+    )
+
+    cloud_report_module = types.ModuleType("finlab.portfolio.cloud_report")
+    cloud_report_module.CloudReport = type("CloudReport", (), {})
+    portfolio_module = types.ModuleType("finlab.portfolio")
+    portfolio_module.cloud_report = cloud_report_module
+
+    with patch.dict(
+        sys.modules,
+        {
+            "finlab.portfolio": portfolio_module,
+            "finlab.portfolio.cloud_report": cloud_report_module,
+        },
+    ):
+        position = Position.from_report(
+            report,
+            fund=1_000_000,
+            price={"2330": 100, "1101": 50},
+            odd_lot=True,
+        )
+
+    assert position.position == []

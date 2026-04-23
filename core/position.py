@@ -18,6 +18,19 @@ from finlab.online.core.utils import greedy_allocation
 logger = logging.getLogger(__name__)
 
 
+def _market_close_at_timestamp(market: Any, timestamp: Any) -> datetime.datetime | None:
+    if timestamp is None:
+        return None
+
+    if timestamp in ("weight", "next_weight"):
+        return None
+
+    try:
+        return market.market_close_at_timestamp(timestamp)
+    except Exception:
+        return None
+
+
 def _make_entry(
     sid: str,
     quantity: float | Decimal,
@@ -500,7 +513,12 @@ class Position:
 
         now = datetime.datetime.now(tz=datetime.timezone.utc)
 
-        if now >= next_trading_time:
+        next_weights_time = _market_close_at_timestamp(
+            report.market, getattr(report.next_weights, "name", None)
+        )
+        use_next_weights_time = next_weights_time or next_trading_time
+
+        if now >= use_next_weights_time:
             w = report.next_weights.copy()
         else:
             w = report.weights.copy()
