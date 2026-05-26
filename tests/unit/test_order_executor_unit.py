@@ -221,6 +221,9 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         orders = [
             {"stock_id": "2330", "quantity": 1, "order_condition": OrderCondition.CASH}
         ]
+        self.mock_account.get_orders.return_value = {
+            "order1": Mock(status=OrderStatus.NEW, action=Action.BUY)
+        }
         self.mock_account.get_stocks.return_value = {
             "2330": Mock(close=580.0, bid_price=579.0, ask_price=581.0)
         }
@@ -231,6 +234,7 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         # view_only 模式應該返回訂單列表，不實際下單
         self.assertEqual(result, orders)
         self.mock_account.create_order.assert_not_called()
+        self.mock_account.cancel_order.assert_not_called()
 
     def test_execute_orders_normal(self) -> None:
         """測試正常下單執行"""
@@ -358,6 +362,25 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         self.assertEqual(call_args.kwargs["action"], Action.BUY)
         self.assertEqual(call_args.kwargs["stock_id"], "2330")
 
+    def test_execute_orders_buy_only_cancels_all_open_orders(self) -> None:
+        """測試 buy_only 不會縮小取消委託範圍"""
+        orders = [
+            {"stock_id": "2330", "quantity": 1, "order_condition": OrderCondition.CASH}
+        ]
+        self.mock_account.get_orders.return_value = {
+            "old_buy": Mock(status=OrderStatus.NEW, action=Action.BUY),
+            "old_sell": Mock(status=OrderStatus.NEW, action=Action.SELL),
+        }
+        self.mock_account.get_stocks.return_value = {
+            "2330": Mock(close=580.0, ask_price=581.0)
+        }
+
+        oe = OrderExecutor(Position({}), self.mock_account)
+        oe.execute_orders(orders, buy_only=True)
+
+        cancelled = [c[0][0] for c in self.mock_account.cancel_order.call_args_list]
+        self.assertEqual(sorted(cancelled), ["old_buy", "old_sell"])
+
     def test_execute_orders_sell_only(self) -> None:
         """測試只執行賣單"""
         orders = [
@@ -408,14 +431,38 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         oe = OrderExecutor(target_position, self.mock_account)
 
         # 先測試 view_only
+        self.mock_account.get_orders.return_value = {
+            "order1": Mock(status=OrderStatus.NEW, action=Action.BUY)
+        }
         view_orders = oe.create_orders(view_only=True)
         self.assertEqual(len(view_orders), 2)  # 應該有 2 個訂單
+        self.mock_account.cancel_order.assert_not_called()
 
         # 實際執行
+        self.mock_account.get_orders.return_value = {}
         oe.create_orders()
 
         # 應該調用 create_order 兩次
         self.assertEqual(self.mock_account.create_order.call_count, 2)
+
+    def test_create_orders_cancels_before_generating_orders(self) -> None:
+        """測試實際執行會先取消委託，再讀取持倉產生訂單"""
+        self.mock_account.get_position.return_value = Position({})
+        self.mock_account.get_orders.return_value = {
+            "old_sell": Mock(status=OrderStatus.NEW, action=Action.SELL)
+        }
+        self.mock_account.get_stocks.return_value = {
+            "2330": Mock(close=580.0, ask_price=581.0)
+        }
+
+        oe = OrderExecutor(Position({"2330": 1}), self.mock_account)
+        oe.create_orders()
+
+        call_names = [call[0] for call in self.mock_account.mock_calls]
+        self.assertLess(
+            call_names.index("cancel_order"),
+            call_names.index("get_position"),
+        )
 
     @patch("finlab.online.order_executor.data")
     def test_update_order_price(self, mock_data: Mock) -> None:

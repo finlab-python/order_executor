@@ -261,7 +261,7 @@ class OrderExecutor:
                 "The buy_only and sell_only parameters cannot be set to True at the same time."
             )
 
-        if cancel_orders:
+        if cancel_orders and not view_only:
             self.cancel_orders()
 
         stocks = self.account.get_stocks(list({self._symbol(o) for o in orders}))
@@ -412,7 +412,9 @@ class OrderExecutor:
             buy_only (bool): 若設為 True，只下買單
             sell_only (bool): 若設為 True，只下賣單
         """
-        self.cancel_orders()
+        if not view_only:
+            self.cancel_orders()
+
         orders = self.generate_orders(progress, progress_precision, _internal=True)
         return self.execute_orders(
             orders,
