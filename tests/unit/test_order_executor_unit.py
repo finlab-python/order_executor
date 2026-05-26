@@ -446,6 +446,39 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         # 應該調用 update_order 兩次
         self.assertEqual(self.mock_account.update_order.call_count, 2)
 
+    @patch("finlab.online.order_executor.data")
+    def test_update_order_price_buy_only_sell_only(self, mock_data: Mock) -> None:
+        """測試 update_order_price 只更新買單或只更新賣單"""
+        mock_price_data = Mock()
+        mock_price_data.loc = {"2330": 580.0, "2881": 66.0}
+        mock_data.get.return_value = mock_price_data
+
+        mock_orders = {
+            "buy1": Mock(
+                stock_id="2330", action=Action.BUY, price=575.0, status=OrderStatus.NEW
+            ),
+            "sell1": Mock(
+                stock_id="2881", action=Action.SELL, price=67.0, status=OrderStatus.NEW
+            ),
+        }
+        self.mock_account.get_orders.return_value = mock_orders
+
+        mock_stocks = {"2330": Mock(close=580.0), "2881": Mock(close=66.0)}
+        self.mock_account.get_stocks.return_value = mock_stocks
+
+        oe = OrderExecutor(Position({}), self.mock_account)
+        oe.update_order_price(buy_only=True)
+        updated = [c[0][0] for c in self.mock_account.update_order.call_args_list]
+        self.assertEqual(updated, ["buy1"])
+
+        self.mock_account.update_order.reset_mock()
+        oe.update_order_price(sell_only=True)
+        updated = [c[0][0] for c in self.mock_account.update_order.call_args_list]
+        self.assertEqual(updated, ["sell1"])
+
+        with self.assertRaises(ValueError):
+            oe.update_order_price(buy_only=True, sell_only=True)
+
 
 class TestCalculatePriceWithExtraBid(unittest.TestCase):
     """測試價格計算函數"""

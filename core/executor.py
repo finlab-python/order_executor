@@ -425,15 +425,26 @@ class OrderExecutor:
             sell_only=sell_only,
         )
 
-    def update_order_price(self, extra_bid_pct: float = 0) -> None:
+    def update_order_price(
+        self,
+        extra_bid_pct: float = 0,
+        buy_only: bool = False,
+        sell_only: bool = False,
+    ) -> None:
         """更新委託單，將委託單的限價調整成當天最後一筆價格。
         （讓沒成交的限價單去追價）
         Attributes:
             extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.1 時，將以超出(低於)現價之10%價格下單，以漲停(跌停)價為限。參數有效範圍為 0 到 0.1 內
+            buy_only (bool): 若設為 True，只更新買單
+            sell_only (bool): 若設為 True，只更新賣單
         """
         if extra_bid_pct < -0.1 or extra_bid_pct > 0.1:
             raise ValueError(
                 "The extra_bid_pct parameter is out of the valid range 0 to 0.1"
+            )
+        if buy_only and sell_only:
+            raise ValueError(
+                "The buy_only and sell_only parameters cannot be set to True at the same time."
             )
         orders = self.account.get_orders()
         sids = {self._order_symbol(o) for _, o in orders.items()}
@@ -445,6 +456,12 @@ class OrderExecutor:
 
         for i, o in orders.items():
             if o.status in (OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED):
+                if buy_only and o.action == Action.SELL:
+                    continue
+
+                if sell_only and o.action == Action.BUY:
+                    continue
+
                 sid = self._order_symbol(o)
                 price = stocks[sid].close
 
