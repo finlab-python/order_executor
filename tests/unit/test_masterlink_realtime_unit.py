@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import datetime
 import importlib
 import sys
 import types
 from typing import Any
 
-from finlab.online.core.enums import Action
+from finlab.online.core.account import Order
+from finlab.online.core.enums import Action, OrderCondition, OrderStatus
 
 
 class _FakeWsClient:
@@ -93,14 +95,33 @@ class _FakeSdk:
         self.connected = True
 
 
+class _FakeStockTradeApi:
+    def __init__(self) -> None:
+        self.modified_volumes: list[tuple[Any, Any, int]] = []
+        self.modified_prices: list[tuple[Any, Any, str, Any]] = []
+
+    def modify_volume(self, account: Any, order_record: Any, quantity: int) -> None:
+        self.modified_volumes.append((account, order_record, quantity))
+
+    def modify_price(
+        self, account: Any, order_record: Any, price: str, price_type: Any
+    ) -> None:
+        self.modified_prices.append((account, order_record, price, price_type))
+
+
 def _import_masterlink_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     fake_sdk_module = types.ModuleType("masterlink_sdk")
     fake_sdk_module.MasterlinkSDK = object
     fake_sdk_module.Order = object
     fake_sdk_module.Account = object
     fake_sdk_module.BSAction = types.SimpleNamespace(Buy="B", Sell="S")
-    fake_sdk_module.MarketType = types.SimpleNamespace()
-    fake_sdk_module.PriceType = types.SimpleNamespace()
+    fake_sdk_module.MarketType = types.SimpleNamespace(
+        Common="Common",
+        IntradayOdd="IntradayOdd",
+        Odd="Odd",
+        EmgOdd="EmgOdd",
+    )
+    fake_sdk_module.PriceType = types.SimpleNamespace(Limit="Limit")
     fake_sdk_module.TimeInForce = types.SimpleNamespace()
     fake_sdk_module.OrderType = types.SimpleNamespace()
 
@@ -109,6 +130,95 @@ def _import_masterlink_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleTyp
 
     module = importlib.import_module("finlab.online.brokers.masterlink")
     return importlib.reload(module)
+
+
+def _make_finlab_order(market_type: Any) -> Order:
+    order_record = types.SimpleNamespace(
+        market_type=market_type,
+        org_qty=500,
+        filled_qty=120,
+    )
+    return Order(
+        order_id="o-1",
+        stock_id="2330",
+        action=Action.BUY,
+        price=560,
+        quantity=500,
+        filled_quantity=120,
+        status=OrderStatus.NEW,
+        order_condition=OrderCondition.CASH,
+        time=datetime.datetime(2026, 6, 15),
+        org_order=order_record,
+    )
+
+
+def test_masterlink_update_order_price_recreates_odd_lot_orders(
+    monkeypatch: Any,
+) -> None:
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    MasterlinkAccount = masterlink_module.MasterlinkAccount
+    MarketType = masterlink_module.MarketType
+
+    for market_type in (
+        MarketType.IntradayOdd,
+        MarketType.Odd,
+        MarketType.EmgOdd,
+    ):
+        account = MasterlinkAccount.__new__(MasterlinkAccount)
+        stock_api = _FakeStockTradeApi()
+        target_account = types.SimpleNamespace(account="9809789")
+        order = _make_finlab_order(market_type)
+        created_orders: list[dict[str, Any]] = []
+
+        account.sdk = types.SimpleNamespace(stock=stock_api)
+        account.target_account = target_account
+        account.get_orders = lambda order=order: {"o-1": order}
+
+        def create_order(**kwargs: Any) -> str:
+            created_orders.append(kwargs)
+            return "new-o-1"
+
+        account.create_order = create_order
+
+        assert account.update_order("o-1", price=567.5) == "new-o-1"
+        assert stock_api.modified_volumes == [
+            (target_account, order.org_order, 0)
+        ]
+        assert stock_api.modified_prices == []
+        assert created_orders == [
+            {
+                "action": Action.BUY,
+                "stock_id": "2330",
+                "quantity": 380,
+                "price": 567.5,
+                "odd_lot": True,
+            }
+        ]
+
+
+def test_masterlink_update_order_price_modifies_common_orders(
+    monkeypatch: Any,
+) -> None:
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    MasterlinkAccount = masterlink_module.MasterlinkAccount
+    MarketType = masterlink_module.MarketType
+    PriceType = masterlink_module.PriceType
+
+    account = MasterlinkAccount.__new__(MasterlinkAccount)
+    stock_api = _FakeStockTradeApi()
+    target_account = types.SimpleNamespace(account="9809789")
+    order = _make_finlab_order(MarketType.Common)
+
+    account.sdk = types.SimpleNamespace(stock=stock_api)
+    account.target_account = target_account
+    account.get_orders = lambda: {"o-1": order}
+    account.create_order = lambda **kwargs: "unexpected"
+
+    assert account.update_order("o-1", price=567.5) is None
+    assert stock_api.modified_volumes == []
+    assert stock_api.modified_prices == [
+        (target_account, order.org_order, "567.5", PriceType.Limit)
+    ]
 
 
 def test_masterlink_realtime_tick_and_trade_callbacks(monkeypatch: Any) -> None:

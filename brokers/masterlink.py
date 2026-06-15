@@ -828,6 +828,26 @@ class MasterlinkAccount(Account, RealtimeProvider):
             logging.warning(f"create_order: 無法創建委託單: {e}")
             return None
 
+    @staticmethod
+    def _is_odd_lot_market_type(market_type: Any) -> bool:
+        odd_lot_market_types = tuple(
+            value
+            for value in (
+                getattr(MarketType, "IntradayOdd", None),
+                getattr(MarketType, "Odd", None),
+                getattr(MarketType, "EmgOdd", None),
+            )
+            if value is not None
+        )
+        if market_type in odd_lot_market_types:
+            return True
+
+        return str(market_type).upper().split(".")[-1] in {
+            "INTRADAYODD",
+            "ODD",
+            "EMGODD",
+        }
+
     def update_order(
         self,
         order_id: str,
@@ -849,7 +869,9 @@ class MasterlinkAccount(Account, RealtimeProvider):
             )
             if price:
                 order_record = order.org_order
-                if getattr(order_record, "market_type", "") == MarketType.IntradayOdd:
+                if self._is_odd_lot_market_type(
+                    getattr(order_record, "market_type", "")
+                ):
                     action = order.action
                     stock_id = order.stock_id
                     filled_qty = getattr(order_record, "filled_qty", 0)
