@@ -364,16 +364,20 @@ class SinopacAccount(Account, RealtimeProvider):
                 SJStock(
                     security_type=SJSecurityType.Stock,
                     code=sid,
-                    exchange=SJExchange.TSE,
+                    exchange=exchange,
                 )
                 for sid in unknown
+                for exchange in (SJExchange.TSE, SJExchange.OTC)
             ]
             try:
                 snapshots = self.api.snapshots(contracts)
                 for snap in snapshots:
                     exchange_str = getattr(snap, "exchange", "TSE")
                     self._exchange_cache[snap.code] = (
-                        SJExchange.OTC if str(exchange_str) == "OTC" else SJExchange.TSE
+                        SJExchange.OTC
+                        if exchange_str == SJExchange.OTC
+                        or str(exchange_str).upper().endswith("OTC")
+                        else SJExchange.TSE
                     )
             except Exception:
                 pass
@@ -505,11 +509,8 @@ class SinopacAccount(Account, RealtimeProvider):
         order_cond: OrderCondition = OrderCondition.CASH,
     ) -> str:
 
-        contract = SJStock(
-            security_type=SJSecurityType.Stock,
-            code=stock_id,
-            exchange=SJExchange.TSE,
-        )
+        exchanges = self._resolve_exchange([stock_id])
+        contract = self._make_contract(stock_id, exchanges)
         pinfo = self.get_price_info()
 
         if stock_id not in pinfo:
@@ -698,20 +699,14 @@ class SinopacAccount(Account, RealtimeProvider):
         return {t.status.id: trade_to_order(t) for name, t in self.trades.items()}
 
     def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
-        contracts = [
-            SJStock(security_type=SJSecurityType.Stock, code=s, exchange=SJExchange.TSE)
-            for s in stock_ids
-        ]
+        exchanges = self._resolve_exchange(stock_ids)
+        contracts = [self._make_contract(s, exchanges) for s in stock_ids]
         try:
             snapshots = self.api.snapshots(list(contracts))
         except Exception:
             time.sleep(10)
-            contracts = [
-                SJStock(
-                    security_type=SJSecurityType.Stock, code=s, exchange=SJExchange.TSE
-                )
-                for s in stock_ids
-            ]
+            exchanges = self._resolve_exchange(stock_ids)
+            contracts = [self._make_contract(s, exchanges) for s in stock_ids]
             snapshots = self.api.snapshots(list(contracts))
 
         return {s.code: snapshot_to_stock(s) for s in snapshots}

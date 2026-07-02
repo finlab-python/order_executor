@@ -34,6 +34,42 @@ class _FakeShioaji:
         self.order_cb = None
         self.quote = _FakeQuote()
         self.stock_account = types.SimpleNamespace(account_id="9809789")
+        self.snapshot_calls: list[list[tuple[str | None, str | None]]] = []
+        self.snapshot_exchange_by_code = {"2330": "TSE", "8042": "OTC"}
+        self.placed_orders: list[tuple[object, object]] = []
+
+    def snapshots(self, contracts: list[object]) -> list[types.SimpleNamespace]:
+        self.snapshot_calls.append([(c.code, c.exchange) for c in contracts])
+        snapshots = []
+        for contract in contracts:
+            expected_exchange = self.snapshot_exchange_by_code.get(contract.code, "TSE")
+            if contract.exchange != expected_exchange:
+                continue
+            snapshots.append(
+                types.SimpleNamespace(
+                    code=contract.code,
+                    exchange=expected_exchange,
+                    open=100.0,
+                    high=105.0,
+                    low=99.0,
+                    close=102.0,
+                    buy_price=101.5,
+                    buy_volume=12,
+                    sell_price=102.5,
+                    sell_volume=15,
+                    change_rate=1.2,
+                )
+            )
+        return snapshots
+
+    def Order(self, **kwargs: object) -> types.SimpleNamespace:
+        return types.SimpleNamespace(**kwargs)
+
+    def place_order(
+        self, contract: object, order: object
+    ) -> types.SimpleNamespace:
+        self.placed_orders.append((contract, order))
+        return types.SimpleNamespace(status=types.SimpleNamespace(id="order-1"))
 
     def ticks(self, contract: object, date: str | None = None) -> types.SimpleNamespace:
         return types.SimpleNamespace(
@@ -71,12 +107,14 @@ def _import_sinopac_module_with_fake_sdk(
     )
 
     constant_module = types.ModuleType("shioaji.constant")
-    constant_module.StockPriceType = types.SimpleNamespace()
-    constant_module.StockOrderLot = types.SimpleNamespace()
-    constant_module.Action = types.SimpleNamespace()
+    constant_module.StockPriceType = types.SimpleNamespace(LMT="LMT")
+    constant_module.StockOrderLot = types.SimpleNamespace(
+        Common="Common", IntradayOdd="IntradayOdd", Odd="Odd", Fixing="Fixing"
+    )
+    constant_module.Action = types.SimpleNamespace(Buy="Buy", Sell="Sell")
     constant_module.SecurityType = types.SimpleNamespace(Stock="Stock")
-    constant_module.Exchange = types.SimpleNamespace(TSE="TSE")
-    constant_module.OrderType = types.SimpleNamespace()
+    constant_module.Exchange = types.SimpleNamespace(TSE="TSE", OTC="OTC")
+    constant_module.OrderType = types.SimpleNamespace(ROD="ROD")
     constant_module.Unit = types.SimpleNamespace()
     constant_module.OrderState = types.SimpleNamespace(
         StockDeal=types.SimpleNamespace(value="SDEAL"),
@@ -233,6 +271,35 @@ def test_sinopac_subscribe_ticks_and_bidask(monkeypatch: pytest.MonkeyPatch) -> 
     assert ("2330", "BidAsk") in account.api.quote.subscriptions
     assert ("2330", "Tick") in account.api.quote.unsubscriptions
     assert ("2330", "BidAsk") in account.api.quote.unsubscriptions
+
+
+def test_sinopac_resolves_otc_exchange_for_stocks_and_orders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    SinopacAccount = sinopac_module.SinopacAccount
+
+    account = SinopacAccount.__new__(SinopacAccount)
+    account.api = _FakeShioaji()
+    account._exchange_cache = {}
+    account.trades = {}
+
+    stocks = account.get_stocks(["2330", "8042"])
+
+    assert sorted(stocks) == ["2330", "8042"]
+    assert ("8042", "OTC") in account.api.snapshot_calls[-1]
+
+    account.get_price_info = lambda: {"8042": {"漲停價": 110, "跌停價": 90}}
+    order_id = account.create_order(
+        sinopac_module.Action.BUY,
+        stock_id="8042",
+        quantity=1,
+        price=100,
+    )
+
+    assert order_id == "order-1"
+    assert account.api.placed_orders[0][0].code == "8042"
+    assert account.api.placed_orders[0][0].exchange == "OTC"
 
 
 def test_sinopac_backfill_ticks_uses_historical_tick_query(
