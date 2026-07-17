@@ -107,7 +107,10 @@ class SinopacAccount(Account, RealtimeProvider):
             raise ValueError(f"certificate_path {certificate_path} does not exist.")
 
         self.api = sj.Shioaji()
-        self.accounts = self.api.login(api_key, secret_key, fetch_contract=False)
+        try:
+            self.accounts = self.api.login(api_key, secret_key, fetch_contract=False)
+        except TypeError:
+            self.accounts = self.api.login(api_key, secret_key)
 
         self.trades: dict[str, SJTrade] = {}
         self._exchange_cache: dict[str, SJExchange] = {}
