@@ -14,16 +14,10 @@ from shioaji.constant import (
     Action as SJAction,
 )
 from shioaji.constant import (
-    Exchange as SJExchange,
-)
-from shioaji.constant import (
     OrderState as SJOrderState,
 )
 from shioaji.constant import (
     OrderType as SJOrderType,
-)
-from shioaji.constant import (
-    SecurityType as SJSecurityType,
 )
 from shioaji.constant import (
     StockOrderLot as SJStockOrderLot,
@@ -34,7 +28,6 @@ from shioaji.constant import (
 from shioaji.constant import (
     Unit as SJUnit,
 )
-from shioaji.contracts import Stock as SJStock
 from shioaji.order import StockOrder as SJStockOrder
 from shioaji.order import Trade as SJTrade
 from shioaji.position import SettlementV1 as SJSettlementV1
@@ -113,7 +106,6 @@ class SinopacAccount(Account, RealtimeProvider):
             self.accounts = self.api.login(api_key, secret_key)
 
         self.trades: dict[str, SJTrade] = {}
-        self._exchange_cache: dict[str, SJExchange] = {}
 
         self.api.activate_ca(
             ca_path=certificate_path,
@@ -359,69 +351,43 @@ class SinopacAccount(Account, RealtimeProvider):
         self._emit_connection(ConnectionState.DISCONNECTED)
         logger.info("Sinopac realtime disconnected")
 
-    def _resolve_exchange(self, stock_ids: list[str]) -> dict[str, SJExchange]:
-        """Resolve TSE vs OTC exchange for each stock via snapshot API."""
-        unknown = [sid for sid in stock_ids if sid not in self._exchange_cache]
-        if unknown:
-            contracts = [
-                SJStock(
-                    security_type=SJSecurityType.Stock,
-                    code=sid,
-                    exchange=exchange,
-                )
-                for sid in unknown
-                for exchange in (SJExchange.TSE, SJExchange.OTC)
-            ]
-            try:
-                snapshots = self.api.snapshots(contracts)
-                for snap in snapshots:
-                    exchange_str = getattr(snap, "exchange", "TSE")
-                    self._exchange_cache[snap.code] = (
-                        SJExchange.OTC
-                        if exchange_str == SJExchange.OTC
-                        or str(exchange_str).upper().endswith("OTC")
-                        else SJExchange.TSE
-                    )
-            except Exception:
-                pass
-        return {sid: self._exchange_cache.get(sid, SJExchange.TSE) for sid in stock_ids}
-
-    def _make_contract(self, sid: str, exchanges: dict[str, SJExchange]) -> SJStock:
-        return SJStock(
-            security_type=SJSecurityType.Stock,
-            code=sid,
-            exchange=exchanges.get(sid, SJExchange.TSE),
-        )
+    def _get_contract(self, stock_id: str) -> Any:
+        """Get a stock contract by code, letting shioaji resolve the exchange."""
+        try:
+            return self.api.contracts.get(stock_id)
+        except AttributeError:
+            pass
+        stocks = getattr(getattr(self.api, "Contracts", None), "Stocks", None)
+        if stocks is not None:
+            return stocks[stock_id]
+        self.api.fetch_contracts(contract_download=sj.constant.SecurityType.Stock)
+        return self.api.Contracts.Stocks[stock_id]
 
     def subscribe_ticks(self, stock_ids: list[str]) -> None:
-        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
             self.api.quote.subscribe(
-                self._make_contract(sid, exchanges),
+                self._get_contract(sid),
                 quote_type=sj.constant.QuoteType.Tick,
             )
 
     def unsubscribe_ticks(self, stock_ids: list[str]) -> None:
-        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
             self.api.quote.unsubscribe(
-                self._make_contract(sid, exchanges),
+                self._get_contract(sid),
                 quote_type=sj.constant.QuoteType.Tick,
             )
 
     def subscribe_bidask(self, stock_ids: list[str]) -> None:
-        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
             self.api.quote.subscribe(
-                self._make_contract(sid, exchanges),
+                self._get_contract(sid),
                 quote_type=sj.constant.QuoteType.BidAsk,
             )
 
     def unsubscribe_bidask(self, stock_ids: list[str]) -> None:
-        exchanges = self._resolve_exchange(stock_ids)
         for sid in stock_ids:
             self.api.quote.unsubscribe(
-                self._make_contract(sid, exchanges),
+                self._get_contract(sid),
                 quote_type=sj.constant.QuoteType.BidAsk,
             )
 
@@ -440,8 +406,7 @@ class SinopacAccount(Account, RealtimeProvider):
         for stock_id in stock_ids:
             ticks: list[Tick] = []
             try:
-                exchanges = self._resolve_exchange([stock_id])
-                contract = self._make_contract(stock_id, exchanges)
+                contract = self._get_contract(stock_id)
                 ticks_data = self.api.ticks(contract, date=session_date_str)
                 prices = list(getattr(ticks_data, "close", []) or [])
                 volumes = list(getattr(ticks_data, "volume", []) or [])
@@ -512,8 +477,7 @@ class SinopacAccount(Account, RealtimeProvider):
         order_cond: OrderCondition = OrderCondition.CASH,
     ) -> str:
 
-        exchanges = self._resolve_exchange([stock_id])
-        contract = self._make_contract(stock_id, exchanges)
+        contract = self._get_contract(stock_id)
         pinfo = self.get_price_info()
 
         if stock_id not in pinfo:
@@ -702,15 +666,13 @@ class SinopacAccount(Account, RealtimeProvider):
         return {t.status.id: trade_to_order(t) for name, t in self.trades.items()}
 
     def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
-        exchanges = self._resolve_exchange(stock_ids)
-        contracts = [self._make_contract(s, exchanges) for s in stock_ids]
+        contracts = [self._get_contract(s) for s in stock_ids]
         try:
-            snapshots = self.api.snapshots(list(contracts))
+            snapshots = self.api.snapshots(contracts)
         except Exception:
             time.sleep(10)
-            exchanges = self._resolve_exchange(stock_ids)
-            contracts = [self._make_contract(s, exchanges) for s in stock_ids]
-            snapshots = self.api.snapshots(list(contracts))
+            contracts = [self._get_contract(s) for s in stock_ids]
+            snapshots = self.api.snapshots(contracts)
 
         return {s.code: snapshot_to_stock(s) for s in snapshots}
 

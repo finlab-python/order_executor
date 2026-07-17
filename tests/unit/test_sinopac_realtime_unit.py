@@ -27,40 +27,47 @@ class _FakeQuote:
         self.unsubscriptions.append((contract.code, quote_type))
 
 
+class _FakeContracts:
+    """Mimics shioaji 1.7 api.contracts with exchange auto-resolution."""
+
+    _exchange_by_code = {"2330": "TSE", "8042": "OTC"}
+
+    def get(self, code: str) -> types.SimpleNamespace:
+        exchange = self._exchange_by_code.get(code, "TSE")
+        return types.SimpleNamespace(
+            security_type="Stock", code=code, exchange=exchange,
+        )
+
+
 class _FakeShioaji:
     def __init__(self) -> None:
         self.tick_cb = None
         self.bidask_cb = None
         self.order_cb = None
         self.quote = _FakeQuote()
+        self.contracts = _FakeContracts()
         self.stock_account = types.SimpleNamespace(account_id="9809789")
         self.snapshot_calls: list[list[tuple[str | None, str | None]]] = []
-        self.snapshot_exchange_by_code = {"2330": "TSE", "8042": "OTC"}
         self.placed_orders: list[tuple[object, object]] = []
 
     def snapshots(self, contracts: list[object]) -> list[types.SimpleNamespace]:
         self.snapshot_calls.append([(c.code, c.exchange) for c in contracts])
-        snapshots = []
-        for contract in contracts:
-            expected_exchange = self.snapshot_exchange_by_code.get(contract.code, "TSE")
-            if contract.exchange != expected_exchange:
-                continue
-            snapshots.append(
-                types.SimpleNamespace(
-                    code=contract.code,
-                    exchange=expected_exchange,
-                    open=100.0,
-                    high=105.0,
-                    low=99.0,
-                    close=102.0,
-                    buy_price=101.5,
-                    buy_volume=12,
-                    sell_price=102.5,
-                    sell_volume=15,
-                    change_rate=1.2,
-                )
+        return [
+            types.SimpleNamespace(
+                code=c.code,
+                exchange=c.exchange,
+                open=100.0,
+                high=105.0,
+                low=99.0,
+                close=102.0,
+                buy_price=101.5,
+                buy_volume=12,
+                sell_price=102.5,
+                sell_volume=15,
+                change_rate=1.2,
             )
-        return snapshots
+            for c in contracts
+        ]
 
     def Order(self, **kwargs: object) -> types.SimpleNamespace:
         return types.SimpleNamespace(**kwargs)
@@ -259,7 +266,6 @@ def test_sinopac_subscribe_ticks_and_bidask(monkeypatch: pytest.MonkeyPatch) -> 
 
     account = SinopacAccount.__new__(SinopacAccount)
     account.api = _FakeShioaji()
-    account._exchange_cache = {}
     account._init_realtime()
 
     account.subscribe_ticks(["2330"])
@@ -281,7 +287,6 @@ def test_sinopac_resolves_otc_exchange_for_stocks_and_orders(
 
     account = SinopacAccount.__new__(SinopacAccount)
     account.api = _FakeShioaji()
-    account._exchange_cache = {}
     account.trades = {}
 
     stocks = account.get_stocks(["2330", "8042"])
@@ -310,7 +315,6 @@ def test_sinopac_backfill_ticks_uses_historical_tick_query(
 
     account = SinopacAccount.__new__(SinopacAccount)
     account.api = _FakeShioaji()
-    account._exchange_cache = {}
     account._init_realtime()
 
     ticks = []
