@@ -359,7 +359,16 @@ class SinopacAccount(Account, RealtimeProvider):
             pass
         stocks = getattr(getattr(self.api, "Contracts", None), "Stocks", None)
         if stocks is not None:
-            return stocks[stock_id]
+            try:
+                contract = stocks[stock_id]
+            except KeyError:
+                contract = None
+            if contract is not None:
+                return contract
+        # Contracts are not populated yet. This happens on shioaji < 1.7 where
+        # login() used fetch_contract=False and no contracts were downloaded, so
+        # the lookup above misses even for actively traded stocks. Fetch on
+        # demand and retry instead of surfacing a bare "Contract not found".
         self.api.fetch_contracts(contract_download=sj.constant.SecurityType.Stock)
         return self.api.Contracts.Stocks[stock_id]
 
