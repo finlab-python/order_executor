@@ -32,8 +32,10 @@ class _FakeContracts:
 
     _exchange_by_code = {"2330": "TSE", "8042": "OTC"}
 
-    def get(self, code: str) -> types.SimpleNamespace:
-        exchange = self._exchange_by_code.get(code, "TSE")
+    def get(self, code: str) -> types.SimpleNamespace | None:
+        exchange = self._exchange_by_code.get(code)
+        if exchange is None:
+            return None
         return types.SimpleNamespace(
             security_type="Stock", code=code, exchange=exchange,
         )
@@ -119,9 +121,6 @@ def _import_sinopac_module_with_fake_sdk(
         Common="Common", IntradayOdd="IntradayOdd", Odd="Odd", Fixing="Fixing"
     )
     constant_module.Action = types.SimpleNamespace(Buy="Buy", Sell="Sell")
-    constant_module.SecurityType = types.SimpleNamespace(Stock="Stock")
-    shioaji_module.constant.SecurityType = constant_module.SecurityType
-    constant_module.Exchange = types.SimpleNamespace(TSE="TSE", OTC="OTC")
     constant_module.OrderType = types.SimpleNamespace(ROD="ROD")
     constant_module.Unit = types.SimpleNamespace()
     constant_module.OrderState = types.SimpleNamespace(
@@ -130,21 +129,6 @@ def _import_sinopac_module_with_fake_sdk(
         StockOrder=types.SimpleNamespace(value="SORDER"),
         FuturesOrder=types.SimpleNamespace(value="FORDER"),
     )
-
-    contracts_module = types.ModuleType("shioaji.contracts")
-
-    class _FakeStockContract:
-        def __init__(
-            self,
-            security_type: str | None = None,
-            code: str | None = None,
-            exchange: str | None = None,
-        ) -> None:
-            self.security_type = security_type
-            self.code = code
-            self.exchange = exchange
-
-    contracts_module.Stock = _FakeStockContract
 
     order_module = types.ModuleType("shioaji.order")
     order_module.Trade = object
@@ -156,13 +140,28 @@ def _import_sinopac_module_with_fake_sdk(
 
     monkeypatch.setitem(sys.modules, "shioaji", shioaji_module)
     monkeypatch.setitem(sys.modules, "shioaji.constant", constant_module)
-    monkeypatch.setitem(sys.modules, "shioaji.contracts", contracts_module)
     monkeypatch.setitem(sys.modules, "shioaji.order", order_module)
     monkeypatch.setitem(sys.modules, "shioaji.position", position_module)
     sys.modules.pop("finlab.online.brokers.sinopac", None)
 
     module = importlib.import_module("finlab.online.brokers.sinopac")
     return importlib.reload(module)
+
+
+def _make_account(
+    sinopac_module: types.ModuleType, api: object
+) -> object:
+    account = sinopac_module.SinopacAccount.__new__(
+        sinopac_module.SinopacAccount
+    )
+    account.api = api
+    return account
+
+
+def _forbid_fetch(api: object) -> None:
+    api.fetch_contracts = lambda **kwargs: pytest.fail(
+        "fetch_contracts must not be called on the shioaji >= 1.7 path"
+    )
 
 
 def test_sinopac_realtime_callbacks_cover_tick_book_order_fill_and_connection(
@@ -263,10 +262,8 @@ def test_sinopac_realtime_callbacks_cover_tick_book_order_fill_and_connection(
 
 def test_sinopac_subscribe_ticks_and_bidask(monkeypatch: pytest.MonkeyPatch) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
-    SinopacAccount = sinopac_module.SinopacAccount
 
-    account = SinopacAccount.__new__(SinopacAccount)
-    account.api = _FakeShioaji()
+    account = _make_account(sinopac_module, _FakeShioaji())
     account._init_realtime()
 
     account.subscribe_ticks(["2330"])
@@ -284,10 +281,8 @@ def test_sinopac_resolves_otc_exchange_for_stocks_and_orders(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
-    SinopacAccount = sinopac_module.SinopacAccount
 
-    account = SinopacAccount.__new__(SinopacAccount)
-    account.api = _FakeShioaji()
+    account = _make_account(sinopac_module, _FakeShioaji())
     account.trades = {}
 
     stocks = account.get_stocks(["2330", "8042"])
@@ -308,43 +303,30 @@ def test_sinopac_resolves_otc_exchange_for_stocks_and_orders(
     assert account.api.placed_orders[0][0].exchange == "OTC"
 
 
-class _FakeLegacyStocks:
-    """Mimics shioaji < 1.7 Contracts.Stocks: indexable, KeyError on miss."""
-
-    def __init__(self, contracts: dict[str, object] | None = None) -> None:
-        self._contracts = dict(contracts or {})
-
-    def __getitem__(self, code: str) -> object:
-        return self._contracts[code]
-
-
 class _FakeLegacyShioaji:
-    """Mimics shioaji < 1.7: no lowercase ``contracts`` accessor."""
+    """Mimics shioaji < 1.7: no lowercase ``contracts`` accessor.
+
+    ``Contracts.Stocks`` is a plain dict, matching the legacy SDK's
+    indexable, KeyError-on-miss lookup.
+    """
 
     def __init__(
         self,
         contracts: dict[str, object] | None = None,
         fetch_result: dict[str, object] | None = None,
     ) -> None:
-        self.Contracts = types.SimpleNamespace(
-            Stocks=_FakeLegacyStocks(contracts)
-        )
+        self.Contracts = types.SimpleNamespace(Stocks=dict(contracts or {}))
         self._fetch_result = dict(fetch_result or {})
-        self.fetch_calls: list[object] = []
+        self.fetch_calls: list[tuple[object, object]] = []
 
-    def fetch_contracts(self, contract_download: object = None) -> None:
-        self.fetch_calls.append(contract_download)
-        self.Contracts.Stocks._contracts.update(self._fetch_result)
-
-
-def _make_account(
-    sinopac_module: types.ModuleType, api: object
-) -> object:
-    account = sinopac_module.SinopacAccount.__new__(
-        sinopac_module.SinopacAccount
-    )
-    account.api = api
-    return account
+    def fetch_contracts(
+        self, contract_download: object = False, contracts_timeout: object = 0
+    ) -> None:
+        self.fetch_calls.append((contract_download, contracts_timeout))
+        # Like the real SDK, contracts_timeout=0 means a non-blocking fetch:
+        # contracts are not available by the time this call returns.
+        if contract_download and contracts_timeout:
+            self.Contracts.Stocks.update(self._fetch_result)
 
 
 def test_sinopac_get_contract_returns_present_contract_without_fetch(
@@ -368,7 +350,9 @@ def test_sinopac_get_contract_fetches_once_when_legacy_stocks_empty(
     account = _make_account(sinopac_module, api)
 
     assert account._get_contract("8421") is contract
-    assert api.fetch_calls == ["Stock"]
+    [(contract_download, contracts_timeout)] = api.fetch_calls
+    assert contract_download is True
+    assert contracts_timeout > 0
 
 
 def test_sinopac_get_contract_modern_contracts_path_never_fetches(
@@ -376,12 +360,22 @@ def test_sinopac_get_contract_modern_contracts_path_never_fetches(
 ) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
     api = _FakeShioaji()
-    api.fetch_contracts = lambda **kwargs: pytest.fail(
-        "fetch_contracts must not be called on the shioaji >= 1.7 path"
-    )
+    _forbid_fetch(api)
     account = _make_account(sinopac_module, api)
 
     assert account._get_contract("2330").code == "2330"
+
+
+def test_sinopac_get_contract_modern_miss_raises_without_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeShioaji()
+    _forbid_fetch(api)
+    account = _make_account(sinopac_module, api)
+
+    with pytest.raises(KeyError):
+        account._get_contract("9999")
 
 
 def test_sinopac_get_contract_raises_when_still_missing_after_fetch(
@@ -393,17 +387,18 @@ def test_sinopac_get_contract_raises_when_still_missing_after_fetch(
 
     with pytest.raises(KeyError):
         account._get_contract("9999")
-    assert api.fetch_calls == ["Stock"]
+    # The one-time download must not be re-run on a later miss.
+    with pytest.raises(KeyError):
+        account._get_contract("9999")
+    assert len(api.fetch_calls) == 1
 
 
 def test_sinopac_backfill_ticks_uses_historical_tick_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
-    SinopacAccount = sinopac_module.SinopacAccount
 
-    account = SinopacAccount.__new__(SinopacAccount)
-    account.api = _FakeShioaji()
+    account = _make_account(sinopac_module, _FakeShioaji())
     account._init_realtime()
 
     ticks = []

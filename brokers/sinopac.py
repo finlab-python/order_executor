@@ -63,6 +63,9 @@ class SinopacAccount(Account, RealtimeProvider):
     required_module = "shioaji"
     module_version = "1.2.5"
 
+    # shioaji < 1.7 only: whether the one-time on-demand contract download ran.
+    _contracts_fetched = False
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -353,20 +356,30 @@ class SinopacAccount(Account, RealtimeProvider):
 
     def _get_contract(self, stock_id: str) -> Any:
         """Get a stock contract by code, letting shioaji resolve the exchange."""
-        try:
-            return self.api.contracts.get(stock_id)
-        except AttributeError:
-            pass
-        stocks = getattr(getattr(self.api, "Contracts", None), "Stocks", None)
-        if stocks is not None:
-            with contextlib.suppress(KeyError):
-                contract = stocks[stock_id]
-                if contract is not None:
-                    return contract
-        # A miss means contracts were never downloaded: on shioaji < 1.7 our
-        # login() passes fetch_contract=False. Fetch on demand and retry.
-        self.api.fetch_contracts(contract_download=sj.constant.SecurityType.Stock)
-        return self.api.Contracts.Stocks[stock_id]
+        contracts = getattr(self.api, "contracts", None)
+        if contracts is not None:
+            # shioaji >= 1.7 resolves contracts on demand through this accessor;
+            # a miss means the code is unknown, not that a legacy fetch is pending.
+            contract = contracts.get(stock_id)
+            if contract is None:
+                raise KeyError(stock_id)
+            return contract
+        with contextlib.suppress(KeyError):
+            contract = self.api.Contracts.Stocks[stock_id]
+            if contract is not None:
+                return contract
+        # A miss before the download means contracts were never fetched: on
+        # shioaji < 1.7 our login() passes fetch_contract=False. Fetch once on
+        # demand (blocking, so the retry below sees the result) and retry;
+        # after that a miss means the code is unknown.
+        if self._contracts_fetched:
+            raise KeyError(stock_id)
+        self.api.fetch_contracts(contract_download=True, contracts_timeout=30000)
+        self._contracts_fetched = True
+        contract = self.api.Contracts.Stocks[stock_id]
+        if contract is None:
+            raise KeyError(stock_id)
+        return contract
 
     def subscribe_ticks(self, stock_ids: list[str]) -> None:
         for sid in stock_ids:
