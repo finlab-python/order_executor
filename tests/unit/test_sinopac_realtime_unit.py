@@ -120,6 +120,7 @@ def _import_sinopac_module_with_fake_sdk(
     )
     constant_module.Action = types.SimpleNamespace(Buy="Buy", Sell="Sell")
     constant_module.SecurityType = types.SimpleNamespace(Stock="Stock")
+    shioaji_module.constant.SecurityType = constant_module.SecurityType
     constant_module.Exchange = types.SimpleNamespace(TSE="TSE", OTC="OTC")
     constant_module.OrderType = types.SimpleNamespace(ROD="ROD")
     constant_module.Unit = types.SimpleNamespace()
@@ -305,6 +306,94 @@ def test_sinopac_resolves_otc_exchange_for_stocks_and_orders(
     assert order_id == "order-1"
     assert account.api.placed_orders[0][0].code == "8042"
     assert account.api.placed_orders[0][0].exchange == "OTC"
+
+
+class _FakeLegacyStocks:
+    """Mimics shioaji < 1.7 Contracts.Stocks: indexable, KeyError on miss."""
+
+    def __init__(self, contracts: dict[str, object] | None = None) -> None:
+        self._contracts = dict(contracts or {})
+
+    def __getitem__(self, code: str) -> object:
+        return self._contracts[code]
+
+
+class _FakeLegacyShioaji:
+    """Mimics shioaji < 1.7: no lowercase ``contracts`` accessor."""
+
+    def __init__(
+        self,
+        contracts: dict[str, object] | None = None,
+        fetch_result: dict[str, object] | None = None,
+    ) -> None:
+        self.Contracts = types.SimpleNamespace(
+            Stocks=_FakeLegacyStocks(contracts)
+        )
+        self._fetch_result = dict(fetch_result or {})
+        self.fetch_calls: list[object] = []
+
+    def fetch_contracts(self, contract_download: object = None) -> None:
+        self.fetch_calls.append(contract_download)
+        self.Contracts.Stocks._contracts.update(self._fetch_result)
+
+
+def _make_account(
+    sinopac_module: types.ModuleType, api: object
+) -> object:
+    account = sinopac_module.SinopacAccount.__new__(
+        sinopac_module.SinopacAccount
+    )
+    account.api = api
+    return account
+
+
+def test_sinopac_get_contract_returns_present_contract_without_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    contract = types.SimpleNamespace(code="2330")
+    api = _FakeLegacyShioaji(contracts={"2330": contract})
+    account = _make_account(sinopac_module, api)
+
+    assert account._get_contract("2330") is contract
+    assert api.fetch_calls == []
+
+
+def test_sinopac_get_contract_fetches_once_when_legacy_stocks_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    contract = types.SimpleNamespace(code="8421")
+    api = _FakeLegacyShioaji(fetch_result={"8421": contract})
+    account = _make_account(sinopac_module, api)
+
+    assert account._get_contract("8421") is contract
+    assert api.fetch_calls == ["Stock"]
+
+
+def test_sinopac_get_contract_modern_contracts_path_never_fetches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeShioaji()
+    api.fetch_contracts = lambda **kwargs: pytest.fail(
+        "fetch_contracts must not be called on the shioaji >= 1.7 path"
+    )
+    account = _make_account(sinopac_module, api)
+
+    assert account._get_contract("2330").code == "2330"
+
+
+def test_sinopac_get_contract_raises_when_still_missing_after_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeLegacyShioaji()
+    account = _make_account(sinopac_module, api)
+
+    with pytest.raises(KeyError):
+        account._get_contract("9999")
+    assert api.fetch_calls == ["Stock"]
 
 
 def test_sinopac_backfill_ticks_uses_historical_tick_query(
