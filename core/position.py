@@ -234,7 +234,9 @@ class Position:
             price (None 或 pd.Series 或 dict[str, float]): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
             odd_lot (bool): 是否考慮零股
             board_lot_size (None 或 int): 一張股票等於幾股
-            allocation (function): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）
+            allocation (function): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。
+                呼叫方式為 `allocation(weights, price * board_lot_size, fund * 10**precision)`，
+                需回傳 `(dict[股票代號, 張數 * 10**precision], 剩餘資金)`。
             precision (None 或 int): 計算張數時的精度，預設為 None 代表依照 board_lot_size 而定，而 1 代表 0.1 張，2 代表 0.01 張，以此類推。
             leverage (float): 目標槓桿倍數，預設為1.0（不使用融資）。若>1.0，會根據波動度分配融資。
             price_history (None 或 pd.DataFrame): 股票歷史價格，若 leverage > 1.0 時必須提供。
@@ -323,23 +325,23 @@ class Position:
 
         effective_fund = fund * leverage if leverage > 1.0 else fund
 
-        allocation = greedy_allocation(
+        quantities = allocation(
             weights, price * board_lot_size, effective_fund * multiple
         )[0]
 
-        for s, q in allocation.items():
-            allocation[s] = Decimal(q) / multiple
+        for s, q in quantities.items():
+            quantities[s] = Decimal(q) / multiple
 
         if not odd_lot:
-            for s, q in allocation.items():
-                allocation[s] = round(q)
+            for s, q in quantities.items():
+                quantities[s] = round(q)
 
         # fill zero quantity
         for s in weights.index:
-            if s not in allocation:
-                allocation[s] = 0
+            if s not in quantities:
+                quantities[s] = 0
 
-        pos = cls(allocation, weights=weights, **kwargs)
+        pos = cls(quantities, weights=weights, **kwargs)
 
         if leverage > 1.0:
             if price_history is None:
