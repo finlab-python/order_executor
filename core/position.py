@@ -235,7 +235,8 @@ class Position:
             odd_lot (bool): 是否考慮零股
             board_lot_size (None 或 int): 一張股票等於幾股
             allocation (function): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。
-                呼叫方式為 `allocation(weights, price * board_lot_size, fund * 10**precision)`，
+                呼叫方式為 `allocation(weights, price * board_lot_size, effective_fund * 10**precision)`，
+                其中 effective_fund 在 leverage > 1 時為 fund * leverage，否則為 fund。
                 需回傳 `(dict[股票代號, 張數 * 10**precision], 剩餘資金)`。
             precision (None 或 int): 計算張數時的精度，預設為 None 代表依照 board_lot_size 而定，而 1 代表 0.1 張，2 代表 0.01 張，以此類推。
             leverage (float): 目標槓桿倍數，預設為1.0（不使用融資）。若>1.0，會根據波動度分配融資。
