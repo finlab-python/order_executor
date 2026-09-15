@@ -8,7 +8,7 @@ import types
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 from finlab.online.enums import OrderCondition
@@ -169,7 +169,9 @@ class _ReportMarket:
         return 1000
 
 
-def test_position_from_report_does_not_use_future_next_weights_after_stop_event() -> None:
+def test_position_from_report_does_not_use_future_next_weights_after_stop_event() -> (
+    None
+):
     now = datetime.datetime.now(datetime.timezone.utc)
     weights = pd.Series([1.0], index=["2330"], name=now - datetime.timedelta(days=30))
     next_weights = pd.Series(
@@ -249,3 +251,38 @@ def test_position_from_report_keeps_current_weights_not_stopped() -> None:
         )
 
     assert {p["stock_id"] for p in position.position} == {"9905", "2897", "8433"}
+
+
+def test_custom_allocation_controls_position_quantity() -> None:
+    allocator = Mock(return_value=({"2330": 7001}, 0))
+    pos = Position.from_weight(
+        {"2330": 1.0},
+        fund=1_000_000,
+        price={"2330": 100},
+        allocation=allocator,
+        odd_lot=True,
+    )
+    allocator.assert_called_once()
+    weights, prices, fund = allocator.call_args.args
+    assert weights.to_dict() == {"2330": 1.0}
+    assert prices.to_dict() == {"2330": 100_000}
+    assert fund == 1_000_000_000
+    assert pos.position[0]["quantity"] == Decimal("7.001")
+
+
+def test_from_report_forwards_custom_allocation() -> None:
+    weights = pd.Series({"2330": 1.0}, name=pd.Timestamp("2024-01-01", tz="UTC"))
+    report = SimpleNamespace(
+        weights=weights,
+        next_weights=weights.copy(),
+        actions=pd.Series(dtype=object),
+        next_trading_date=pd.Timestamp("2100-01-01", tz="UTC"),
+        market=_ReportMarket(),
+    )
+    allocator = Mock(return_value=({"2330": 7}, 0))
+    position = Position.from_report(
+        report, fund=1_000_000, price={"2330": 100}, allocation=allocator
+    )
+    allocator.assert_called_once()
+    assert allocator.call_args.args[0].to_dict() == {"2330": 1.0}
+    assert position.position[0]["quantity"] == Decimal("7")
