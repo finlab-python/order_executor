@@ -17,6 +17,31 @@ from finlab.online.core.utils import greedy_allocation
 
 logger = logging.getLogger(__name__)
 
+# Live positions have no per-asset cap, so only backtest.sim()'s total-weight
+# rule applies (a position_limit of 1 disables the cap).
+_NO_POSITION_LIMIT = 1.0
+
+
+def _normalize_like_backtest(weights: pd.Series) -> pd.Series:
+    """Scale weights so that sum(|w|) <= 1, exactly as ``backtest.sim()`` does."""
+    total_weight = weights.abs().sum()
+    if total_weight <= 1:
+        return weights
+
+    # Lazy import: finlab.backtest pulls in the whole backtest engine.
+    from finlab.backtest.helpers import normalize_position_weights
+
+    logger.warning(
+        f"Total absolute weight {total_weight:.6g} exceeds 1. "
+        "Weights are scaled down to be fully invested, the same as backtest.sim()."
+    )
+    return pd.Series(
+        normalize_position_weights(
+            weights.to_numpy().reshape(1, -1), _NO_POSITION_LIMIT
+        )[0],
+        index=weights.index,
+    )
+
 
 def _market_close_at_timestamp(market: Any, timestamp: Any) -> datetime.datetime | None:
     if timestamp is None:
@@ -229,7 +254,8 @@ class Position:
         """利用 `weight` 建構股票部位
 
         Attributes:
-            weights (dict[str, float] 或 pd.Series): 股票詳細部位，股票代號對應權重
+            weights (dict[str, float] 或 pd.Series): 股票詳細部位，股票代號對應權重。
+                與 `backtest.sim()` 相同，若權重絕對值總和大於 1，會等比例縮放至總和為 1。
             fund (int): 資金大小
             price (None 或 pd.Series 或 dict[str, float]): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
             odd_lot (bool): 是否考慮零股
@@ -321,6 +347,7 @@ class Position:
                 )
 
         weights.index = weights.index.astype(str)
+        weights = _normalize_like_backtest(weights)
         weights = weights[weights.index.str.split(" ").str[0].isin(price.index)]
 
         multiple = 10**precision
