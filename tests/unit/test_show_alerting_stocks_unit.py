@@ -7,6 +7,10 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
+from finlab.online.core.executor import (
+    SINOTRADE_ALERTING_URLS,
+    SINOTRADE_SYMBOL_COLUMN,
+)
 from finlab.online.order_executor import OrderExecutor, Position
 
 pytestmark = pytest.mark.unit
@@ -14,14 +18,10 @@ pytestmark = pytest.mark.unit
 ALERTING_HTML = (
     '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">'
     "<html><body><table>"
-    "<tr><th>股票代碼</th><th>股票名稱</th></tr>"
+    f"<tr><th>{SINOTRADE_SYMBOL_COLUMN}</th><th>股票名稱</th></tr>"
     "<tr><td>2330</td><td>台積電</td></tr>"
     "</table></body></html>"
 )
-ALERTING_URLS = [
-    "https://www.sinotrade.com.tw/Stock/Stock_3_8_3",
-    "https://www.sinotrade.com.tw/Stock/Stock_3_8_1",
-]
 CLOSE = pd.DataFrame({"2330": [600.0], "2317": [100.0]})
 
 
@@ -35,21 +35,17 @@ def _run(oe: OrderExecutor, read_html: Mock | None = None) -> Mock:
     get = Mock(return_value=Mock(text=ALERTING_HTML))
     with patch("finlab.online.core.executor.requests.get", get), patch(
         "finlab.online.core.executor.data.get", return_value=CLOSE
-    ):
-        if read_html is None:
-            oe.show_alerting_stocks()
-        else:
-            with patch("finlab.online.core.executor.pd.read_html", read_html):
-                oe.show_alerting_stocks()
+    ), patch("finlab.online.core.executor.pd.read_html", read_html or pd.read_html):
+        oe.show_alerting_stocks()
     return get
 
 
 def test_read_html_receives_file_like_not_literal_string() -> None:
-    read_html = Mock(return_value=[pd.DataFrame({"股票代碼": ["9999"]})])
+    read_html = Mock(return_value=[pd.DataFrame({SINOTRADE_SYMBOL_COLUMN: ["9999"]})])
 
     get = _run(_executor({"2330": 1}), read_html)
 
-    assert [c.args[0] for c in get.call_args_list] == ALERTING_URLS
+    assert tuple(c.args[0] for c in get.call_args_list) == SINOTRADE_ALERTING_URLS
     for call in read_html.call_args_list:
         source = call.args[0]
         assert not isinstance(source, str)
@@ -60,7 +56,7 @@ def test_integer_codes_are_matched_and_reported(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # read_html parses numeric codes as int; they must still match str symbols.
-    read_html = Mock(return_value=[pd.DataFrame({"股票代碼": [2330, 1101]})])
+    read_html = Mock(return_value=[pd.DataFrame({SINOTRADE_SYMBOL_COLUMN: [2330, 1101]})])
 
     _run(_executor({"2330": 1, "2317": -2}), read_html)
 

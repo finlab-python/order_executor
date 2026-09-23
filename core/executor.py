@@ -24,13 +24,13 @@ SINOTRADE_ALERTING_URLS = (
 SINOTRADE_SYMBOL_COLUMN = "股票代碼"
 
 
-def _fetch_alerting_symbols(url: str, symbols: list[str]) -> pd.Series:
+def _fetch_alerting_symbols(url: str, symbols: list[str]) -> list[str]:
     """Return the symbols listed in the Sinotrade alerting table at ``url``."""
     res = requests.get(url)
     # pandas >= 2.1 deprecates literal HTML in read_html; pandas 3 treats it as a path.
     table = pd.read_html(StringIO(res.text))[0]
     listed = table[SINOTRADE_SYMBOL_COLUMN].astype(str)
-    return listed[listed.isin(symbols)].rename(None)
+    return listed[listed.isin(symbols)].tolist()
 
 
 class OrderExecutor:
@@ -58,13 +58,15 @@ class OrderExecutor:
         symbols = [self._symbol(o) for o in new_orders]
         quantity = {self._symbol(o): o["quantity"] for o in new_orders}
 
-        credit_sids = pd.concat(
-            [_fetch_alerting_symbols(url, symbols) for url in SINOTRADE_ALERTING_URLS]
-        )
+        credit_sids = [
+            sid
+            for url in SINOTRADE_ALERTING_URLS
+            for sid in _fetch_alerting_symbols(url, symbols)
+        ]
 
-        if credit_sids.any():
+        if credit_sids:
             close = data.get("price:收盤價").ffill().iloc[-1]
-            for sid in list(credit_sids.values):
+            for sid in credit_sids:
                 quantity[sid] = float(quantity[sid])
                 if quantity[sid] > 0:
                     total_amount = quantity[sid] * close[sid] * 1000 * 1.1
