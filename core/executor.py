@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import logging
 import numbers
-from collections.abc import Collection, Iterable
 from decimal import Decimal
 from io import StringIO
 from typing import Any
@@ -81,17 +80,13 @@ class OrderExecutor:
                     )
 
     def cancel_orders(
-        self,
-        buy_only: bool = False,
-        sell_only: bool = False,
-        symbols: Collection[str] | None = None,
+        self, buy_only: bool = False, sell_only: bool = False
     ) -> None:
-        """刪除未實現委託單
+        """刪除所有未實現委託單
 
         Attributes:
             buy_only (bool): 若設為 True，只取消買單
             sell_only (bool): 若設為 True，只取消賣單
-            symbols (Collection[str] | None): 只取消這些商品代號的委託單；預設 None 取消所有商品
         """
         if buy_only and sell_only:
             raise ValueError(
@@ -105,24 +100,7 @@ class OrderExecutor:
                 continue
             if sell_only and o.action == Action.BUY:
                 continue
-            if symbols is not None and self._order_symbol(o) not in symbols:
-                continue
             self.account.cancel_order(oid)
-
-    def _managed_symbols(self, orders: Iterable[dict[str, Any]] = ()) -> set[str]:
-        """Symbols whose open orders a sync may cancel, in the broker's order naming.
-
-        A sync owns the target symbols, the symbols currently held (they may be
-        sold to reach the target) and any symbol it is about to trade. Open
-        orders on other symbols (e.g. manual reservations) are left untouched.
-        """
-        suffix = getattr(self.account, "base_currency", "")
-        position_symbols = {
-            self._symbol(p) for p in self.account.get_position().position
-        } | {self._symbol(o) for o in orders}
-        return {self._symbol(p) for p in self.target_position.position} | {
-            sid + suffix for sid in position_symbols
-        }
 
     @staticmethod
     def _convert_quantity_type(
@@ -269,10 +247,9 @@ class OrderExecutor:
             orders (list): 欲下單的部位，通常是由 `self.generate_orders` 產生。
             market_order (bool): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
             best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
-            view_only (bool): 預設為 False，會實際下單。若設為 True，不會取消或新增任何委託，只會回傳欲執行的委託單資料(dict)
+            view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
             extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想；
                 假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
-            cancel_orders (bool): 預設為 True，下單前先取消本次同步涉及商品（目標部位、現有持倉與 orders）的未成交委託；其他商品的委託不受影響
             buy_only (bool): 若設為 True，只下買單
             sell_only (bool): 若設為 True，只下賣單
         """
@@ -291,7 +268,7 @@ class OrderExecutor:
             )
 
         if cancel_orders and not view_only:
-            self.cancel_orders(symbols=self._managed_symbols(orders))
+            self.cancel_orders()
 
         stocks = self.account.get_stocks(list({self._symbol(o) for o in orders}))
 
@@ -433,18 +410,16 @@ class OrderExecutor:
         Attributes:
             market_order (bool): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
             best_price_limit (bool): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
-            view_only (bool): 預設為 False，會實際下單。若設為 True，不會取消或新增任何委託，只會回傳欲執行的委託單資料(dict)
+            view_only (bool): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
             extra_bid_pct (float): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想；
                 假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
             progress (float): 進度，預設為 1，即全部下單。若設定為 0.5，則只下一半的單。
             progress_precision (int): 進度的精度，預設為 0，即只下整數張。若設定為 1，則下到 0.1 張。
             buy_only (bool): 若設為 True，只下買單
             sell_only (bool): 若設為 True，只下賣單
-
-        下單前會先取消目標部位與現有持倉商品的未成交委託，其他商品的委託（例如手動預約單）不受影響。
         """
         if not view_only:
-            self.cancel_orders(symbols=self._managed_symbols())
+            self.cancel_orders()
 
         orders = self.generate_orders(progress, progress_precision, _internal=True)
         return self.execute_orders(

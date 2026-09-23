@@ -368,10 +368,8 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
             {"stock_id": "2330", "quantity": 1, "order_condition": OrderCondition.CASH}
         ]
         self.mock_account.get_orders.return_value = {
-            "old_buy": Mock(status=OrderStatus.NEW, action=Action.BUY, stock_id="2330"),
-            "old_sell": Mock(
-                status=OrderStatus.NEW, action=Action.SELL, stock_id="2330"
-            ),
+            "old_buy": Mock(status=OrderStatus.NEW, action=Action.BUY),
+            "old_sell": Mock(status=OrderStatus.NEW, action=Action.SELL),
         }
         self.mock_account.get_stocks.return_value = {
             "2330": Mock(close=580.0, ask_price=581.0)
@@ -451,9 +449,7 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         """測試實際執行會先取消委託，再讀取持倉產生訂單"""
         self.mock_account.get_position.return_value = Position({})
         self.mock_account.get_orders.return_value = {
-            "old_sell": Mock(
-                status=OrderStatus.NEW, action=Action.SELL, stock_id="2330"
-            )
+            "old_sell": Mock(status=OrderStatus.NEW, action=Action.SELL)
         }
         self.mock_account.get_stocks.return_value = {
             "2330": Mock(close=580.0, ask_price=581.0)
@@ -463,99 +459,10 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         oe.create_orders()
 
         call_names = [call[0] for call in self.mock_account.mock_calls]
-        last_position_read = (
-            len(call_names) - 1 - call_names[::-1].index("get_position")
+        self.assertLess(
+            call_names.index("cancel_order"),
+            call_names.index("get_position"),
         )
-        self.assertLess(call_names.index("cancel_order"), last_position_read)
-
-    def _open_order(self, stock_id: str, action: Action) -> Mock:
-        return Mock(status=OrderStatus.NEW, action=action, stock_id=stock_id)
-
-    def _cancelled_order_ids(self) -> list[str]:
-        return sorted(c[0][0] for c in self.mock_account.cancel_order.call_args_list)
-
-    def test_cancel_orders_limited_to_symbols(self) -> None:
-        """測試 cancel_orders(symbols=...) 只取消指定商品的委託"""
-        self.mock_account.get_orders.return_value = {
-            "a": self._open_order("2330", Action.BUY),
-            "b": self._open_order("0050", Action.BUY),
-        }
-        oe = OrderExecutor(Position({}), self.mock_account)
-
-        oe.cancel_orders(symbols={"2330"})
-
-        self.assertEqual(self._cancelled_order_ids(), ["a"])
-
-    def test_create_orders_keeps_open_orders_outside_sync_scope(self) -> None:
-        """測試 create_orders 只取消目標與持倉商品的委託，保留無關的預約單"""
-        self.mock_account.get_position.return_value = Position({"2330": 1, "2317": 2})
-        self.mock_account.get_orders.return_value = {
-            "target_buy": self._open_order("2330", Action.BUY),
-            "held_sell": self._open_order("2317", Action.SELL),
-            "manual_reserve": self._open_order("0050", Action.BUY),
-        }
-        self.mock_account.get_stocks.return_value = {
-            "2330": Mock(close=580.0),
-            "2317": Mock(close=100.0),
-        }
-
-        oe = OrderExecutor(Position({"2330": 3}), self.mock_account)
-        oe.create_orders()
-
-        self.assertEqual(self._cancelled_order_ids(), ["held_sell", "target_buy"])
-
-    def test_create_orders_view_only_has_no_account_mutation(self) -> None:
-        """測試 create_orders(view_only=True) 不取消、不新增、不改價"""
-        self.mock_account.get_position.return_value = Position({"2317": 2})
-        self.mock_account.get_orders.return_value = {
-            "held_sell": self._open_order("2317", Action.SELL),
-            "manual_reserve": self._open_order("0050", Action.BUY),
-        }
-        self.mock_account.get_stocks.return_value = {
-            "2330": Mock(close=580.0),
-            "2317": Mock(close=100.0),
-        }
-
-        oe = OrderExecutor(Position({"2330": 3}), self.mock_account)
-        view_orders = oe.create_orders(view_only=True)
-
-        self.assertEqual(len(view_orders), 2)
-        self.mock_account.cancel_order.assert_not_called()
-        self.mock_account.create_order.assert_not_called()
-        self.mock_account.update_order.assert_not_called()
-
-    def test_execute_orders_cancels_open_orders_of_traded_symbols(self) -> None:
-        """測試 execute_orders 會取消即將下單商品的委託，保留無關商品"""
-        orders = [
-            {"stock_id": "2881", "quantity": 1, "order_condition": OrderCondition.CASH}
-        ]
-        self.mock_account.get_orders.return_value = {
-            "traded": self._open_order("2881", Action.BUY),
-            "manual_reserve": self._open_order("0050", Action.BUY),
-        }
-        self.mock_account.get_stocks.return_value = {"2881": Mock(close=66.0)}
-
-        oe = OrderExecutor(Position({}), self.mock_account)
-        oe.execute_orders(orders)
-
-        self.assertEqual(self._cancelled_order_ids(), ["traded"])
-
-    def test_create_orders_cancel_scope_uses_broker_symbols_for_base_currency(
-        self,
-    ) -> None:
-        """測試加密貨幣帳戶以含計價幣別的代號比對委託"""
-        self.mock_account.base_currency = "USDT"
-        self.mock_account.get_position.return_value = Position({"ETH": 1})
-        self.mock_account.get_orders.return_value = {
-            "target": self._open_order("BTCUSDT", Action.BUY),
-            "held": self._open_order("ETHUSDT", Action.SELL),
-            "other": self._open_order("SOLUSDT", Action.BUY),
-        }
-
-        oe = OrderExecutor(Position({"BTCUSDT": 1}), self.mock_account)
-        oe.create_orders()
-
-        self.assertEqual(self._cancelled_order_ids(), ["held", "target"])
 
     @patch("finlab.online.order_executor.data")
     def test_update_order_price(self, mock_data: Mock) -> None:
