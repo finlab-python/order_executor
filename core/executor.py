@@ -5,6 +5,7 @@ import logging
 import numbers
 from collections.abc import Collection, Iterable
 from decimal import Decimal
+from io import StringIO
 from typing import Any
 
 import pandas as pd
@@ -16,6 +17,21 @@ from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 
 logger = logging.getLogger(__name__)
+
+SINOTRADE_ALERTING_URLS = (
+    "https://www.sinotrade.com.tw/Stock/Stock_3_8_3",
+    "https://www.sinotrade.com.tw/Stock/Stock_3_8_1",
+)
+SINOTRADE_SYMBOL_COLUMN = "股票代碼"
+
+
+def _fetch_alerting_symbols(url: str, symbols: list[str]) -> list[str]:
+    """Return the symbols listed in the Sinotrade alerting table at ``url``."""
+    res = requests.get(url)
+    # pandas >= 2.1 deprecates literal HTML in read_html; pandas 3 treats it as a path.
+    table = pd.read_html(StringIO(res.text))[0]
+    listed = table[SINOTRADE_SYMBOL_COLUMN].astype(str)
+    return listed[listed.isin(symbols)].tolist()
 
 
 class OrderExecutor:
@@ -43,25 +59,15 @@ class OrderExecutor:
         symbols = [self._symbol(o) for o in new_orders]
         quantity = {self._symbol(o): o["quantity"] for o in new_orders}
 
-        res = requests.get("https://www.sinotrade.com.tw/Stock/Stock_3_8_3")
-        dfs = pd.read_html(res.text)
-        credit_sids = dfs[0][dfs[0]["股票代碼"].astype(str).isin(symbols)]["股票代碼"]
+        credit_sids = [
+            sid
+            for url in SINOTRADE_ALERTING_URLS
+            for sid in _fetch_alerting_symbols(url, symbols)
+        ]
 
-        res = requests.get("https://www.sinotrade.com.tw/Stock/Stock_3_8_1")
-        dfs = pd.read_html(res.text)
-        credit_sids = pd.concat(
-            [
-                credit_sids,
-                dfs[0][dfs[0]["股票代碼"].astype(str).isin(symbols)]["股票代碼"].astype(
-                    str
-                ),
-            ]
-        )
-        credit_sids.name = None
-
-        if credit_sids.any():
+        if credit_sids:
             close = data.get("price:收盤價").ffill().iloc[-1]
-            for sid in list(credit_sids.values):
+            for sid in credit_sids:
                 quantity[sid] = float(quantity[sid])
                 if quantity[sid] > 0:
                     total_amount = quantity[sid] * close[sid] * 1000 * 1.1
