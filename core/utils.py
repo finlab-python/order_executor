@@ -89,8 +89,13 @@ def greedy_allocation(
         cost = n_shares * price
         # As weights are all > 0 (long only) we always round down n_shares
         # so the cost is always <= simple weighted share of portfolio value,
-        # so we can not run out of funds just here.
-        assert cost <= available_funds, "Unexpectedly insufficient funds."
+        # so we can not run out of funds just here unless the weights sum to > 1.
+        if cost > available_funds:
+            total_weight = sum(w for _, w in weights)
+            raise ValueError(
+                f"Insufficient funds: weights sum to {total_weight:.6g}, which exceeds 1. "
+                "Scale the weights so that their total is at most 1."
+            )
         available_funds -= cost
         shares_bought.append(n_shares)
         buy_prices.append(price)
