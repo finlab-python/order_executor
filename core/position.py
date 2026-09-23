@@ -11,7 +11,6 @@ from typing import Any
 import pandas as pd
 
 from finlab import config
-from finlab.backtest.helpers import normalize_position_weights
 from finlab.compat import normalize_position_dict, resolve_position_entry_symbol
 from finlab.online.core.enums import *
 from finlab.online.core.utils import greedy_allocation
@@ -25,18 +24,23 @@ _NO_POSITION_LIMIT = 1.0
 
 def _normalize_like_backtest(weights: pd.Series) -> pd.Series:
     """Scale weights so that sum(|w|) <= 1, exactly as ``backtest.sim()`` does."""
-    normalized = pd.Series(
+    total_weight = weights.abs().sum()
+    if total_weight <= 1:
+        return weights
+
+    # Lazy import: finlab.backtest pulls in the whole backtest engine.
+    from finlab.backtest.helpers import normalize_position_weights
+
+    logger.warning(
+        f"Total absolute weight {total_weight:.6g} exceeds 1. "
+        "Weights are scaled down to be fully invested, the same as backtest.sim()."
+    )
+    return pd.Series(
         normalize_position_weights(
             weights.to_numpy().reshape(1, -1), _NO_POSITION_LIMIT
         )[0],
         index=weights.index,
     )
-    if not normalized.eq(weights).all():
-        logger.warning(
-            f"Total absolute weight {weights.abs().sum():.6g} exceeds 1. "
-            "Weights are scaled down to be fully invested, the same as backtest.sim()."
-        )
-    return normalized
 
 
 def _market_close_at_timestamp(market: Any, timestamp: Any) -> datetime.datetime | None:
