@@ -58,6 +58,16 @@ from finlab.online.core.realtime_provider import RealtimeProvider
 
 logger = logging.getLogger(__name__)
 
+SHARES_PER_LOT = 1000
+
+
+class OddLotRepriceError(RuntimeError):
+    """An odd-lot order was cancelled for repricing but could not be re-placed.
+
+    The original order no longer exists at the broker, so the caller must
+    re-submit it (or deliberately give it up); it is never safe to ignore.
+    """
+
 
 class SinopacAccount(Account, RealtimeProvider):
     required_module = "shioaji"
@@ -609,19 +619,8 @@ class SinopacAccount(Account, RealtimeProvider):
                 else SJStockOrderLot.Common
             )
             if order_lot in (SJStockOrderLot.IntradayOdd, SJStockOrderLot.Odd):
-                action = order.action
-                stock_id = order.stock_id
-                q = typesafe_op(order.quantity, order.filled_quantity, "-")
-                q *= 1000
-
                 self.cancel_order(order_id)
-                self.create_order(
-                    action=action,
-                    stock_id=stock_id,
-                    quantity=q,
-                    price=price,
-                    odd_lot=True,
-                )
+                self._replace_cancelled_odd_lot_order(order, price)
             else:
                 if price is None and quantity is None:
                     logger.warning(
@@ -638,6 +637,36 @@ class SinopacAccount(Account, RealtimeProvider):
             logging.warning(
                 f"update_order: Cannot update price of order {order_id}: {ve}"
             )
+
+    def _replace_cancelled_odd_lot_order(
+        self, order: Order, price: float | None
+    ) -> None:
+        """Re-place the remaining shares of an odd-lot order that was just cancelled.
+
+        Shioaji cannot modify the price of an odd-lot order, so repricing is
+        cancel-then-place. Once the cancel went through, any failure here
+        leaves no working order, so it is raised instead of logged.
+        """
+        shares = (
+            typesafe_op(order.quantity, order.filled_quantity, "-") * SHARES_PER_LOT
+        )
+        context = (
+            f"odd-lot order {order.order_id} ({order.action.name} {order.stock_id} "
+            f"{shares} shares @ {price}) was cancelled for repricing but could not "
+            "be re-placed; the original order no longer exists, re-submit it manually"
+        )
+        try:
+            new_order_id = self.create_order(
+                action=order.action,
+                stock_id=order.stock_id,
+                quantity=shares,
+                price=price,
+                odd_lot=True,
+            )
+        except Exception as e:
+            raise OddLotRepriceError(f"{context}: {e}") from e
+        if not new_order_id:
+            raise OddLotRepriceError(f"{context}: broker returned no order id")
 
     def cancel_order(self, order_id: str) -> None:
         self.update_trades()

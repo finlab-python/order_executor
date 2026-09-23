@@ -411,3 +411,137 @@ def test_sinopac_backfill_ticks_uses_historical_tick_query(
     assert [tick.total_volume for tick in backfilled["2330"]] == [2, 3]
     assert [tick.tick_type for tick in backfilled["2330"]] == [1, 2]
     assert [tick.price for tick in ticks] == [581.0, 582.0]
+
+
+_ODD_LOT_ORDER_ID = "odd-1"
+_ODD_LOT_PRICE_INFO = {"2330": {"漲停價": 638.0, "跌停價": 522.0}}
+
+
+def _odd_lot_trade(order_id: str = _ODD_LOT_ORDER_ID) -> types.SimpleNamespace:
+    """A working intraday odd-lot buy of 300 shares of 2330."""
+    return types.SimpleNamespace(
+        contract=types.SimpleNamespace(code="2330", exchange="TSE"),
+        order=types.SimpleNamespace(
+            action="Buy",
+            order_cond="Cash",
+            daytrade_short=False,
+            quantity=300,
+            price=580.0,
+            order_lot="IntradayOdd",
+        ),
+        status=types.SimpleNamespace(
+            id=order_id,
+            status="Submitted",
+            deal_quantity=0,
+            modified_price=0,
+            order_datetime=None,
+        ),
+    )
+
+
+class _FakeOrderShioaji(_FakeShioaji):
+    """Shioaji fake holding one odd-lot order, with injectable failures."""
+
+    def __init__(
+        self,
+        cancel_error: Exception | None = None,
+        place_error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self.cancel_error = cancel_error
+        self.place_error = place_error
+        self.cancelled: list[str] = []
+
+    def update_status(self, account: object) -> None:
+        pass
+
+    def list_trades(self) -> list[types.SimpleNamespace]:
+        return [] if self.cancelled else [_odd_lot_trade()]
+
+    def cancel_order(self, trade: types.SimpleNamespace) -> None:
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        self.cancelled.append(trade.status.id)
+
+    def place_order(
+        self, contract: object, order: object
+    ) -> types.SimpleNamespace:
+        if self.place_error is not None:
+            raise self.place_error
+        return super().place_order(contract, order)
+
+
+def _make_odd_lot_account(
+    sinopac_module: types.ModuleType, api: _FakeOrderShioaji
+) -> object:
+    account = _make_account(sinopac_module, api)
+    account.trades = {}
+    account.get_price_info = lambda: _ODD_LOT_PRICE_INFO
+    return account
+
+
+def test_sinopac_update_odd_lot_order_cancels_and_replaces_remaining_shares(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeOrderShioaji()
+    account = _make_odd_lot_account(sinopac_module, api)
+
+    account.update_order(_ODD_LOT_ORDER_ID, price=585.0)
+
+    assert api.cancelled == [_ODD_LOT_ORDER_ID]
+    [(contract, order)] = api.placed_orders
+    assert contract.code == "2330"
+    assert order.quantity == 300
+    assert order.price == 585.0
+
+
+def test_sinopac_update_odd_lot_order_raises_when_replace_fails_after_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    broker_error = ValueError("broker rejected order: price out of range")
+    api = _FakeOrderShioaji(place_error=broker_error)
+    account = _make_odd_lot_account(sinopac_module, api)
+
+    with pytest.raises(sinopac_module.OddLotRepriceError) as excinfo:
+        account.update_order(_ODD_LOT_ORDER_ID, price=585.0)
+
+    message = str(excinfo.value)
+    assert _ODD_LOT_ORDER_ID in message
+    assert "2330" in message
+    assert "300" in message
+    assert "585.0" in message
+    assert str(broker_error) in message
+    assert excinfo.value.__cause__ is broker_error
+    assert api.cancelled == [_ODD_LOT_ORDER_ID]
+
+
+def test_sinopac_update_odd_lot_order_raises_when_replace_returns_no_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeOrderShioaji()
+    account = _make_odd_lot_account(sinopac_module, api)
+    # create_order returns "" when the stock is missing from price info.
+    account.get_price_info = dict
+
+    with pytest.raises(sinopac_module.OddLotRepriceError, match="no order id"):
+        account.update_order(_ODD_LOT_ORDER_ID, price=585.0)
+
+    assert api.placed_orders == []
+
+
+def test_sinopac_update_odd_lot_order_keeps_original_when_cancel_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeOrderShioaji(cancel_error=ValueError("order already filled"))
+    account = _make_odd_lot_account(sinopac_module, api)
+
+    account.update_order(_ODD_LOT_ORDER_ID, price=585.0)
+
+    assert api.placed_orders == []
+    assert list(account.get_orders()) == [_ODD_LOT_ORDER_ID]
+    assert "order already filled" in caplog.text
