@@ -597,14 +597,18 @@ class Position:
         now = datetime.datetime.now(tz=datetime.timezone.utc)
 
         # finlab decides the switch with the same rule as is_rebalance_due(),
-        # so a rebuild inside the rebalance window never holds the old target.
+        # so a rebuild inside the rebalance window never holds the old target
+        # and deferred stops (sl_enter/tp_enter) stop applying at the same time.
         uses_next_weights = getattr(report, "uses_next_weights", None)
         switch_to_next = uses_next_weights(now) if callable(uses_next_weights) else None
-        if not isinstance(switch_to_next, bool):
+        if isinstance(switch_to_next, bool):
+            before_rebalance = not switch_to_next
+        else:
             next_weights_time = _market_close_at_timestamp(
                 report.market, getattr(report.next_weights, "name", None)
             )
             switch_to_next = now >= (next_weights_time or next_trading_time)
+            before_rebalance = now < next_trading_time
 
         if switch_to_next:
             w = report.next_weights.copy()
@@ -626,7 +630,7 @@ class Position:
         ######################################################
 
         is_exit_enter = report.actions.isin(["sl_enter", "tp_enter"])
-        if sum(is_exit_enter) and now < next_trading_time:
+        if sum(is_exit_enter) and before_rebalance:
             exit_stocks = report.actions[is_exit_enter].index.intersection(
                 w.index.tolist()
             )
