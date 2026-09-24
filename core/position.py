@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import math
+import warnings
 from collections.abc import Callable, Iterator
 from decimal import Decimal
 from typing import Any
@@ -20,6 +21,53 @@ logger = logging.getLogger(__name__)
 # Live positions have no per-asset cap, so only backtest.sim()'s total-weight
 # rule applies (a position_limit of 1 disables the cap).
 _NO_POSITION_LIMIT = 1.0
+
+# How many under-funded stocks ZeroShareAllocationWarning names as examples.
+_MAX_ZERO_SHARE_EXAMPLES = 3
+
+
+class ZeroShareAllocationWarning(UserWarning):
+    """Stocks with a non-zero target weight get 0 shares under whole-lot trading."""
+
+
+def _warn_zero_share_allocation(
+    weights: pd.Series,
+    quantities: dict[str, Any],
+    price: pd.Series,
+    board_lot_size: int,
+    fund: float,
+) -> None:
+    """Warn when whole-lot flooring leaves weighted stocks with 0 shares."""
+    stock_ids = weights.index.str.split(" ").str[0]
+    held = {str(s).split(" ")[0] for s, q in quantities.items() if q != 0}
+    allocated = weights.abs().to_numpy() * fund
+    lot_cost = price.reindex(stock_ids).to_numpy() * board_lot_size
+    unfilled = (allocated > 0) & ~stock_ids.isin(held) & (lot_cost > allocated)
+
+    n_unfilled = int(unfilled.sum())
+    if n_unfilled == 0:
+        return
+
+    examples = ", ".join(
+        f"{s} (one lot {c:,.0f} vs allocated {a:,.0f})"
+        for s, c, a in list(
+            zip(stock_ids[unfilled], lot_cost[unfilled], allocated[unfilled])
+        )[:_MAX_ZERO_SHARE_EXAMPLES]
+    )
+    n_weighted = int((allocated > 0).sum())
+    empty = (
+        " The position is empty, so no orders will be placed."
+        if n_unfilled == n_weighted
+        else ""
+    )
+    warnings.warn(
+        f"{n_unfilled} of {n_weighted} stocks with a non-zero target weight get "
+        f"0 shares because their allocated fund cannot buy one board lot "
+        f"({board_lot_size} shares): {examples}.{empty} "
+        "Use odd_lot=True to trade odd lots, or increase fund.",
+        ZeroShareAllocationWarning,
+        stacklevel=3,
+    )
 
 
 def _normalize_like_backtest(weights: pd.Series) -> pd.Series:
@@ -258,7 +306,8 @@ class Position:
                 與 `backtest.sim()` 相同，若權重絕對值總和大於 1，會等比例縮放至總和為 1。
             fund (int): 資金大小
             price (None 或 pd.Series 或 dict[str, float]): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
-            odd_lot (bool): 是否考慮零股
+            odd_lot (bool): 是否考慮零股。為 False 時只買整張，資金不足一張的股票會是 0 股，
+                並發出 `ZeroShareAllocationWarning`。
             board_lot_size (None 或 int): 一張股票等於幾股
             allocation (function): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。
                 呼叫方式為 `allocation(weights, price * board_lot_size, effective_fund * 10**precision)`，
@@ -364,6 +413,9 @@ class Position:
         if not odd_lot:
             for s, q in quantities.items():
                 quantities[s] = round(q)
+            _warn_zero_share_allocation(
+                weights, quantities, price, board_lot_size, effective_fund
+            )
 
         # fill zero quantity
         for s in weights.index:
