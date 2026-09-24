@@ -596,12 +596,17 @@ class Position:
 
         now = datetime.datetime.now(tz=datetime.timezone.utc)
 
-        next_weights_time = _market_close_at_timestamp(
-            report.market, getattr(report.next_weights, "name", None)
-        )
-        use_next_weights_time = next_weights_time or next_trading_time
+        # finlab decides the switch with the same rule as is_rebalance_due(),
+        # so a rebuild inside the rebalance window never holds the old target.
+        uses_next_weights = getattr(report, "uses_next_weights", None)
+        switch_to_next = uses_next_weights(now) if callable(uses_next_weights) else None
+        if not isinstance(switch_to_next, bool):
+            next_weights_time = _market_close_at_timestamp(
+                report.market, getattr(report.next_weights, "name", None)
+            )
+            switch_to_next = now >= (next_weights_time or next_trading_time)
 
-        if now >= use_next_weights_time:
+        if switch_to_next:
             w = report.next_weights.copy()
         else:
             w = report.weights.copy()
