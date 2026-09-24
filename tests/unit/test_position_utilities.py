@@ -5,14 +5,18 @@ from __future__ import annotations
 import datetime
 import sys
 import types
+import warnings
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pandas as pd
+import pytest
+
 from finlab.online.enums import OrderCondition
 from finlab.online.order_executor import Position
+from finlab.online.position import ZeroShareAllocationWarning
 
 
 def test_position_json_roundtrip(tmp_path: Path) -> None:
@@ -155,6 +159,72 @@ def test_position_from_weight() -> None:
         raise AssertionError
     except Exception:
         assert True
+
+
+def _quantities(position: Position) -> dict[str, float]:
+    return {p["stock_id"]: float(p["quantity"]) for p in position.to_list()}
+
+
+def test_from_weight_warns_when_no_stock_affords_one_lot() -> None:
+    with pytest.warns(ZeroShareAllocationWarning) as record:
+        position = Position.from_weight(
+            {"1101": 0.5, "2330": 0.5},
+            fund=30_000,
+            price={"1101": 40, "2330": 900},
+            board_lot_size=1000,
+        )
+
+    message = str(record[0].message)
+    assert "2 of 2" in message
+    assert "2330 (one lot 900,000 vs allocated 15,000)" in message
+    assert "no orders will be placed" in message
+    assert "odd_lot=True" in message
+    assert not any(_quantities(position).values())
+
+
+def test_from_weight_warns_only_for_unaffordable_stocks() -> None:
+    with pytest.warns(ZeroShareAllocationWarning) as record:
+        position = Position.from_weight(
+            {"1101": 0.5, "2330": 0.5},
+            fund=200_000,
+            price={"1101": 40, "2330": 900},
+            board_lot_size=1000,
+        )
+
+    message = str(record[0].message)
+    assert "1 of 2" in message
+    assert "2330" in message and "1101" not in message
+    assert "no orders will be placed" not in message
+    assert _quantities(position) == {"1101": 2.0}
+
+
+def test_from_weight_zero_share_warning_caps_examples() -> None:
+    weights = {f"{1000 + i}": 0.2 for i in range(5)}
+    price = dict.fromkeys(weights, 100)
+
+    with pytest.warns(ZeroShareAllocationWarning) as record:
+        Position.from_weight(weights, fund=50_000, price=price, board_lot_size=1000)
+
+    message = str(record[0].message)
+    assert "5 of 5" in message
+    assert message.count("one lot") == 3
+
+
+@pytest.mark.parametrize(
+    ("fund", "odd_lot"),
+    [(2_000_000, False), (30_000, True)],
+    ids=["whole_lots_affordable", "odd_lot"],
+)
+def test_from_weight_no_zero_share_warning(fund: int, odd_lot: bool) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ZeroShareAllocationWarning)
+        Position.from_weight(
+            {"1101": 0.5, "2330": 0.5},
+            fund=fund,
+            price={"1101": 40, "2330": 900},
+            board_lot_size=1000,
+            odd_lot=odd_lot,
+        )
 
 
 class _ReportMarket:
