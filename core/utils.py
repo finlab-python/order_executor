@@ -6,12 +6,6 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
-# Float bookkeeping (side budgets, first-round costs, second-round subtractions)
-# puts the exact cost of an allocation within a few ulps of the fund per stock,
-# around 1e-15 of it. Exceeding the fund by less than this share of it is that
-# rounding, not money spent beyond the fund.
-_ROUNDING_TOLERANCE = 1e-12
-
 
 def greedy_allocation(
     weights: Mapping[str, float] | pd.Series,
@@ -21,11 +15,20 @@ def greedy_allocation(
     """
     original source code: PyPortfolioOpt
     https://pypi.org/project/pyportfolioopt/
-
-    Raises:
-        ValueError: The absolute weights sum to more than 1 and the shares
-            would cost more than ``total_portfolio_value``.
     """
+    return _greedy_allocation(
+        weights, latest_prices, total_portfolio_value, check_funds=True
+    )
+
+
+def _greedy_allocation(
+    weights: Mapping[str, float] | pd.Series,
+    latest_prices: Mapping[str, float] | pd.Series,
+    total_portfolio_value: float,
+    check_funds: bool,
+) -> tuple[dict[str, int], float]:
+    """``check_funds``: raise when the first round of a long-only allocation
+    costs more than ``total_portfolio_value``."""
 
     weights = pd.Series(weights)
 
@@ -57,123 +60,71 @@ def greedy_allocation(
     # Sort in descending order of weight
     weights.sort(key=lambda x: x[1], reverse=True)
 
+    # If portfolio contains shorts
     if weights[-1][1] < 0:
-        return _allocate_long_short(weights, latest_prices, total_portfolio_value)
+        longs = {t: w for t, w in weights if w > 0}
+        shorts = {t: -w for t, w in weights if w < 0}
 
-    return _allocate_long_only(weights, latest_prices, total_portfolio_value)
+        # Make them sum to one
+        long_total_weight = sum(longs.values())
+        short_total_weight = sum(shorts.values())
+        longs = {t: w / long_total_weight for t, w in longs.items()}
+        shorts = {t: w / short_total_weight for t, w in shorts.items()}
 
+        # Construct long-only discrete allocations for each
+        short_val = total_portfolio_value * short_total_weight
+        long_val = total_portfolio_value * long_total_weight
 
-def _allocate_long_only(
-    weights: list[tuple[str, float]],
-    latest_prices: pd.Series,
-    total_portfolio_value: float,
-) -> tuple[dict[str, int], float]:
-    shares, costs = _buy_floor_shares(weights, latest_prices, total_portfolio_value)
-    # As weights are all > 0 (long only) we always round down n_shares
-    # so the cost is always <= simple weighted share of portfolio value,
-    # so we can not run out of funds just here unless the weights sum to > 1.
-    available_funds = _remaining_funds(total_portfolio_value, costs)
-    if available_funds < 0:
-        raise _insufficient_funds(weights)
-
-    shares, available_funds = _top_up(weights, latest_prices, shares, available_funds)
-    tickers = [ticker for ticker, _ in weights]
-    return dict(zip(tickers, shares, strict=True)), available_funds
-
-
-def _allocate_long_short(
-    weights: list[tuple[str, float]],
-    latest_prices: pd.Series,
-    total_portfolio_value: float,
-) -> tuple[dict[str, int], float]:
-    """Allocate each side like a long-only book of its own.
-
-    A side's weights are re-normalised to sum to 1 and its budget is
-    ``total_portfolio_value * side_weight``, so a side spends its budget at
-    most, up to float rounding. That rounding can put a side's first round a
-    few ulps over its budget (finlab#230), so no side checks its own budget.
-    The budgets add up to more than the fund only when the absolute weights
-    sum to more than 1, and only then is the allocation checked against the
-    whole fund.
-    """
-    allocation: dict[str, int] = {}
-    leftovers = []
-    for sign, side in (
-        (1, {t: w for t, w in weights if w > 0}),
-        (-1, {t: -w for t, w in weights if w < 0}),
-    ):
-        side_total_weight = sum(side.values())
-        side_weights = [(t, w / side_total_weight) for t, w in side.items()]
-        side_weights.sort(key=lambda x: x[1], reverse=True)
-        budget = total_portfolio_value * side_total_weight
-        shares, costs = _buy_floor_shares(side_weights, latest_prices, budget)
-        shares, side_leftover = _top_up(
-            side_weights, latest_prices, shares, _remaining_funds(budget, costs)
+        # With a fund of at least 0 and weights summing to at most 1, the two
+        # budgets fit in the fund, and a side's first round can go over its
+        # budget only by the float rounding of the normalisation and the
+        # budget (finlab#230), so the sides are not checked. Other inputs keep
+        # the check.
+        check_side_funds = (
+            total_portfolio_value < 0 or long_total_weight + short_total_weight > 1
         )
-        allocation.update(
-            {t: sign * n for (t, _), n in zip(side_weights, shares, strict=True)}
+
+        long_alloc, long_leftover = _greedy_allocation(
+            longs, latest_prices, long_val, check_side_funds
         )
-        leftovers.append(side_leftover)
 
-    allocation = {t: n for t, n in allocation.items() if n != 0}
-    if math.fsum(abs(w) for _, w in weights) > 1 and _exceeds_fund(
-        allocation, latest_prices, total_portfolio_value
-    ):
-        raise _insufficient_funds(weights)
+        short_alloc, short_leftover = _greedy_allocation(
+            shorts, latest_prices, short_val, check_side_funds
+        )
+        short_alloc = {t: -w for t, w in short_alloc.items()}
 
-    long_leftover, short_leftover = leftovers
-    return allocation, long_leftover + short_leftover
+        # Combine and return
+        allocation = long_alloc.copy()
+        allocation.update(short_alloc)
+        allocation = {t: w for t, w in allocation.items() if w != 0}
 
+        return allocation, long_leftover + short_leftover
 
-def _buy_floor_shares(
-    weights: list[tuple[str, float]],
-    latest_prices: pd.Series,
-    total_portfolio_value: float,
-) -> tuple[list[int], list[float]]:
-    """First round: the lower integer number of shares of each asset (maybe zero)."""
-    shares = []
-    costs = []
+    # Otherwise, portfolio is long only and we proceed with greedy algo
+    available_funds = total_portfolio_value
+    shares_bought = []
+    buy_prices = []
+
+    # First round
     for ticker, weight in weights:
         price = latest_prices[ticker]
+        # Attempt to buy the lower integer number of shares, which could be zero.
         n_shares = int(weight * total_portfolio_value / price)
-        shares.append(n_shares)
-        costs.append(n_shares * price)
-    return shares, costs
+        cost = n_shares * price
+        # As weights are all > 0 (long only) we always round down n_shares
+        # so the cost is always <= simple weighted share of portfolio value,
+        # so we can not run out of funds just here unless the weights sum to > 1.
+        if check_funds and cost > available_funds:
+            total_weight = sum(w for _, w in weights)
+            raise ValueError(
+                f"Insufficient funds: weights sum to {total_weight:.6g}, which exceeds 1. "
+                "Scale the weights so that their total is at most 1."
+            )
+        available_funds -= cost
+        shares_bought.append(n_shares)
+        buy_prices.append(price)
 
-
-def _exceeds_fund(
-    allocation: dict[str, int],
-    latest_prices: pd.Series,
-    total_portfolio_value: float,
-) -> bool:
-    cost = math.fsum(abs(n) * latest_prices[t] for t, n in allocation.items())
-    return cost > total_portfolio_value * (1 + _ROUNDING_TOLERANCE)
-
-
-def _remaining_funds(funds: float, costs: list[float]) -> float:
-    for cost in costs:
-        funds -= cost
-    return funds
-
-
-def _insufficient_funds(weights: list[tuple[str, float]]) -> ValueError:
-    total_weight = sum(abs(w) for _, w in weights)
-    return ValueError(
-        f"Insufficient funds: weights sum to {total_weight:.6g}, which exceeds 1. "
-        "Scale the weights so that their total is at most 1."
-    )
-
-
-def _top_up(
-    weights: list[tuple[str, float]],
-    latest_prices: pd.Series,
-    shares: list[int],
-    available_funds: float,
-) -> tuple[list[int], float]:
-    """Second round: buy one share at a time of the most under-weighted asset."""
-    shares_bought = list(shares)
-    buy_prices = [latest_prices[ticker] for ticker, _ in weights]
-
+    # Second round
     while available_funds > 0:
         # Calculate the equivalent continuous weights of the shares that
         # have already been bought
@@ -186,7 +137,7 @@ def _top_up(
 
         # Attempt to buy the asset whose current weights deviate the most
         idx = np.argmax(deficit)
-        ticker, _ = weights[idx]
+        ticker, weight = weights[idx]
         price = latest_prices[ticker]
 
         # If we can't afford this asset, search for the next highest deficit that we
@@ -201,7 +152,7 @@ def _top_up(
             if deficit[idx] < 0 or counter == 10:
                 break
 
-            ticker, _ = weights[idx]
+            ticker, weight = weights[idx]
             price = latest_prices[ticker]
             counter += 1
 
@@ -213,7 +164,9 @@ def _top_up(
         shares_bought[idx] += 1
         available_funds -= price
 
-    return shares_bought, available_funds
+    allocation = dict(zip([i[0] for i in weights], shares_bought))
+
+    return allocation, available_funds
 
 
 def _round_to_tick(price: float, direction: str = "floor") -> float:
