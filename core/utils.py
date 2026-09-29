@@ -16,6 +16,19 @@ def greedy_allocation(
     original source code: PyPortfolioOpt
     https://pypi.org/project/pyportfolioopt/
     """
+    return _greedy_allocation(
+        weights, latest_prices, total_portfolio_value, check_funds=True
+    )
+
+
+def _greedy_allocation(
+    weights: Mapping[str, float] | pd.Series,
+    latest_prices: Mapping[str, float] | pd.Series,
+    total_portfolio_value: float,
+    check_funds: bool,
+) -> tuple[dict[str, int], float]:
+    """``check_funds``: raise when the first round of a long-only allocation
+    costs more than ``total_portfolio_value``."""
 
     weights = pd.Series(weights)
 
@@ -62,10 +75,21 @@ def greedy_allocation(
         short_val = total_portfolio_value * short_total_weight
         long_val = total_portfolio_value * long_total_weight
 
-        long_alloc, long_leftover = greedy_allocation(longs, latest_prices, long_val)
+        # With a fund of at least 0 and weights summing to at most 1, the two
+        # budgets fit in the fund, and a side's first round can go over its
+        # budget only by the float rounding of the normalisation and the
+        # budget (finlab#230), so the sides are not checked. Other inputs keep
+        # the check.
+        check_side_funds = (
+            total_portfolio_value < 0 or long_total_weight + short_total_weight > 1
+        )
 
-        short_alloc, short_leftover = greedy_allocation(
-            shorts, latest_prices, short_val
+        long_alloc, long_leftover = _greedy_allocation(
+            longs, latest_prices, long_val, check_side_funds
+        )
+
+        short_alloc, short_leftover = _greedy_allocation(
+            shorts, latest_prices, short_val, check_side_funds
         )
         short_alloc = {t: -w for t, w in short_alloc.items()}
 
@@ -90,7 +114,7 @@ def greedy_allocation(
         # As weights are all > 0 (long only) we always round down n_shares
         # so the cost is always <= simple weighted share of portfolio value,
         # so we can not run out of funds just here unless the weights sum to > 1.
-        if cost > available_funds:
+        if check_funds and cost > available_funds:
             total_weight = sum(w for _, w in weights)
             raise ValueError(
                 f"Insufficient funds: weights sum to {total_weight:.6g}, which exceeds 1. "
