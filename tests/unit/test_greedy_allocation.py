@@ -4,18 +4,23 @@ When a portfolio holds shorts, each side is re-normalised to sum to 1 and
 given ``fund * side_weight``. Float rounding in those two steps used to make
 the side's first round overshoot its budget by a few ulps and raise
 "Insufficient funds" although the weights sum to less than 1.
+
+Whatever the weights, an allocation that does not raise costs at most the
+fund, up to float rounding in the allocator's bookkeeping.
 """
 
 from __future__ import annotations
 
+import collections
 import math
 import random
 from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 
 from finlab.online.core.position import Position
-from finlab.online.core.utils import greedy_allocation
+from finlab.online.core.utils import _ROUNDING_TOLERANCE, greedy_allocation
 
 pytestmark = pytest.mark.unit
 
@@ -34,6 +39,15 @@ def _mirror(weights: dict[str, float]) -> dict[str, float]:
 
 def _held(allocation: dict[str, int]) -> dict[str, int]:
     return {symbol: shares for symbol, shares in allocation.items() if shares}
+
+
+def _assert_within_fund(
+    allocation: dict[str, int], prices: dict[str, float], fund: float
+) -> None:
+    """The exact cost of the shares exceeds the fund by float rounding at most."""
+    cost = sum(Fraction(abs(n)) * Fraction(prices[s]) for s, n in allocation.items())
+    allowance = Fraction(fund) * Fraction(_ROUNDING_TOLERANCE)
+    assert cost - Fraction(fund) <= allowance, (allocation, prices, fund)
 
 
 @pytest.mark.parametrize(
@@ -74,6 +88,7 @@ def test_position_from_weight_short_selling_just_below_one():
 # Short-only inputs that raised "Insufficient funds" before the fix
 # (order_executor 497b57b), found by random search.
 PREVIOUSLY_FAILING_SHORTS = [
+    ({"A": -0.3, "B": -0.3, "C": -0.3}, dict.fromkeys("ABC", PRICE), FUND),
     ({"A": -0.35, "B": -0.3}, {"A": 100.0, "B": 10.0}, 100_000),
     ({"A": -0.3, "B": -0.35}, {"A": 10.0, "B": 10.0}, 3_000_000),
     ({"A": -0.3, "B": -0.3, "C": -0.3}, {"A": 100.0, "B": 48.0, "C": 100.0}, 100_000),
@@ -113,7 +128,7 @@ BOARD_LOT = 1000
 ROUND_PRICES = (10, 20, 25, 40, 48, 50, 60, 75, 80, 100, 120, 150, 200, 250, 300, 600)
 ROUND_FUNDS = (100_000, 300_000, 1_000_000, 3_000_000)
 DECIMAL_WEIGHTS = (0.05, 0.1, 0.15, 0.2, 0.3, 1 / 3)
-OVER_ALLOCATION = (1.05, 2.0)
+OVER_ALLOCATION = (1.0001, 2.0)
 
 
 def _tw_price(rng: random.Random) -> float:
@@ -173,10 +188,6 @@ def _random_case(
     return weights, prices, fund * rng.choice((1, BOARD_LOT))
 
 
-def _total_cost(allocation: dict[str, int], prices: dict[str, float]) -> float:
-    return math.fsum(abs(shares) * prices[s] for s, shares in allocation.items())
-
-
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("side", SIDES)
 def test_weights_summing_to_at_most_one_allocate_within_the_fund(side, seed):
@@ -192,7 +203,7 @@ def test_weights_summing_to_at_most_one_allocate_within_the_fund(side, seed):
 
         allocation, _ = greedy_allocation(weights, prices, fund)
 
-        assert _total_cost(allocation, prices) <= fund, (weights, prices, fund)
+        _assert_within_fund(allocation, prices, fund)
         assert all(
             (shares > 0) == (weights[s] > 0) for s, shares in _held(allocation).items()
         ), (weights, allocation)
@@ -200,20 +211,83 @@ def test_weights_summing_to_at_most_one_allocate_within_the_fund(side, seed):
 
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("side", SIDES)
-def test_weights_summing_to_more_than_one_raise(side, seed):
+def test_weights_summing_to_more_than_one_raise_or_stay_within_the_fund(side, seed):
     rng = random.Random(f"over-{side}-{seed}")
+    outcomes: collections.Counter[str] = collections.Counter()
     for _ in range(CASES_PER_SEED):
         weights, prices, fund = _random_case(
-            rng, side, rng.uniform(*OVER_ALLOCATION), exact_prices=True
+            rng, side, rng.uniform(*OVER_ALLOCATION), rng.random() < 0.5
         )
-        # Flooring loses less than one share per stock, so cheap enough stocks
-        # keep the first round above the fund.
-        excess = math.fsum(abs(w) for w in weights.values()) - 1
-        if len(weights) * max(prices.values()) >= excess * fund:
+        if math.fsum(abs(w) for w in weights.values()) <= 1:
+            continue  # capped weights can stay below the drawn total
+
+        try:
+            allocation, _ = greedy_allocation(weights, prices, fund)
+        except ValueError as error:
+            assert INSUFFICIENT in str(error)
+            outcomes["raised"] += 1
             continue
 
-        with pytest.raises(ValueError, match=INSUFFICIENT):
-            greedy_allocation(weights, prices, fund)
+        _assert_within_fund(allocation, prices, fund)
+        outcomes["allocated"] += 1
+
+    # Both outcomes occur, so neither assertion above is vacuous.
+    assert outcomes["raised"] and outcomes["allocated"], outcomes
+
+
+# Red team A, round 1: the first round fits in the fund, but each side's second
+# round spent up to its own budget, and with weights over 1 the budgets add up
+# to more than the fund (costs 1,200 against a fund of 1,000).
+@pytest.mark.parametrize(
+    ("weights", "price"),
+    [
+        ({"A": 0.35, "B": 0.25, "C": -0.35, "D": -0.25}, 200.0),
+        ({"C": -0.7, "D": -0.5}, 200.0),
+        ({"A": -0.1, "B": -1.1}, 600.0),
+    ],
+    ids=["long_short", "short_only", "smallest_short_only"],
+)
+def test_second_round_past_the_fund_raises(weights, price):
+    with pytest.raises(ValueError, match=INSUFFICIENT):
+        greedy_allocation(weights, _prices(weights, price), 1_000)
+
+
+# Weights over 1 whose shares still fit in the fund keep the allocation and
+# leftover they had before the fix (order_executor 497b57b), like long-only
+# weights over 1 do.
+@pytest.mark.parametrize(
+    ("weights", "price", "expected"),
+    [
+        ({"A": -0.6, "B": -0.6}, 700.0, ({"A": -1}, 500.0)),
+        (
+            {"A": 0.7, "B": 0.2, "C": -0.3},
+            300.0,
+            ({"A": 2, "C": -1}, 299.9999999999999),
+        ),
+    ],
+    ids=["short_only", "long_short"],
+)
+def test_weights_over_one_that_fit_the_fund_are_allocated(weights, price, expected):
+    assert greedy_allocation(weights, _prices(weights, price), 1_000) == expected
+
+
+def test_side_budgets_rounding_over_the_fund_are_allocated():
+    """Red team A MINOR-1: weights summing to exactly 1 whose two float budgets
+    add up to a few ulps more than the fund, each spent in full."""
+    weights = {"L": 0.9, "S": -(1 - 0.9)}
+    prices = {"L": 260869579.20000002, "S": 28985508.799999993}
+
+    assert greedy_allocation(weights, prices, 289_855_088) == ({"L": 1, "S": -1}, 0)
+
+
+def test_rounding_past_the_fund_is_not_an_overspend():
+    """Weights one ulp over 1 whose budgets are spent in full cost 2e-13 more
+    than the fund. That is float rounding, so they keep the allocation they
+    had before the fix instead of raising."""
+    weights = {"L": 0.5000000000000002, "S": -0.5}
+    prices = {"L": 1_000 * 0.5000000000000002, "S": 500.0}
+
+    assert greedy_allocation(weights, prices, 1_000) == ({"L": 1, "S": -1}, 0)
 
 
 @pytest.mark.parametrize(

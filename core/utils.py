@@ -6,6 +6,12 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
+# Float bookkeeping (side budgets, first-round costs, second-round subtractions)
+# puts the exact cost of an allocation within a few ulps of the fund per stock,
+# around 1e-15 of it. Exceeding the fund by less than this share of it is that
+# rounding, not money spent beyond the fund.
+_ROUNDING_TOLERANCE = 1e-12
+
 
 def greedy_allocation(
     weights: Mapping[str, float] | pd.Series,
@@ -15,6 +21,10 @@ def greedy_allocation(
     """
     original source code: PyPortfolioOpt
     https://pypi.org/project/pyportfolioopt/
+
+    Raises:
+        ValueError: The absolute weights sum to more than 1 and the shares
+            would cost more than ``total_portfolio_value``.
     """
 
     weights = pd.Series(weights)
@@ -79,12 +89,15 @@ def _allocate_long_short(
     """Allocate each side like a long-only book of its own.
 
     A side's weights are re-normalised to sum to 1 and its budget is
-    ``total_portfolio_value * side_weight``. Those two roundings can make the
-    side's first round overshoot its budget by a few ulps (finlab#230), so
-    the budget check runs once, on both sides' first rounds against the whole
-    fund: that is where weights summing to more than 1 show up.
+    ``total_portfolio_value * side_weight``, so a side spends its budget at
+    most, up to float rounding. That rounding can put a side's first round a
+    few ulps over its budget (finlab#230), so no side checks its own budget.
+    The budgets add up to more than the fund only when the absolute weights
+    sum to more than 1, and only then is the allocation checked against the
+    whole fund.
     """
-    sides = []
+    allocation: dict[str, int] = {}
+    leftovers = []
     for sign, side in (
         (1, {t: w for t, w in weights if w > 0}),
         (-1, {t: -w for t, w in weights if w < 0}),
@@ -94,24 +107,22 @@ def _allocate_long_short(
         side_weights.sort(key=lambda x: x[1], reverse=True)
         budget = total_portfolio_value * side_total_weight
         shares, costs = _buy_floor_shares(side_weights, latest_prices, budget)
-        sides.append((sign, side_weights, budget, shares, costs))
-
-    first_round_costs = [cost for *_, costs in sides for cost in costs]
-    if _remaining_funds(total_portfolio_value, first_round_costs) < 0:
-        raise _insufficient_funds(weights)
-
-    allocation: dict[str, int] = {}
-    leftover = 0
-    for sign, side_weights, budget, shares, costs in sides:
         shares, side_leftover = _top_up(
             side_weights, latest_prices, shares, _remaining_funds(budget, costs)
         )
         allocation.update(
             {t: sign * n for (t, _), n in zip(side_weights, shares, strict=True)}
         )
-        leftover += side_leftover
+        leftovers.append(side_leftover)
 
-    return {t: n for t, n in allocation.items() if n != 0}, leftover
+    allocation = {t: n for t, n in allocation.items() if n != 0}
+    if math.fsum(abs(w) for _, w in weights) > 1 and _exceeds_fund(
+        allocation, latest_prices, total_portfolio_value
+    ):
+        raise _insufficient_funds(weights)
+
+    long_leftover, short_leftover = leftovers
+    return allocation, long_leftover + short_leftover
 
 
 def _buy_floor_shares(
@@ -128,6 +139,15 @@ def _buy_floor_shares(
         shares.append(n_shares)
         costs.append(n_shares * price)
     return shares, costs
+
+
+def _exceeds_fund(
+    allocation: dict[str, int],
+    latest_prices: pd.Series,
+    total_portfolio_value: float,
+) -> bool:
+    cost = math.fsum(abs(n) * latest_prices[t] for t, n in allocation.items())
+    return cost > total_portfolio_value * (1 + _ROUNDING_TOLERANCE)
 
 
 def _remaining_funds(funds: float, costs: list[float]) -> float:
@@ -166,7 +186,7 @@ def _top_up(
 
         # Attempt to buy the asset whose current weights deviate the most
         idx = np.argmax(deficit)
-        ticker, weight = weights[idx]
+        ticker, _ = weights[idx]
         price = latest_prices[ticker]
 
         # If we can't afford this asset, search for the next highest deficit that we
@@ -181,7 +201,7 @@ def _top_up(
             if deficit[idx] < 0 or counter == 10:
                 break
 
-            ticker, weight = weights[idx]
+            ticker, _ = weights[idx]
             price = latest_prices[ticker]
             counter += 1
 
