@@ -1,6 +1,5 @@
 import pandas as pd
 import pytest
-
 from finlab.dataframe import FinlabDataFrame
 from finlab.online.enums import OrderCondition
 from finlab.online.order_executor import Position
