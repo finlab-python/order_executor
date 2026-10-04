@@ -448,7 +448,9 @@ class Position:
         # Latest price per share
         last_px = price
         # Volatility per symbol
-        vol = price_history.pct_change().std() * math.sqrt(annualisation_factor)
+        vol = price_history.ffill().pct_change(fill_method=None).std() * math.sqrt(
+            annualisation_factor
+        )
         orig = position.to_list()
         rows = []
         for p in orig:

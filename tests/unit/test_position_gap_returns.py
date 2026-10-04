@@ -29,6 +29,8 @@ def test_margin_allocation_retains_gap_return(frame):
 
     actual = allocate(history)
     assert actual == allocate(history.ffill())
-    margin = [p for p in actual if p["order_condition"] == OrderCondition.MARGIN_TRADING]
-    assert [(p["stock_id"], p["quantity"]) for p in margin] == [("B", 10)]
+    margin = [
+        p for p in actual if p["order_condition"] == OrderCondition.MARGIN_TRADING
+    ]
+    assert [(p["stock_id"], p["quantity"]) for p in margin] == [("B", "10")]
     pd.testing.assert_frame_equal(history, original)
