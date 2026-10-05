@@ -71,3 +71,34 @@ def test_parses_real_html_table(capsys: pytest.CaptureFixture[str]) -> None:
     _run(_executor({"2330": 1}))
 
     assert "買入 2330" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("quantity", "detail"),
+    [
+        (1, "買入 2330   1.0 張 - 總價約       660000.00"),
+        (-1, "賣出 2330  -1.0 張 - 總價約      -540000.00"),
+    ],
+)
+def test_alerting_output_explains_the_warning(
+    quantity: float, detail: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(_executor({"2330": quantity, "2317": 2}))
+
+    out = capsys.readouterr().out
+    assert out.startswith(
+        "=== 處置股/警示股警告 ===\n"
+        "以下待下單股票在處置股或信用警示名單中：\n"
+    )
+    assert detail in out
+    assert "2317" not in out
+    assert out.endswith("請注意：處置股可能有預收款券、分盤交易等限制。\n")
+
+
+@pytest.mark.parametrize("target", [{"2317": 1}, {}])
+def test_no_alerting_stocks_prints_confirmation(
+    target: dict[str, float], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(_executor(target))
+
+    assert capsys.readouterr().out == "待下單股票中無處置股或警示股。\n"

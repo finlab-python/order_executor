@@ -64,20 +64,26 @@ class OrderExecutor:
             for sid in _fetch_alerting_symbols(url, symbols)
         ]
 
-        if credit_sids:
-            close = data.get("price:收盤價").ffill().iloc[-1]
-            for sid in credit_sids:
-                quantity[sid] = float(quantity[sid])
-                if quantity[sid] > 0:
-                    total_amount = quantity[sid] * close[sid] * 1000 * 1.1
-                    print(
-                        f"買入 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}"
-                    )
-                else:
-                    total_amount = quantity[sid] * close[sid] * 1000 * 0.9
-                    print(
-                        f"賣出 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}"
-                    )
+        if not credit_sids:
+            print("待下單股票中無處置股或警示股。")
+            return
+
+        close = data.get("price:收盤價").ffill().iloc[-1]
+        print("=== 處置股/警示股警告 ===")
+        print("以下待下單股票在處置股或信用警示名單中：")
+        for sid in credit_sids:
+            quantity[sid] = float(quantity[sid])
+            if quantity[sid] > 0:
+                total_amount = quantity[sid] * close[sid] * 1000 * 1.1
+                print(
+                    f"買入 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}"
+                )
+            else:
+                total_amount = quantity[sid] * close[sid] * 1000 * 0.9
+                print(
+                    f"賣出 {sid} {quantity[sid]:>5} 張 - 總價約 {total_amount:>15.2f}"
+                )
+        print("請注意：處置股可能有預收款券、分盤交易等限制。")
 
     def cancel_orders(
         self, buy_only: bool = False, sell_only: bool = False
