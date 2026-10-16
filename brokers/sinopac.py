@@ -374,10 +374,12 @@ class SinopacAccount(Account, RealtimeProvider):
             if contract is None:
                 raise KeyError(stock_id)
             return contract
-        with contextlib.suppress(KeyError):
-            contract = self.api.Contracts.Stocks[stock_id]
-            if contract is not None:
-                return contract
+        legacy_contracts = getattr(self.api, "Contracts", None)
+        if legacy_contracts is not None:
+            with contextlib.suppress(KeyError):
+                contract = legacy_contracts.Stocks[stock_id]
+                if contract is not None:
+                    return contract
         # A miss before the download means contracts were never fetched: on
         # shioaji < 1.7 our login() passes fetch_contract=False. Fetch once on
         # demand (blocking, so the retry below sees the result) and retry;
