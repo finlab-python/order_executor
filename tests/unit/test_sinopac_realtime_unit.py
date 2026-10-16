@@ -314,8 +314,10 @@ class _FakeLegacyShioaji:
         self,
         contracts: dict[str, object] | None = None,
         fetch_result: dict[str, object] | None = None,
+        initialize_contracts: bool = True,
     ) -> None:
-        self.Contracts = types.SimpleNamespace(Stocks=dict(contracts or {}))
+        if initialize_contracts:
+            self.Contracts = types.SimpleNamespace(Stocks=dict(contracts or {}))
         self._fetch_result = dict(fetch_result or {})
         self.fetch_calls: list[tuple[object, object]] = []
 
@@ -326,6 +328,8 @@ class _FakeLegacyShioaji:
         # Like the real SDK, contracts_timeout=0 means a non-blocking fetch:
         # contracts are not available by the time this call returns.
         if contract_download and contracts_timeout:
+            if not hasattr(self, "Contracts"):
+                self.Contracts = types.SimpleNamespace(Stocks={})
             self.Contracts.Stocks.update(self._fetch_result)
 
 
@@ -341,14 +345,20 @@ def test_sinopac_get_contract_returns_present_contract_without_fetch(
     assert api.fetch_calls == []
 
 
-def test_sinopac_get_contract_fetches_once_when_legacy_stocks_empty(
+@pytest.mark.parametrize("initialize_contracts", [True, False])
+def test_sinopac_get_contract_fetches_once_when_legacy_contract_missing(
     monkeypatch: pytest.MonkeyPatch,
+    initialize_contracts: bool,
 ) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
     contract = types.SimpleNamespace(code="8421")
-    api = _FakeLegacyShioaji(fetch_result={"8421": contract})
+    api = _FakeLegacyShioaji(
+        fetch_result={"8421": contract}, initialize_contracts=initialize_contracts,
+    )
     account = _make_account(sinopac_module, api)
 
+    assert hasattr(api, "Contracts") is initialize_contracts
+    assert account._get_contract("8421") is contract
     assert account._get_contract("8421") is contract
     [(contract_download, contracts_timeout)] = api.fetch_calls
     assert contract_download is True
@@ -378,11 +388,13 @@ def test_sinopac_get_contract_modern_miss_raises_without_fetch(
         account._get_contract("9999")
 
 
+@pytest.mark.parametrize("initialize_contracts", [True, False])
 def test_sinopac_get_contract_raises_when_still_missing_after_fetch(
     monkeypatch: pytest.MonkeyPatch,
+    initialize_contracts: bool,
 ) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
-    api = _FakeLegacyShioaji()
+    api = _FakeLegacyShioaji(initialize_contracts=initialize_contracts)
     account = _make_account(sinopac_module, api)
 
     with pytest.raises(KeyError):
@@ -391,6 +403,23 @@ def test_sinopac_get_contract_raises_when_still_missing_after_fetch(
     with pytest.raises(KeyError):
         account._get_contract("9999")
     assert len(api.fetch_calls) == 1
+
+
+@pytest.mark.parametrize("error", [RuntimeError("download failed"), AttributeError("Contracts")])
+def test_sinopac_get_contract_propagates_legacy_download_error(
+    monkeypatch: pytest.MonkeyPatch, error: Exception,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeLegacyShioaji(initialize_contracts=False)
+    account = _make_account(sinopac_module, api)
+
+    def fail_download(**kwargs: object) -> None:
+        raise error
+
+    api.fetch_contracts = fail_download
+    with pytest.raises(type(error), match=str(error)):
+        account._get_contract("2330")
+    assert account._contracts_fetched is False
 
 
 def test_sinopac_backfill_ticks_uses_historical_tick_query(
