@@ -377,14 +377,12 @@ class Position:
 
         if odd_lot:
             if board_lot_size == 1000:
-                precision = max(3, precision)
+                precision = 3
             elif board_lot_size == 100:
-                precision = max(2, precision)
+                precision = 2
             elif board_lot_size == 10:
-                precision = max(1, precision)
-            elif board_lot_size == 1:
-                precision = max(0, precision)
-            else:
+                precision = 1
+            elif board_lot_size != 1:
                 raise ValueError(
                     "The board_lot_size parameter is out of the valid range 1, 10, 100, 1000"
                 )
@@ -428,6 +426,10 @@ class Position:
         if leverage > 1.0:
             if price_history is None:
                 raise ValueError("price_history must be provided when leverage > 1.0")
+            if kwargs.get("margin_trading") or kwargs.get("day_trading_long"):
+                raise ValueError(
+                    "leverage > 1 cannot be combined with margin_trading or day_trading_long"
+                )
             pos = cls._apply_leverage_to_position(
                 pos, price, price_history, leverage, board_lot_size
             )
@@ -452,11 +454,10 @@ class Position:
         vol = price_history.ffill().pct_change(fill_method=None).std() * math.sqrt(
             annualisation_factor
         )
-        orig = position.to_list()
         rows = []
         # 只有現股多單參與融資配置，其他部位原樣保留
         kept = []
-        for p in orig:
+        for p in position.to_list():
             sid = resolve_position_entry_symbol(p)
             qty = Decimal(p["quantity"])
             if (
@@ -466,22 +467,21 @@ class Position:
             ):
                 kept.append(p)
                 continue
-            value = float(qty) * board_lot_size * float(last_px[sid])
+            lot_value = board_lot_size * float(last_px[sid])
             rows.append(
                 {
                     "symbol": sid,
-                    "stock_id": sid,
                     "quantity": qty,
-                    "value": value,
+                    "lot_value": lot_value,
+                    "value": float(qty) * lot_value,
                     "sigma": float(vol.get(sid, math.nan)),
                     "weight": p.get("weight"),
                 }
             )
-        if not rows or all(math.isnan(r["sigma"]) for r in rows):
+        if all(math.isnan(r["sigma"]) for r in rows):
             raise ValueError(
                 "Empty or incompatible position – nothing to leverage. "
-                "leverage > 1 needs cash long holdings with price_history; "
-                "do not combine it with margin_trading or day_trading_long."
+                "leverage > 1 needs cash long holdings with price_history."
             )
         df = pd.DataFrame(rows)
         total_val = df["value"].sum()
@@ -491,26 +491,19 @@ class Position:
         new_entries = []
         for _, row in df.iterrows():
             qty = row.quantity
-            lot_value = board_lot_size * float(last_px[row.symbol])
             # 沒有波動度的持股不配融資；零股不能融資，融資只用整張，零頭留在現股
             lots_margin = Decimal(0)
             if not math.isnan(row.sigma):
-                lots = Decimal(max(finance_remaining, 0.0) / lot_value + 1e-9)
+                lots = Decimal(max(finance_remaining, 0.0) / row.lot_value + 1e-9)
                 lots_margin = min(qty, lots).to_integral_value(rounding=ROUND_FLOOR)
-            finance_remaining -= float(lots_margin) * lot_value
+            finance_remaining -= float(lots_margin) * row.lot_value
             for quantity, condition in (
                 (lots_margin, OrderCondition.MARGIN_TRADING),
                 (qty - lots_margin, OrderCondition.CASH),
             ):
                 if quantity > 0:
                     new_entries.append(
-                        {
-                            "symbol": row.symbol,
-                            "stock_id": row.symbol,
-                            "weight": row.weight,
-                            "quantity": quantity,
-                            "order_condition": condition,
-                        }
+                        _make_entry(row.symbol, quantity, condition, weight=row.weight)
                     )
         return Position.from_list(new_entries + kept)
 
@@ -632,7 +625,7 @@ class Position:
         if hasattr(report.market, "get_board_lot_size"):
             kwargs["board_lot_size"] = report.market.get_board_lot_size()
 
-        if "leverage" in kwargs:
+        if kwargs.get("leverage", 1.0) > 1.0 and "price_history" not in kwargs:
             kwargs["price_history"] = (
                 report.market.get_price("close", adj=True).iloc[-252:].copy()
             )

@@ -402,26 +402,28 @@ def _legs(position: Position) -> list[tuple[str, str, str]]:
     )
 
 
-def test_leverage_keeps_holdings_without_history_and_margins_whole_lots() -> None:
-    def allocate(**kwargs):
-        return Position.from_weight(
-            {"A": 0.4, "B": 0.3, "C": 0.3},
-            fund=3_000_000,
-            price={"A": 100, "B": 50, "C": 200},
-            board_lot_size=1000,
-            leverage=1.2,
-            price_history=_LEVERAGE_HISTORY,
-            **kwargs,
-        )
+def _leveraged(weights: dict[str, float], **kwargs) -> Position:
+    return Position.from_weight(
+        weights,
+        fund=3_000_000,
+        price={"A": 100, "B": 50, "C": 200},
+        board_lot_size=1000,
+        leverage=1.2,
+        price_history=_LEVERAGE_HISTORY,
+        **kwargs,
+    )
 
-    assert _legs(allocate()) == [
+
+def test_leverage_keeps_holdings_without_history_and_margins_whole_lots() -> None:
+    weights = {"A": 0.4, "B": 0.3, "C": 0.3}
+    assert _legs(_leveraged(weights)) == [
         ("A", "5", "MARGIN_TRADING"),
         ("A", "9", "CASH"),
         ("B", "1", "MARGIN_TRADING"),
         ("B", "20", "CASH"),
         ("C", "5", "CASH"),
     ]
-    odd_lot = allocate(odd_lot=True).to_list()
+    odd_lot = _leveraged(weights, odd_lot=True).to_list()
     assert {p["stock_id"] for p in odd_lot} == {"A", "B", "C"}
     assert all(
         Decimal(p["quantity"]) % 1 == 0
@@ -432,15 +434,7 @@ def test_leverage_keeps_holdings_without_history_and_margins_whole_lots() -> Non
 
 def test_leverage_does_not_double_margin_trading_holdings() -> None:
     with pytest.raises(ValueError, match="margin_trading"):
-        Position.from_weight(
-            {"A": 0.5, "B": 0.5},
-            fund=3_000_000,
-            price={"A": 100, "B": 50},
-            board_lot_size=1000,
-            leverage=1.2,
-            price_history=_LEVERAGE_HISTORY,
-            margin_trading=True,
-        )
+        _leveraged({"A": 0.5, "B": 0.5}, margin_trading=True)
 
 
 def test_from_report_with_leverage_allocates_margin() -> None:
