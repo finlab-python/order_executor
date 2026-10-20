@@ -417,10 +417,9 @@ def _leveraged(weights: dict[str, float], **kwargs) -> Position:
 def test_leverage_keeps_holdings_without_history_and_margins_whole_lots() -> None:
     weights = {"A": 0.4, "B": 0.3, "C": 0.3}
     assert _legs(_leveraged(weights)) == [
-        ("A", "5", "MARGIN_TRADING"),
-        ("A", "9", "CASH"),
-        ("B", "1", "MARGIN_TRADING"),
-        ("B", "20", "CASH"),
+        ("A", "6", "MARGIN_TRADING"),
+        ("A", "8", "CASH"),
+        ("B", "21", "CASH"),
         ("C", "5", "CASH"),
     ]
     odd_lot = _leveraged(weights, odd_lot=True).to_list()
@@ -430,6 +429,18 @@ def test_leverage_keeps_holdings_without_history_and_margins_whole_lots() -> Non
         for p in odd_lot
         if p["order_condition"] == OrderCondition.MARGIN_TRADING
     )
+
+
+def test_leverage_rounds_margin_up_so_cash_stays_within_fund() -> None:
+    position = Position.from_weight(
+        {"A": 1.0},
+        fund=100_000,
+        price={"A": 120},
+        board_lot_size=1000,
+        leverage=1.2,
+        price_history=_LEVERAGE_HISTORY,
+    )
+    assert _legs(position) == [("A", "1", "MARGIN_TRADING")]
 
 
 def test_leverage_does_not_double_margin_trading_holdings() -> None:

@@ -6,7 +6,7 @@ import logging
 import math
 import warnings
 from collections.abc import Callable, Iterator
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
 import pandas as pd
@@ -491,11 +491,15 @@ class Position:
         new_entries = []
         for _, row in df.iterrows():
             qty = row.quantity
-            # 沒有波動度的持股不配融資；零股不能融資，融資只用整張，零頭留在現股
+            # 沒有波動度的持股不配融資；零股不能融資，融資只用整張，零頭留在現股。
+            # 不足一張的融資額進位成一張，現股部分才不會超過資金
             lots_margin = Decimal(0)
             if not math.isnan(row.sigma):
-                lots = Decimal(max(finance_remaining, 0.0) / row.lot_value + 1e-9)
-                lots_margin = min(qty, lots).to_integral_value(rounding=ROUND_FLOOR)
+                lots = Decimal(max(finance_remaining / row.lot_value - 1e-9, 0.0))
+                lots_margin = min(
+                    lots.to_integral_value(rounding=ROUND_CEILING),
+                    qty.to_integral_value(rounding=ROUND_FLOOR),
+                )
             finance_remaining -= float(lots_margin) * row.lot_value
             for quantity, condition in (
                 (lots_margin, OrderCondition.MARGIN_TRADING),
