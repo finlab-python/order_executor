@@ -754,24 +754,17 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
         # 確定市場類型
         market_type = MarketType.IntradayOdd if odd_lot else MarketType.Common
-        now = datetime.datetime.now()
+        # 盤別依台北時間判斷，不受主機時區影響
+        now = datetime.datetime.now(
+            datetime.timezone(datetime.timedelta(hours=8))
+        ).time()
 
         # 盤後零股處理
-        if (
-            datetime.time(13, 40)
-            < datetime.time(now.hour, now.minute)
-            < datetime.time(14, 30)
-            and odd_lot
-        ):
+        if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
             market_type = MarketType.Odd
 
         # 定盤處理
-        if (
-            datetime.time(14, 00)
-            < datetime.time(now.hour, now.minute)
-            < datetime.time(14, 30)
-            and not odd_lot
-        ):
+        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
             market_type = MarketType.Fixing
 
         # 確定價格類型
@@ -789,6 +782,11 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 price_type = PriceType.LimitDown
             elif action == Action.SELL:
                 price_type = PriceType.LimitUp
+
+        # 盤後定價只接受參考價
+        if market_type == MarketType.Fixing:
+            price = None
+            price_type = PriceType.Reference
 
         # 確定交易條件
         order_type = OrderType.Stock  # 默認為現股交易
@@ -876,7 +874,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
                     stock_id = order.stock_id
                     filled_qty = getattr(order_record, "filled_qty", 0)
                     org_qty = getattr(order_record, "org_qty", 0)
-                    qty = org_qty - filled_qty
+                    cel_qty = getattr(order_record, "cel_qty", 0)
+                    qty = org_qty - filled_qty - cel_qty
                     self.sdk.stock.modify_volume(self.target_account, order_record, 0)
                     return self.create_order(
                         action=action,
@@ -1031,14 +1030,15 @@ class MasterlinkAccount(Account, RealtimeProvider):
         error_code = order.err_code
         cancelable = getattr(order, "can_cancel", False)
 
-        # 判斷狀態
+        # 判斷狀態（減量過的委託依剩餘量判斷）
         status = OrderStatus.NEW
+        remaining_qty = org_qty - filled_qty - canceled_qty
 
         if org_qty == filled_qty:
             status = OrderStatus.FILLED
-        elif filled_qty == 0 and canceled_qty == 0 and cancelable:
+        elif filled_qty == 0 and remaining_qty > 0 and cancelable:
             status = OrderStatus.NEW
-        elif org_qty > filled_qty + canceled_qty and cancelable and filled_qty > 0:
+        elif remaining_qty > 0 and cancelable and filled_qty > 0:
             status = OrderStatus.PARTIALLY_FILLED
         elif canceled_qty > 0 or error_code != "000000" or not cancelable:
             status = OrderStatus.CANCEL
@@ -1120,6 +1120,11 @@ class MasterlinkAccount(Account, RealtimeProvider):
             high_price = float(quote.get("highPrice", 0) or 0)
             low_price = float(quote.get("lowPrice", 0) or 0)
             close_price = float(quote.get("closePrice", 0) or 0)
+            if not close_price:
+                # 今天還沒成交時 closePrice 不揭示，改用參考價或昨收
+                close_price = float(
+                    quote.get("referencePrice") or quote.get("previousClose") or 0
+                )
 
             logging.debug(
                 f"stock_id: {stock_id}, open_price: {open_price}, high_price: {high_price}, low_price: {low_price}, close_price: {close_price}"
@@ -1247,14 +1252,14 @@ class MasterlinkAccount(Account, RealtimeProvider):
                                 f"get_position: 無法解析數量 {quantity_str}: {e}"
                             )
             else:
-                # 如果沒有 position_summaries，單獨处理每個帳戶的持倉
-                logging.warning("get_position: 回傳物件中無 position_summaries 屬性")
+                raise RuntimeError("回傳物件中無 position_summaries 屬性")
 
             logging.info(f"get_position: 成功獲取持倉，共 {len(positions)} 筆")
             return Position.from_list(positions)
         except Exception as e:
+            # 回傳空部位會被當成沒持股而重複買進，改為直接報錯
             logging.warning(f"get_position: 獲取持倉失敗: {e}")
-            return Position({})
+            raise
 
     def get_total_balance(self) -> float:
         """

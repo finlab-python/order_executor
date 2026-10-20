@@ -6,6 +6,8 @@ import sys
 import types
 from typing import Any
 
+import pytest
+
 from finlab.online.core.account import Order
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
 
@@ -99,6 +101,11 @@ class _FakeStockTradeApi:
     def __init__(self) -> None:
         self.modified_volumes: list[tuple[Any, Any, int]] = []
         self.modified_prices: list[tuple[Any, Any, str, Any]] = []
+        self.placed_orders: list[Any] = []
+
+    def place_order(self, account: Any, order: Any) -> Any:
+        self.placed_orders.append(order)
+        return types.SimpleNamespace(order_no="new-o-1")
 
     def modify_volume(self, account: Any, order_record: Any, quantity: int) -> None:
         self.modified_volumes.append((account, order_record, quantity))
@@ -112,7 +119,7 @@ class _FakeStockTradeApi:
 def _import_masterlink_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     fake_sdk_module = types.ModuleType("masterlink_sdk")
     fake_sdk_module.MasterlinkSDK = object
-    fake_sdk_module.Order = object
+    fake_sdk_module.Order = types.SimpleNamespace
     fake_sdk_module.Account = object
     fake_sdk_module.BSAction = types.SimpleNamespace(Buy="B", Sell="S")
     fake_sdk_module.MarketType = types.SimpleNamespace(
@@ -120,10 +127,13 @@ def _import_masterlink_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleTyp
         IntradayOdd="IntradayOdd",
         Odd="Odd",
         EmgOdd="EmgOdd",
+        Fixing="Fixing",
     )
-    fake_sdk_module.PriceType = types.SimpleNamespace(Limit="Limit")
-    fake_sdk_module.TimeInForce = types.SimpleNamespace()
-    fake_sdk_module.OrderType = types.SimpleNamespace()
+    fake_sdk_module.PriceType = types.SimpleNamespace(
+        Limit="Limit", LimitUp="LimitUp", LimitDown="LimitDown", Reference="Reference"
+    )
+    fake_sdk_module.TimeInForce = types.SimpleNamespace(ROD="ROD")
+    fake_sdk_module.OrderType = types.SimpleNamespace(Stock="Stock")
 
     monkeypatch.setitem(sys.modules, "masterlink_sdk", fake_sdk_module)
     sys.modules.pop("finlab.online.brokers.masterlink", None)
@@ -402,3 +412,118 @@ def test_masterlink_get_bidask_snapshot_uses_quote_top5(monkeypatch: Any) -> Non
     assert snapshots["2330"].ask_prices[:2] == [568.0, 569.0]
     assert len(bidasks) == 1
     assert bidasks[0].ask_prices[:2] == [568.0, 569.0]
+
+
+def test_masterlink_get_position_raises_instead_of_empty(monkeypatch: Any) -> None:
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    account = masterlink_module.MasterlinkAccount.__new__(
+        masterlink_module.MasterlinkAccount
+    )
+    account.target_account = None
+    summary = types.SimpleNamespace(symbol="2330", current_quantity="1,500")
+    inventories = lambda _: types.SimpleNamespace(position_summaries=[summary])
+    account.sdk = types.SimpleNamespace(
+        accounting=types.SimpleNamespace(inventories=inventories)
+    )
+    assert account.get_position().position[0]["quantity"] == 1.5
+
+    def rate_limited(_: Any) -> Any:
+        raise RuntimeError("rate limited")
+
+    account.sdk.accounting.inventories = rate_limited
+    with pytest.raises(RuntimeError):
+        account.get_position()
+
+
+def test_masterlink_stock_close_falls_back_to_reference(monkeypatch: Any) -> None:
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    account = masterlink_module.MasterlinkAccount.__new__(
+        masterlink_module.MasterlinkAccount
+    )
+    quote = {"symbol": "2330", "referencePrice": 560.0, "previousClose": 555.0}
+    assert account._create_finlab_stock(quote).close == 560.0
+    assert account._create_finlab_stock({**quote, "closePrice": 568.0}).close == 568.0
+
+
+@pytest.mark.parametrize(
+    "filled, canceled, can_cancel, status",
+    [
+        (0, 200, True, OrderStatus.NEW),
+        (100, 200, True, OrderStatus.PARTIALLY_FILLED),
+        (0, 500, False, OrderStatus.CANCEL),
+        (0, 0, True, OrderStatus.NEW),
+    ],
+)
+def test_masterlink_reduced_order_status_uses_remaining_quantity(
+    monkeypatch: Any, filled: int, canceled: int, can_cancel: bool, status: Any
+) -> None:
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    account = masterlink_module.MasterlinkAccount.__new__(
+        masterlink_module.MasterlinkAccount
+    )
+    record = types.SimpleNamespace(
+        buy_sell="B", order_type="Stock", order_date="20261021",
+        order_time="090000000", order_no="o-1", symbol="2330", order_price=560,
+        org_qty=500, filled_qty=filled, cel_qty=canceled, err_code="000000",
+        can_cancel=can_cancel,
+    )
+    assert account._create_finlab_order(record).status == status
+
+
+def test_masterlink_update_odd_lot_price_excludes_canceled_quantity(
+    monkeypatch: Any,
+) -> None:
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    account = masterlink_module.MasterlinkAccount.__new__(
+        masterlink_module.MasterlinkAccount
+    )
+    order = _make_finlab_order(masterlink_module.MarketType.IntradayOdd)
+    order.org_order.cel_qty = 200
+    created_orders: list[dict[str, Any]] = []
+    account.sdk = types.SimpleNamespace(stock=_FakeStockTradeApi())
+    account.target_account = None
+    account.get_orders = lambda: {"o-1": order}
+    account.create_order = lambda **kwargs: created_orders.append(kwargs)
+
+    account.update_order("o-1", price=567.5)
+    assert created_orders[0]["quantity"] == 180
+
+
+@pytest.mark.parametrize(
+    "utc_time, odd_lot, market_type, price_type, price",
+    [
+        ((5, 40, 30), True, "Odd", "Limit", "560"),
+        ((6, 0, 10), False, "Fixing", "Reference", None),
+        ((1, 0, 0), False, "Common", "Limit", "560"),
+        ((1, 0, 0), True, "IntradayOdd", "Limit", "560"),
+    ],
+)
+def test_masterlink_create_order_session_uses_taipei_time(
+    monkeypatch: Any, utc_time: tuple, odd_lot: bool, market_type: str,
+    price_type: str, price: Any,
+) -> None:
+    masterlink_module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    instant = datetime.datetime(2026, 10, 21, *utc_time, tzinfo=datetime.timezone.utc)
+
+    class _UtcHostDatetime(datetime.datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+    fake_datetime = types.SimpleNamespace(
+        datetime=_UtcHostDatetime, time=datetime.time,
+        timezone=datetime.timezone, timedelta=datetime.timedelta,
+    )
+    monkeypatch.setattr(masterlink_module, "datetime", fake_datetime)
+    account = masterlink_module.MasterlinkAccount.__new__(
+        masterlink_module.MasterlinkAccount
+    )
+    stock_api = _FakeStockTradeApi()
+    account.sdk = types.SimpleNamespace(stock=stock_api)
+    account.target_account = None
+
+    assert account.create_order(Action.BUY, "2330", 1, price=560, odd_lot=odd_lot)
+    placed = stock_api.placed_orders[0]
+    assert (placed.market_type, placed.price_type, placed.price) == (
+        market_type, price_type, price
+    )
