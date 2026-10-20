@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+from finlab.markets.us import USMarket
 from finlab.online.base_account import Action
 from finlab.online.order_executor import calculate_price_with_extra_bid
 
@@ -109,3 +112,13 @@ def test_extra_bid_and_up_down_limit() -> None:
         price = up_down_limit
 
     assert price == 74.8
+
+
+def test_calculate_price_with_extra_bid_us_market() -> None:
+    assert calculate_price_with_extra_bid(157.3, 0.001, USMarket()) == 157.45
+    assert calculate_price_with_extra_bid(157.3, -0.001, USMarket()) == 157.15
+    assert calculate_price_with_extra_bid(0.5, 0.001, USMarket()) == 0.5005
+
+
+def test_calculate_price_with_extra_bid_decimal_price() -> None:
+    assert calculate_price_with_extra_bid(Decimal("100"), 0.001) == Decimal("100.1")

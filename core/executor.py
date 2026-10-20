@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 import numbers
 from decimal import Decimal
 from io import StringIO
@@ -310,7 +311,9 @@ class OrderExecutor:
 
             if extra_bid_pct != 0:
                 price = calculate_price_with_extra_bid(
-                    price, extra_bid_pct if action == Action.BUY else -extra_bid_pct
+                    price,
+                    extra_bid_pct if action == Action.BUY else -extra_bid_pct,
+                    self.account.get_market(),
                 )
 
             if pinfo and sid in pinfo:
@@ -357,8 +360,8 @@ class OrderExecutor:
             executed_orders.append(o)
 
             quantity = abs(o["quantity"])
-            board_lot_quantity = int(abs(quantity // 1))
-            odd_lot_quantity = int(abs(round(1000 * (quantity % 1))))
+            # 先換成股數再拆，避免 0.9999999999999999 張被拆成 1000 股零股單
+            board_lot_quantity, odd_lot_quantity = divmod(round(quantity * 1000), 1000)
 
             if view_only:
                 continue
@@ -468,6 +471,8 @@ class OrderExecutor:
         if hasattr(self.account, "get_price_info"):
             pinfo = self.account.get_price_info()
 
+        market = self.account.get_market() if extra_bid_pct != 0 else None
+
         for i, o in orders.items():
             if o.status in (OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED):
                 if buy_only and o.action == Action.SELL:
@@ -483,7 +488,9 @@ class OrderExecutor:
                     continue
 
                 price = calculate_price_with_extra_bid(
-                    price, extra_bid_pct if o.action == Action.BUY else -extra_bid_pct
+                    price,
+                    extra_bid_pct if o.action == Action.BUY else -extra_bid_pct,
+                    market,
                 )
 
                 if pinfo and sid in pinfo:
@@ -546,13 +553,27 @@ class OrderExecutor:
         )
 
 
-def calculate_price_with_extra_bid(price: float, extra_bid_pct: float) -> float:
+def calculate_price_with_extra_bid(
+    price: float, extra_bid_pct: float, market: Any = None
+) -> float:
 
     if extra_bid_pct == 0:
         return price
 
+    # 幣安以 Decimal 報價，跳動單位依商品而異，下單時由券商調整
+    if isinstance(price, Decimal):
+        return price * (1 + Decimal(str(extra_bid_pct)))
+
+    from finlab.markets.us import USMarket
     from finlab.online.core.utils import _round_to_tick
 
     result = price * (1 + extra_bid_pct)
     direction = "floor" if extra_bid_pct > 0 else "ceil"
+
+    if isinstance(market, USMarket):
+        # 美股跳動單位：1 美元以上 0.01，未滿 1 美元 0.0001
+        scale = 100 if result >= 1 else 10000
+        fn = math.floor if direction == "floor" else math.ceil
+        return fn(round(result * scale, 6)) / scale
+
     return _round_to_tick(result, direction)
