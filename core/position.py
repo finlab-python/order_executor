@@ -6,7 +6,7 @@ import logging
 import math
 import warnings
 from collections.abc import Callable, Iterator
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Any
 
 import pandas as pd
@@ -370,6 +370,7 @@ class Position:
             logger.warning(
                 "The precision parameter is ignored when board_lot_size is not 1."
             )
+            precision = None
 
         if precision is None:
             precision = 0
@@ -453,12 +454,17 @@ class Position:
         )
         orig = position.to_list()
         rows = []
+        # 只有現股多單參與融資配置，其他部位原樣保留
+        kept = []
         for p in orig:
             sid = resolve_position_entry_symbol(p)
             qty = Decimal(p["quantity"])
-            if qty <= 0:
-                continue
-            if sid not in last_px or sid not in vol:
+            if (
+                qty <= 0
+                or p["order_condition"] != OrderCondition.CASH
+                or sid not in last_px
+            ):
+                kept.append(p)
                 continue
             value = float(qty) * board_lot_size * float(last_px[sid])
             rows.append(
@@ -467,12 +473,16 @@ class Position:
                     "stock_id": sid,
                     "quantity": qty,
                     "value": value,
-                    "sigma": float(vol[sid]),
+                    "sigma": float(vol.get(sid, math.nan)),
                     "weight": p.get("weight"),
                 }
             )
-        if not rows:
-            raise ValueError("Empty or incompatible position – nothing to leverage.")
+        if not rows or all(math.isnan(r["sigma"]) for r in rows):
+            raise ValueError(
+                "Empty or incompatible position – nothing to leverage. "
+                "leverage > 1 needs cash long holdings with price_history; "
+                "do not combine it with margin_trading or day_trading_long."
+            )
         df = pd.DataFrame(rows)
         total_val = df["value"].sum()
         target_finance = (leverage - 1.0) / leverage * total_val
@@ -480,60 +490,29 @@ class Position:
         finance_remaining = target_finance
         new_entries = []
         for _, row in df.iterrows():
-            sid = row.symbol
             qty = row.quantity
-            value = row.value
-            base_entry = {
-                "symbol": sid,
-                "stock_id": sid,
-                "weight": row.weight,
-            }
-            if finance_remaining <= 0:
-                new_entries.append(
-                    {
-                        **base_entry,
-                        "quantity": qty,
-                        "order_condition": OrderCondition.CASH,
-                    }
-                )
-                continue
-            if value <= finance_remaining + 1e-6:
-                new_entries.append(
-                    {
-                        **base_entry,
-                        "quantity": qty,
-                        "order_condition": OrderCondition.MARGIN_TRADING,
-                    }
-                )
-                finance_remaining -= value
-            else:
-                frac = Decimal(finance_remaining / value)
-                lots_margin = (frac * 10).quantize(
-                    Decimal("1."), rounding="ROUND_CEILING"
-                ) / 10
-                lots_margin = min(lots_margin, qty)
-                lots_cash = qty - lots_margin
-                if lots_margin > 0:
+            lot_value = board_lot_size * float(last_px[row.symbol])
+            # 沒有波動度的持股不配融資；零股不能融資，融資只用整張，零頭留在現股
+            lots_margin = Decimal(0)
+            if not math.isnan(row.sigma):
+                lots = Decimal(max(finance_remaining, 0.0) / lot_value + 1e-9)
+                lots_margin = min(qty, lots).to_integral_value(rounding=ROUND_FLOOR)
+            finance_remaining -= float(lots_margin) * lot_value
+            for quantity, condition in (
+                (lots_margin, OrderCondition.MARGIN_TRADING),
+                (qty - lots_margin, OrderCondition.CASH),
+            ):
+                if quantity > 0:
                     new_entries.append(
                         {
-                            **base_entry,
-                            "quantity": lots_margin,
-                            "order_condition": OrderCondition.MARGIN_TRADING,
+                            "symbol": row.symbol,
+                            "stock_id": row.symbol,
+                            "weight": row.weight,
+                            "quantity": quantity,
+                            "order_condition": condition,
                         }
                     )
-                if lots_cash > 0:
-                    new_entries.append(
-                        {
-                            **base_entry,
-                            "quantity": lots_cash,
-                            "order_condition": OrderCondition.CASH,
-                        }
-                    )
-                finance_remaining = 0
-        for p in orig:
-            if p["quantity"] <= 0 or p["order_condition"] != OrderCondition.CASH:
-                new_entries.append(p)
-        return Position.from_list(new_entries)
+        return Position.from_list(new_entries + kept)
 
     @classmethod
     def from_report(cls, report: Any, fund: int, **kwargs: Any) -> Position:
@@ -654,7 +633,7 @@ class Position:
             kwargs["board_lot_size"] = report.market.get_board_lot_size()
 
         if "leverage" in kwargs:
-            kwargs["historical_price"] = (
+            kwargs["price_history"] = (
                 report.market.get_price("close", adj=True).iloc[-252:].copy()
             )
 
