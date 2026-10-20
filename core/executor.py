@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import math
 import numbers
 from decimal import Decimal
 from io import StringIO
@@ -283,6 +282,8 @@ class OrderExecutor:
         if hasattr(self.account, "get_price_info"):
             pinfo = self.account.get_price_info()
 
+        market = self.account.get_market() if extra_bid_pct != 0 else None
+
         executed_orders: list[dict[str, Any]] = []
         # make orders
         for o in orders:
@@ -313,7 +314,7 @@ class OrderExecutor:
                 price = calculate_price_with_extra_bid(
                     price,
                     extra_bid_pct if action == Action.BUY else -extra_bid_pct,
-                    self.account.get_market(),
+                    market,
                 )
 
             if pinfo and sid in pinfo:
@@ -565,15 +566,11 @@ def calculate_price_with_extra_bid(
         return price * (1 + Decimal(str(extra_bid_pct)))
 
     from finlab.markets.us import USMarket
-    from finlab.online.core.utils import _round_to_tick
+    from finlab.online.core.utils import _round_to_tick, _round_to_us_tick
 
     result = price * (1 + extra_bid_pct)
     direction = "floor" if extra_bid_pct > 0 else "ceil"
-
-    if isinstance(market, USMarket):
-        # 美股跳動單位：1 美元以上 0.01，未滿 1 美元 0.0001
-        scale = 100 if result >= 1 else 10000
-        fn = math.floor if direction == "floor" else math.ceil
-        return fn(round(result * scale, 6)) / scale
-
-    return _round_to_tick(result, direction)
+    round_to_tick = (
+        _round_to_us_tick if isinstance(market, USMarket) else _round_to_tick
+    )
+    return round_to_tick(result, direction)

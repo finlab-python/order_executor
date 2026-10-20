@@ -115,9 +115,10 @@ def test_extra_bid_and_up_down_limit() -> None:
 
 
 def test_calculate_price_with_extra_bid_us_market() -> None:
-    assert calculate_price_with_extra_bid(157.3, 0.001, USMarket()) == 157.45
-    assert calculate_price_with_extra_bid(157.3, -0.001, USMarket()) == 157.15
-    assert calculate_price_with_extra_bid(0.5, 0.001, USMarket()) == 0.5005
+    us = USMarket()
+    assert calculate_price_with_extra_bid(157.3, 0.001, us) == 157.45
+    assert calculate_price_with_extra_bid(157.3, -0.001, us) == 157.15
+    assert calculate_price_with_extra_bid(0.5, 0.001, us) == 0.5005
 
 
 def test_calculate_price_with_extra_bid_decimal_price() -> None:
