@@ -443,6 +443,21 @@ def test_leverage_rounds_margin_up_so_cash_stays_within_fund() -> None:
     assert _legs(position) == [("A", "1", "MARGIN_TRADING")]
 
 
+def test_leverage_rejects_target_that_margin_cannot_finance() -> None:
+    with pytest.raises(ValueError, match="cannot be financed"):
+        Position.from_weight(
+            {"A": 1.0},
+            fund=50_000,
+            price={"A": 100},
+            board_lot_size=1000,
+            leverage=1.2,
+            price_history=_LEVERAGE_HISTORY,
+            odd_lot=True,
+        )
+    with pytest.raises(ValueError, match="cannot be financed"):
+        _leveraged({"A": 0.1, "C": 0.9})
+
+
 def test_leverage_does_not_double_margin_trading_holdings() -> None:
     with pytest.raises(ValueError, match="margin_trading"):
         _leveraged({"A": 0.5, "B": 0.5}, margin_trading=True)

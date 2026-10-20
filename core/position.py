@@ -478,11 +478,8 @@ class Position:
                     "weight": p.get("weight"),
                 }
             )
-        if all(math.isnan(r["sigma"]) for r in rows):
-            raise ValueError(
-                "Empty or incompatible position – nothing to leverage. "
-                "leverage > 1 needs cash long holdings with price_history."
-            )
+        if not rows:
+            raise ValueError("Empty or incompatible position – nothing to leverage.")
         df = pd.DataFrame(rows)
         total_val = df["value"].sum()
         target_finance = (leverage - 1.0) / leverage * total_val
@@ -509,6 +506,13 @@ class Position:
                     new_entries.append(
                         _make_entry(row.symbol, quantity, condition, weight=row.weight)
                     )
+        # 部位是用 fund * leverage 買的，融資不夠時現股部分會超過資金
+        if finance_remaining > 1e-6 * total_val:
+            raise ValueError(
+                f"leverage={leverage} cannot be financed: only whole lots of holdings "
+                "with price_history can use margin trading. Lower leverage, "
+                "increase fund, or provide price_history for all holdings."
+            )
         return Position.from_list(new_entries + kept)
 
     @classmethod
