@@ -170,6 +170,20 @@ def _round_to_tick(price: float, direction: str = "floor") -> float:
         return fn(price / 5) * 5
 
 
+def _round_to_us_tick(price: float, direction: str = "floor") -> float:
+    """Round price to US tick boundary.
+
+    Tick sizes: 0.01 (>=1), 0.0001 (<1).
+
+    Args:
+        price: The price to round.
+        direction: "floor" to round down, "ceil" to round up.
+    """
+    fn = math.floor if direction == "floor" else math.ceil
+    scale = 100 if price >= 1 else 10000
+    return fn(round(price * scale, 6)) / scale
+
+
 def round_tw_price(price: float) -> float:
     """Round tw price to the nearest tick size. Asserts the price is already
     on a tick boundary (floor == ceil)."""

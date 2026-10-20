@@ -297,6 +297,42 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         expected_price = 100.0 * 1.05
         self.assertAlmostEqual(actual_price, expected_price, places=2)
 
+    def test_execute_orders_float_error_not_split_into_1000_odd_lot(self) -> None:
+        """張數有浮點誤差時，不拆出 1000 股的零股單"""
+        orders = [
+            {
+                "stock_id": "2330",
+                "quantity": 0.9999999999999999,
+                "order_condition": OrderCondition.CASH,
+            }
+        ]
+        mock_stocks = {"2330": Mock(close=580.0, bid_price=579.0, ask_price=581.0)}
+        self.mock_account.get_stocks.return_value = mock_stocks
+
+        OrderExecutor(Position({}), self.mock_account).execute_orders(orders)
+
+        self.mock_account.create_order.assert_called_once()
+        call_args = self.mock_account.create_order.call_args
+        self.assertEqual(call_args.kwargs["quantity"], 1)
+        self.assertNotIn("odd_lot", call_args.kwargs)
+
+    def test_execute_orders_extra_bid_pct_uses_us_tick(self) -> None:
+        """美股帳戶追價用美股跳動單位"""
+        from finlab.markets.us import USMarket
+
+        self.mock_account.get_market.return_value = USMarket()
+        self.mock_account.sep_odd_lot_order.return_value = False
+        mock_stocks = {"AAPL": Mock(close=157.3, bid_price=157.2, ask_price=157.4)}
+        self.mock_account.get_stocks.return_value = mock_stocks
+        orders = [
+            {"stock_id": "AAPL", "quantity": 1, "order_condition": OrderCondition.CASH}
+        ]
+
+        oe = OrderExecutor(Position({}), self.mock_account)
+        oe.execute_orders(orders, extra_bid_pct=0.001)
+
+        self.assertEqual(self.mock_account.create_order.call_args.kwargs["price"], 157.45)
+
     def test_execute_orders_market_order(self) -> None:
         """測試市價單"""
         orders = [
