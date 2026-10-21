@@ -129,14 +129,13 @@ class BinanceHelper:
 
     @staticmethod
     def get_spot_position(client: Any) -> dict[str, Decimal]:
-        # spot balance
         account = retry(client.get_account, 3)["balances"]
+        # 掛單中鎖住的幣（locked）也是持有
         spot_balance = {
             obj["asset"]: Decimal(obj["free"]) + Decimal(obj["locked"])
             for obj in account
-            if Decimal(obj["free"]) != 0
         }
-        return dict(spot_balance.items())
+        return {k: v for k, v in spot_balance.items() if v != 0}
 
     @staticmethod
     def get_futures_position(client: Any) -> dict[str, float]:
@@ -294,8 +293,11 @@ class BinanceSimpleClient:
 
         min_notional_iceberg = 0.05 if symbol[-3:] == "BTC" else 1000
 
-        use_iceberg = (abs(quantity) * abs(price) > min_notional_iceberg) & (
-            abs(icebergQty) * 10 > abs(quantity)
+        # 冰山單只適用限價單；市價單沒有價格可算名目金額
+        use_iceberg = (
+            price is not None
+            and abs(quantity) * abs(price) > min_notional_iceberg
+            and abs(icebergQty) * 10 > abs(quantity)
         )
 
         params = {
@@ -412,15 +414,14 @@ class BinanceAccount(Account):
             price = Decimal(price)
 
         order = self.simple_client.client.get_order(symbol=stock_id, orderId=order_id)
+
+        # 幣安回傳的數量是字串；剩餘量帶上原單方向（賣單為負），先算好再取消
+        total = Decimal(str(quantity)) if quantity else Decimal(order["origQty"])
+        quantity = total - Decimal(order["executedQty"])
+        if order["side"] == SIDE_SELL:
+            quantity = -quantity
+
         self.simple_client.client.cancel_order(symbol=stock_id, orderId=order_id)
-
-        if quantity:
-            quantity = quantity - order["executedQty"]
-        else:
-            quantity = (order["executedQty"] - order["origQty"]) * (
-                (order["side"] == "BUY") * 2 - 1
-            )
-
         self.simple_client.create_order(
             symbol=stock_id, quantity=quantity, price=price, market_type="SPOT"
         )

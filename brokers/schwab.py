@@ -236,7 +236,7 @@ class SchwabAccount(Account):
             ValueError: 如果訂單無法更新
 
         Note:
-
+            取消失敗（例如原單已成交）時保留原單、不重新下單，避免重複下單。
         """
         try:
             order = self.get_orders()[order_id]
@@ -244,7 +244,9 @@ class SchwabAccount(Account):
             stock_id = order.stock_id
             quantity = order.quantity - order.filled_quantity
 
-            self.cancel_order(order_id)
+            if not self._cancel(order_id):
+                logger.warning(f"訂單 {order_id} 未取消成功，不重新下單")
+                return
             self.create_order(
                 action=action,
                 stock_id=stock_id,
@@ -261,19 +263,24 @@ class SchwabAccount(Account):
         Args:
             order_id (int): 要取消的訂單ID
         """
+        self._cancel(order_id)
+
+    def _cancel(self, order_id: int) -> bool:
+        """取消訂單，回傳券商是否接受取消"""
         if order_id not in self.trades:
             self.trades = self.get_orders()
 
         try:
             response = self.client.cancel_order(order_id, self.account_hash)
-            if response.status_code == 200:
+            if response.is_success:
                 logger.info(f"API: 成功取消訂單 {order_id}")
-            else:
-                logger.warning(
-                    f"API: 無法取消訂單 {order_id}: {response.status_code}: {response.text}"
-                )
+                return True
+            logger.warning(
+                f"API: 無法取消訂單 {order_id}: {response.status_code}: {response.text}"
+            )
         except Exception as e:
             logger.error(f"API: 取消訂單 {order_id} 時發生錯誤: {e}")
+        return False
 
     def get_position(self) -> Position:
         """獲取當前持倉
@@ -320,7 +327,7 @@ class SchwabAccount(Account):
             Dict[int, Order]: 訂單ID到訂單對象的映射
         """
         try:
-            orders_response = self.client.get_orders_for_all_linked_accounts()
+            orders_response = self.client.get_orders_for_account(self.account_hash)
             if orders_response.status_code != 200:
                 logger.error(
                     f"API: 獲取訂單失敗: {orders_response.status_code}: {orders_response.text}"
