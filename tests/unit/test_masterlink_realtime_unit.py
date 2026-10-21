@@ -447,22 +447,24 @@ def test_masterlink_stock_close_falls_back_to_reference(monkeypatch: Any) -> Non
 
 
 @pytest.mark.parametrize(
-    "filled, canceled, can_cancel, status",
+    "org, filled, canceled, can_cancel, status",
     [
-        (0, 200, True, OrderStatus.NEW),
-        (100, 200, True, OrderStatus.PARTIALLY_FILLED),
-        (0, 500, False, OrderStatus.CANCEL),
-        (0, 0, True, OrderStatus.NEW),
+        (500, 0, 200, True, OrderStatus.NEW),
+        (500, 100, 200, True, OrderStatus.PARTIALLY_FILLED),
+        (500, 0, 500, False, OrderStatus.CANCEL),
+        (10, 1, 9, True, OrderStatus.CANCEL),
+        (500, 0, 0, True, OrderStatus.NEW),
     ],
 )
 def test_masterlink_reduced_order_status_uses_remaining_quantity(
-    monkeypatch: Any, filled: int, canceled: int, can_cancel: bool, status: Any
+    monkeypatch: Any, org: int, filled: int, canceled: int, can_cancel: bool,
+    status: Any,
 ) -> None:
     _, account = _new_masterlink_account(monkeypatch)
     record = types.SimpleNamespace(
         buy_sell="B", order_type="Stock", order_date="20261021",
         order_time="090000000", order_no="o-1", symbol="2330", order_price=560,
-        org_qty=500, filled_qty=filled, cel_qty=canceled, err_code="000000",
+        org_qty=org, filled_qty=filled, cel_qty=canceled, err_code="000000",
         can_cancel=can_cancel,
     )
     assert account._create_finlab_order(record).status == status

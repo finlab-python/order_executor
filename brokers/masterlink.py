@@ -1027,7 +1027,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
         # 判斷狀態（減量過的委託依剩餘量判斷）
         status = OrderStatus.NEW
-        remaining_qty = org_qty - filled_qty - canceled_qty
+        # 取到股，避免除以 1000 後相減的浮點誤差
+        remaining_qty = round(org_qty - filled_qty - canceled_qty, 3)
 
         if org_qty == filled_qty:
             status = OrderStatus.FILLED
