@@ -755,17 +755,11 @@ class MasterlinkAccount(Account, RealtimeProvider):
         # 確定市場類型
         market_type = MarketType.IntradayOdd if odd_lot else MarketType.Common
         # 盤別依台北時間判斷，不受主機時區影響
-        now = datetime.datetime.now(
-            datetime.timezone(datetime.timedelta(hours=8))
-        ).time()
+        now = datetime.datetime.now(TWMarket.tzinfo()).time()
 
         # 盤後零股處理
         if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
             market_type = MarketType.Odd
-
-        # 定盤處理
-        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
-            market_type = MarketType.Fixing
 
         # 確定價格類型
         price_type = PriceType.Limit
@@ -783,8 +777,9 @@ class MasterlinkAccount(Account, RealtimeProvider):
             elif action == Action.SELL:
                 price_type = PriceType.LimitUp
 
-        # 盤後定價只接受參考價
-        if market_type == MarketType.Fixing:
+        # 定盤處理：盤後定價只接受參考價
+        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
+            market_type = MarketType.Fixing
             price = None
             price_type = PriceType.Reference
 
@@ -1036,10 +1031,10 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
         if org_qty == filled_qty:
             status = OrderStatus.FILLED
-        elif filled_qty == 0 and remaining_qty > 0 and cancelable:
-            status = OrderStatus.NEW
-        elif remaining_qty > 0 and cancelable and filled_qty > 0:
-            status = OrderStatus.PARTIALLY_FILLED
+        elif remaining_qty > 0 and cancelable:
+            status = (
+                OrderStatus.PARTIALLY_FILLED if filled_qty > 0 else OrderStatus.NEW
+            )
         elif canceled_qty > 0 or error_code != "000000" or not cancelable:
             status = OrderStatus.CANCEL
 
@@ -1119,12 +1114,13 @@ class MasterlinkAccount(Account, RealtimeProvider):
             open_price = float(quote.get("openPrice", 0) or 0)
             high_price = float(quote.get("highPrice", 0) or 0)
             low_price = float(quote.get("lowPrice", 0) or 0)
-            close_price = float(quote.get("closePrice", 0) or 0)
-            if not close_price:
-                # 今天還沒成交時 closePrice 不揭示，改用參考價或昨收
-                close_price = float(
-                    quote.get("referencePrice") or quote.get("previousClose") or 0
-                )
+            # 今天還沒成交時 closePrice 不揭示，改用參考價或昨收
+            close_price = float(
+                quote.get("closePrice")
+                or quote.get("referencePrice")
+                or quote.get("previousClose")
+                or 0
+            )
 
             logging.debug(
                 f"stock_id: {stock_id}, open_price: {open_price}, high_price: {high_price}, low_price: {low_price}, close_price: {close_price}"
@@ -1257,7 +1253,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
             logging.info(f"get_position: 成功獲取持倉，共 {len(positions)} 筆")
             return Position.from_list(positions)
         except Exception as e:
-            # 回傳空部位會被當成沒持股而重複買進，改為直接報錯
+            # 不回傳空部位：空部位會被當成沒持股而重複買進
             logging.warning(f"get_position: 獲取持倉失敗: {e}")
             raise
 
