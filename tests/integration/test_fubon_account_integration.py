@@ -25,6 +25,14 @@ from ..conftest import FUBON_ENV_VARS, has_fubon_credentials, skip_if_no_fubon_c
 from ..utils.test_base import AccountTestMixin, IntegrationTestCase
 
 
+def skip_during_fixing_session(test: unittest.TestCase, account: Any) -> None:
+    """盤後定價時段整股單一律以參考價送出，測試用的低價限價擋不住實際成交"""
+    from fubon_neo.constant import MarketType
+
+    if account._determine_market_type(odd_lot=False) == MarketType.Fixing:
+        test.skipTest("盤後定價時段（14:00-14:30）不跑實單測試，避免實際成交")
+
+
 @skip_if_no_fubon_credentials
 class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
     """富邦帳戶整合測試類"""
@@ -39,6 +47,7 @@ class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
         except Exception as e:
             logging.exception(f"設定 FubonAccount 時發生錯誤: {e}")
             raise
+        skip_during_fixing_session(self, self.fubon_account)
 
     def tearDown(self) -> None:
         """每個測試結束後執行的清理"""
@@ -390,6 +399,7 @@ class TestFubonAccountOrderExecutor(IntegrationTestCase):
         except Exception as e:
             logging.exception(f"設定 FubonAccount 時發生錯誤: {e}")
             raise
+        skip_during_fixing_session(self, self.fubon_account)
 
     def tearDown(self) -> None:
         """清理所有委託單"""
