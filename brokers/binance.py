@@ -129,14 +129,13 @@ class BinanceHelper:
 
     @staticmethod
     def get_spot_position(client: Any) -> dict[str, Decimal]:
-        # spot balance
         account = retry(client.get_account, 3)["balances"]
         # 掛單中鎖住的幣（locked）也是持有
-        spot_balance = (
-            (obj["asset"], Decimal(obj["free"]) + Decimal(obj["locked"]))
+        spot_balance = {
+            obj["asset"]: Decimal(obj["free"]) + Decimal(obj["locked"])
             for obj in account
-        )
-        return {asset: amount for asset, amount in spot_balance if amount != 0}
+        }
+        return {k: v for k, v in spot_balance.items() if v != 0}
 
     @staticmethod
     def get_futures_position(client: Any) -> dict[str, float]:

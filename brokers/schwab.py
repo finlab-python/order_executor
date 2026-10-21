@@ -266,14 +266,7 @@ class SchwabAccount(Account):
         self._cancel(order_id)
 
     def _cancel(self, order_id: int) -> bool:
-        """取消訂單
-
-        Args:
-            order_id (int): 要取消的訂單ID
-
-        Returns:
-            bool: 券商是否接受取消
-        """
+        """取消訂單，回傳券商是否接受取消"""
         if order_id not in self.trades:
             self.trades = self.get_orders()
 
