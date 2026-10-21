@@ -392,9 +392,9 @@ class TestFubonAccountErrorHandling(MockTestCase):
         # 設置 SDK 拋出異常
         self.account.sdk.stock.get_order_results.side_effect = Exception("API 錯誤")
 
-        # 應該返回空字典而不是拋出異常
-        orders = self.account.get_orders()
-        self.assertEqual(orders, {})
+        # 查詢失敗要拋出異常，回傳空字典會讓 executor 以為沒有舊單而不取消
+        with self.assertRaises(Exception):
+            self.account.get_orders()
 
 
 class TestFubonAccountCreateFinlabOrder(MockTestCase, AccountTestMixin):

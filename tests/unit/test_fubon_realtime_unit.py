@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import importlib
-import sys
 import types
 from typing import Any
 
 from finlab.online.core.enums import Action, OrderStatus
 from finlab.online.core.realtime_models import ConnectionState
+
+from ..fixtures.fubon_mocks import import_fubon_module_with_fake_sdk
 
 
 class _FakeWsClient:
@@ -95,35 +95,10 @@ class _FakeSdk:
         self.event_cb = callback
 
 
-def _import_fubon_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
-    sdk_module = types.ModuleType("fubon_neo.sdk")
-    sdk_module.FubonSDK = object
-    sdk_module.Order = object
-
-    constant_module = types.ModuleType("fubon_neo.constant")
-    constant_module.TimeInForce = types.SimpleNamespace()
-    constant_module.OrderType = types.SimpleNamespace()
-    constant_module.PriceType = types.SimpleNamespace()
-    constant_module.MarketType = types.SimpleNamespace()
-    constant_module.BSAction = types.SimpleNamespace(Buy="B", Sell="S")
-
-    package_module = types.ModuleType("fubon_neo")
-    package_module.sdk = sdk_module
-    package_module.constant = constant_module
-
-    monkeypatch.setitem(sys.modules, "fubon_neo", package_module)
-    monkeypatch.setitem(sys.modules, "fubon_neo.sdk", sdk_module)
-    monkeypatch.setitem(sys.modules, "fubon_neo.constant", constant_module)
-    sys.modules.pop("finlab.online.brokers.fubon", None)
-
-    module = importlib.import_module("finlab.online.brokers.fubon")
-    return importlib.reload(module)
-
-
 def test_fubon_realtime_callbacks_cover_tick_book_order_fill_and_connection(
     monkeypatch: Any,
 ) -> None:
-    fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
+    fubon_module = import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 
     account = FubonAccount.__new__(FubonAccount)
@@ -232,7 +207,7 @@ def test_fubon_realtime_callbacks_cover_tick_book_order_fill_and_connection(
 
 
 def test_fubon_subscribe_ticks_tracks_trades_and_aggregates(monkeypatch: Any) -> None:
-    fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
+    fubon_module = import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 
     account = FubonAccount.__new__(FubonAccount)
@@ -255,7 +230,7 @@ def test_fubon_subscribe_ticks_tracks_trades_and_aggregates(monkeypatch: Any) ->
 
 
 def test_fubon_backfill_ticks_normalizes_intraday_trade_rows(monkeypatch: Any) -> None:
-    fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
+    fubon_module = import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 
     account = FubonAccount.__new__(FubonAccount)
@@ -277,7 +252,7 @@ def test_fubon_backfill_ticks_normalizes_intraday_trade_rows(monkeypatch: Any) -
 
 
 def test_fubon_get_bidask_snapshot_uses_quote_top5(monkeypatch: Any) -> None:
-    fubon_module = _import_fubon_module_with_fake_sdk(monkeypatch)
+    fubon_module = import_fubon_module_with_fake_sdk(monkeypatch)
     FubonAccount = fubon_module.FubonAccount
 
     account = FubonAccount.__new__(FubonAccount)

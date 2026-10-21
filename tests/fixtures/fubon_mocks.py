@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import importlib
+import sys
+import types
+from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, _patch, _patch_dict, patch
 
 from ..utils.mock_helpers import MockBuilder, create_mock_result
@@ -230,3 +233,32 @@ class FubonAccountMockHelper:
                 "FUBON_ACCOUNT": "test_account",
             },
         )
+
+
+def import_fubon_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
+    """以假的 fubon_neo 重新匯入 brokers.fubon，不需安裝富邦 SDK"""
+    names = (
+        "Common Fixing Odd IntradayOdd EmgOdd Limit LimitUp LimitDown Reference"
+        " Market Stock Margin Short DayTrade ROD"
+    )
+    enums = types.SimpleNamespace(**{n: n for n in names.split()})
+
+    sdk_module = types.ModuleType("fubon_neo.sdk")
+    sdk_module.FubonSDK = object
+    sdk_module.Order = lambda **kwargs: kwargs
+
+    constant_module = types.ModuleType("fubon_neo.constant")
+    constant_module.BSAction = types.SimpleNamespace(Buy="B", Sell="S")
+    constant_module.MarketType = constant_module.PriceType = enums
+    constant_module.OrderType = constant_module.TimeInForce = enums
+
+    package_module = types.ModuleType("fubon_neo")
+    package_module.sdk = sdk_module
+    package_module.constant = constant_module
+
+    monkeypatch.setitem(sys.modules, "fubon_neo", package_module)
+    monkeypatch.setitem(sys.modules, "fubon_neo.sdk", sdk_module)
+    monkeypatch.setitem(sys.modules, "fubon_neo.constant", constant_module)
+    sys.modules.pop("finlab.online.brokers.fubon", None)
+
+    return importlib.import_module("finlab.online.brokers.fubon")

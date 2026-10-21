@@ -672,21 +672,24 @@ class FubonAccount(Account, RealtimeProvider):
             return float(getattr(result.data, "available_balance", 0))
         raise ValueError("無法獲取可用資金")
 
-    @handle_exceptions(default_return={}, log_prefix="get_orders: ")
     def get_orders(self) -> dict[str, Order]:
         """
         獲取所有委託單
 
         Returns:
             dict: 委託單字典，以委託單編號為鍵
+
+        Raises:
+            ValueError: 查詢失敗（例如限流、逾時）時，不回傳空委託，避免舊單沒被取消
         """
         result = self.sdk.stock.get_order_results(self.target_account)
         if not result or not result.is_success:
-            logging.warning("get_orders: 獲取委託單失敗")
-            return {}
+            raise ValueError(
+                f"get_orders: 獲取委託單失敗: {getattr(result, 'message', '未知錯誤')}"
+            )
 
         order_dict = {}
-        for order in result.data:
+        for order in result.data or []:
             finlab_order = self._create_finlab_order(order)
             order_dict[finlab_order.order_id] = finlab_order
 
@@ -971,6 +974,12 @@ class FubonAccount(Account, RealtimeProvider):
                 ),
             }
 
+        # 今天還沒成交時 closePrice 沒有值，改用今日參考價，避免以 0 當限價
+        if not price_data["close"]:
+            price_data["close"] = (
+                get_first_valid_float(quote, "referencePrice", "previousClose") or 0
+            )
+
         return stock_id or original_stock_id, price_data
 
     def _extract_bid_ask_data(self, quote: Any) -> dict[str, float]:
@@ -1028,76 +1037,69 @@ class FubonAccount(Account, RealtimeProvider):
         Returns:
             Position: 持有部位對象
         """
-        try:
-            # 獲取未實現損益（包含持倉資訊）
-            result = self.sdk.accounting.unrealized_gains_and_loses(self.target_account)
-            if not result or not result.is_success:
-                logging.warning("get_position: 無法獲取持倉資訊")
-                return Position({})
-
-            unrealized_data = result.data
-            logging.debug(
-                f"get_position: unrealized_gains_and_loses API 回傳: {result}"
+        # 獲取未實現損益（包含持倉資訊）
+        result = self.sdk.accounting.unrealized_gains_and_loses(self.target_account)
+        if not result or not result.is_success:
+            # 查不到持倉不能當成空部位，否則 executor 會把整個目標部位再買一次
+            raise ValueError(
+                f"無法獲取持倉資訊: {getattr(result, 'message', '未知錯誤')}"
             )
 
-            positions = []
+        unrealized_data = result.data or []
+        logging.debug(f"get_position: unrealized_gains_and_loses API 回傳: {result}")
 
-            for position_data in unrealized_data:
-                try:
-                    # 處理每個持倉項目
-                    stock_id = getattr(position_data, "stock_no", "")
-                    if not stock_id:
-                        continue
+        positions = []
 
-                    # 判斷委託類型
-                    order_type = getattr(position_data, "order_type", None)
-                    order_condition = OrderCondition.CASH  # 默認為現股
+        for position_data in unrealized_data:
+            try:
+                # 處理每個持倉項目
+                stock_id = getattr(position_data, "stock_no", "")
+                if not stock_id:
+                    continue
 
-                    if order_type == OrderType.Margin:
-                        order_condition = OrderCondition.MARGIN_TRADING
-                    elif order_type == OrderType.Short:
-                        order_condition = OrderCondition.SHORT_SELLING
-                    elif order_type == OrderType.DayTrade:
-                        order_condition = OrderCondition.DAY_TRADING_SHORT
+                # 判斷委託類型
+                order_type = getattr(position_data, "order_type", None)
+                order_condition = OrderCondition.CASH  # 默認為現股
 
-                    # 獲取持倉數量 - 使用 today_qty 作為目前持倉
-                    today_qty = getattr(position_data, "today_qty", 0)
-                    if today_qty and float(today_qty) != 0:
-                        # 根據買賣別和委託類型決定數量正負號
-                        buy_sell = getattr(position_data, "buy_sell", None)
-                        quantity_sign = 1
+                if order_type == OrderType.Margin:
+                    order_condition = OrderCondition.MARGIN_TRADING
+                elif order_type == OrderType.Short:
+                    order_condition = OrderCondition.SHORT_SELLING
+                elif order_type == OrderType.DayTrade:
+                    order_condition = OrderCondition.DAY_TRADING_SHORT
 
-                        # 融券或賣出部位為負數
-                        if (
-                            order_condition == OrderCondition.SHORT_SELLING
-                            or buy_sell == BSAction.Sell
-                        ):
-                            quantity_sign = -1
+                # 獲取持倉數量 - 使用 today_qty 作為目前持倉
+                today_qty = getattr(position_data, "today_qty", 0)
+                if today_qty and float(today_qty) != 0:
+                    # 根據買賣別和委託類型決定數量正負號
+                    buy_sell = getattr(position_data, "buy_sell", None)
+                    quantity_sign = 1
 
-                        # today_qty 是股數，需要轉換為張
-                        quantity = (
-                            Decimal(str(today_qty)) / STOCK_LOT_SIZE * quantity_sign
-                        )
+                    # 融券或賣出部位為負數
+                    if (
+                        order_condition == OrderCondition.SHORT_SELLING
+                        or buy_sell == BSAction.Sell
+                    ):
+                        quantity_sign = -1
 
-                        positions.append(
-                            {
-                                "stock_id": stock_id,
-                                "quantity": float(quantity),
-                                "order_condition": order_condition,
-                            }
-                        )
+                    # today_qty 是股數，需要轉換為張
+                    quantity = Decimal(str(today_qty)) / STOCK_LOT_SIZE * quantity_sign
 
-                except Exception as e:
-                    logging.warning(
-                        f"get_position: 處理持倉項目 {getattr(position_data, 'stock_no', '未知')} 時發生錯誤: {e}"
+                    positions.append(
+                        {
+                            "stock_id": stock_id,
+                            "quantity": float(quantity),
+                            "order_condition": order_condition,
+                        }
                     )
 
-            logging.info(f"get_position: 成功獲取持倉，共 {len(positions)} 筆")
-            return Position.from_list(positions)
+            except Exception as e:
+                logging.warning(
+                    f"get_position: 處理持倉項目 {getattr(position_data, 'stock_no', '未知')} 時發生錯誤: {e}"
+                )
 
-        except Exception as e:
-            logging.warning(f"get_position: 獲取持倉失敗: {e}")
-            return Position({})
+        logging.info(f"get_position: 成功獲取持倉，共 {len(positions)} 筆")
+        return Position.from_list(positions)
 
     def get_settlement(self) -> float:
         """
@@ -1289,19 +1291,22 @@ class FubonAccount(Account, RealtimeProvider):
 
         # 確定價格類型
         price_type = PriceType.Limit
-        if market_order:
+        if market_type == MarketType.Fixing:
+            # 盤後定價只接受參考價（定盤價）委託
             price = None
-            if action == Action.BUY:
-                price_type = PriceType.LimitUp
-            elif action == Action.SELL:
-                price_type = PriceType.LimitDown
-
-        if best_price_limit:
+            price_type = PriceType.Reference
+        elif best_price_limit:
             price = None
             if action == Action.BUY:
                 price_type = PriceType.LimitDown
             elif action == Action.SELL:
                 price_type = PriceType.LimitUp
+        elif market_order:
+            price = None
+            if action == Action.BUY:
+                price_type = PriceType.LimitUp
+            elif action == Action.SELL:
+                price_type = PriceType.LimitDown
 
         # 確定交易條件
         order_type = OrderType.Stock  # 預設為現股交易
@@ -1350,16 +1355,16 @@ class FubonAccount(Account, RealtimeProvider):
 
     def _determine_market_type(self, odd_lot: bool) -> MarketType:
         """確定市場類型"""
-        now = datetime.datetime.now()
-        current_time = datetime.time(now.hour, now.minute)
+        # 交易時段以台北時間為準，主機時區可能不是台灣（例如 Colab、雲端 VM）
+        current_time = datetime.datetime.now(TWMarket.tzinfo()).time()
 
         if odd_lot:
             # 盤後零股處理 (13:40-14:30)
-            if datetime.time(13, 40) < current_time < datetime.time(14, 30):
+            if datetime.time(13, 40) <= current_time < datetime.time(14, 30):
                 return MarketType.Odd
             return MarketType.IntradayOdd
         # 定盤處理 (14:00-14:30)
-        if datetime.time(14, 0) < current_time < datetime.time(14, 30):
+        if datetime.time(14, 0) <= current_time < datetime.time(14, 30):
             return MarketType.Fixing
         return MarketType.Common
 
