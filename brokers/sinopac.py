@@ -558,18 +558,10 @@ class SinopacAccount(Account, RealtimeProvider):
         }[order_cond]
 
         order_lot = SJStockOrderLot.IntradayOdd if odd_lot else SJStockOrderLot.Common
-        now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        if (
-            datetime.time(13, 40) < datetime.time(now.hour, now.minute)
-            and datetime.time(now.hour, now.minute) < datetime.time(14, 30)
-            and odd_lot
-        ):
+        now = datetime.datetime.now(TWMarket.tzinfo()).time()
+        if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
             order_lot = SJStockOrderLot.Odd
-        if (
-            datetime.time(14, 00) < datetime.time(now.hour, now.minute)
-            and datetime.time(now.hour, now.minute) < datetime.time(14, 30)
-            and not odd_lot
-        ):
+        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
             order_lot = SJStockOrderLot.Fixing
 
         order = self.api.Order(

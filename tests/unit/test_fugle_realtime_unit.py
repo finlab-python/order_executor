@@ -5,6 +5,12 @@ import sys
 import types
 from typing import Any
 
+import pytest
+
+from finlab.online.core.enums import Action
+
+from ..utils.mock_helpers import patch_utc_host_clock
+
 
 def _import_fugle_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     sdk_module = types.ModuleType("esun_trade.sdk")
@@ -164,3 +170,41 @@ def test_fugle_get_bidask_snapshot_uses_marketdata_http_api(monkeypatch: Any) ->
     assert snapshots["2330"].ask_prices[:2] == [100.5, 101.0]
     assert len(bidasks) == 1
     assert bidasks[0].bid_volumes[:2] == [10, 9]
+
+
+@pytest.mark.parametrize(
+    "utc_time, odd_lot, ap_code",
+    [
+        ((5, 40, 30), True, "Odd"),
+        ((6, 0, 10), False, "AfterMarket"),
+        ((6, 30, 0), True, "IntradayOdd"),
+        ((1, 0, 0), False, "Common"),
+        ((1, 0, 0), True, "IntradayOdd"),
+    ],
+)
+def test_fugle_create_order_session_starts_at_taipei_minute(
+    monkeypatch: Any, utc_time: tuple, odd_lot: bool, ap_code: str
+) -> None:
+    fugle_module = _import_fugle_module_with_fake_sdk(monkeypatch)
+    patch_utc_host_clock(monkeypatch, fugle_module, utc_time)
+    codes = ("Common", "IntradayOdd", "Odd", "AfterMarket")
+    monkeypatch.setattr(
+        fugle_module, "APCode", types.SimpleNamespace(**{c: c for c in codes})
+    )
+    trades = ("Cash", "Margin", "Short", "DayTrading", "DayTradingSell")
+    monkeypatch.setattr(
+        fugle_module, "Trade", types.SimpleNamespace(**{t: t for t in trades})
+    )
+    monkeypatch.setattr(fugle_module, "PriceFlag", types.SimpleNamespace(Limit="L"))
+    monkeypatch.setattr(
+        fugle_module, "OrderObject", lambda **kwargs: types.SimpleNamespace(**kwargs)
+    )
+    placed: list[Any] = []
+    account = fugle_module.FugleAccount.__new__(fugle_module.FugleAccount)
+    account.sdk = types.SimpleNamespace(
+        place_order=lambda order: placed.append(order) or {"ord_no": "o-1"}
+    )
+
+    account.create_order(Action.BUY, "2330", 1, price=580, odd_lot=odd_lot)
+
+    assert placed[0].ap_code == ap_code

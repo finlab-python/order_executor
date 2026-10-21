@@ -391,18 +391,10 @@ class FugleAccount(Account, RealtimeProvider):
         }[order_cond]
 
         ap_code = APCode.IntradayOdd if odd_lot else APCode.Common
-        now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-        if (
-            datetime.time(13, 40) < datetime.time(now.hour, now.minute)
-            and datetime.time(now.hour, now.minute) < datetime.time(14, 30)
-            and odd_lot
-        ):
+        now = datetime.datetime.now(TWMarket.tzinfo()).time()
+        if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
             ap_code = APCode.Odd
-        if (
-            datetime.time(14, 00) < datetime.time(now.hour, now.minute)
-            and datetime.time(now.hour, now.minute) < datetime.time(14, 30)
-            and not odd_lot
-        ):
+        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
             ap_code = APCode.AfterMarket
             price_flag = PriceFlag.Limit
 
