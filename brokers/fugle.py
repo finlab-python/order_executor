@@ -386,7 +386,8 @@ class FugleAccount(Account, RealtimeProvider):
             OrderCondition.CASH: Trade.Cash,
             OrderCondition.MARGIN_TRADING: Trade.Margin,
             OrderCondition.SHORT_SELLING: Trade.Short,
-            # OrderCondition.DAY_TRADING_LONG: Trade.DayTrading,
+            # 現股當沖先買後賣：買進端是一般現股單（Trade.DayTrading "9" 僅用於帳務）
+            OrderCondition.DAY_TRADING_LONG: Trade.Cash,
             OrderCondition.DAY_TRADING_SHORT: Trade.DayTradingSell,
         }[order_cond]
 
@@ -456,7 +457,8 @@ class FugleAccount(Account, RealtimeProvider):
                         Action.BUY if fugle_order["buy_sell"] == "B" else Action.SELL
                     )
                     stock_id = fugle_order["stock_no"]
-                    user_cancel_orders = fugle_order["cel_qty"]
+                    # 零股要用股數算：cel_qty 以張計，100 股會被 int() 算成 0
+                    user_cancel_shares = float(fugle_order["cel_qty_share"])
                     (
                         fugle_order["org_qty_share"]
                         - fugle_order["mat_qty_share"]
@@ -467,10 +469,14 @@ class FugleAccount(Account, RealtimeProvider):
 
                     def callback(order: Order) -> bool:
                         if order.status == OrderStatus.CANCEL:
-                            all_canceled_orders = float(
-                                trades[self.user_account][order_id].org_order["cel_qty"]
+                            # 委託回報（ACK）沒有股數欄位，重查委託明細
+                            self.get_orders()
+                            all_canceled_shares = float(
+                                trades[self.user_account][order_id].org_order[
+                                    "cel_qty_share"
+                                ]
                             )
-                            quantity = int(all_canceled_orders - user_cancel_orders)
+                            quantity = int(all_canceled_shares - user_cancel_shares)
                             self.create_order(
                                 action=action,
                                 stock_id=stock_id,
@@ -580,19 +586,30 @@ class FugleAccount(Account, RealtimeProvider):
 
         ret: list[dict[str, Any]] = []
         for i in inv:
-            total_qty = (
-                Decimal(int(i["qty_l"]) + int(i["qty_bm"]) - int(i["qty_sm"])) / 1000
-            )
-
             o = order_condition[i["trade"]]
+
+            if o == OrderCondition.SHORT_SELLING:
+                # 融券庫存：今賣成交增加、今買回補減少，qty_c（現償）負號為減庫存
+                total_qty = (
+                    -Decimal(
+                        int(i["qty_l"])
+                        + int(i["qty_sm"])
+                        - int(i["qty_bm"])
+                        + int(i["qty_c"])
+                    )
+                    / 1000
+                )
+            else:
+                total_qty = (
+                    Decimal(int(i["qty_l"]) + int(i["qty_bm"]) - int(i["qty_sm"]))
+                    / 1000
+                )
 
             if total_qty != 0:
                 ret.append(
                     {
                         "stock_id": i["stk_no"],
-                        "quantity": total_qty
-                        if o != OrderCondition.SHORT_SELLING
-                        else -total_qty,
+                        "quantity": total_qty,
                         "order_condition": order_condition[i["trade"]],
                     }
                 )
