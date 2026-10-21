@@ -6,7 +6,7 @@ import logging
 import math
 import warnings
 from collections.abc import Callable, Iterator
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
 import pandas as pd
@@ -370,20 +370,19 @@ class Position:
             logger.warning(
                 "The precision parameter is ignored when board_lot_size is not 1."
             )
+            precision = None
 
         if precision is None:
             precision = 0
 
         if odd_lot:
             if board_lot_size == 1000:
-                precision = max(3, precision)
+                precision = 3
             elif board_lot_size == 100:
-                precision = max(2, precision)
+                precision = 2
             elif board_lot_size == 10:
-                precision = max(1, precision)
-            elif board_lot_size == 1:
-                precision = max(0, precision)
-            else:
+                precision = 1
+            elif board_lot_size != 1:
                 raise ValueError(
                     "The board_lot_size parameter is out of the valid range 1, 10, 100, 1000"
                 )
@@ -427,6 +426,10 @@ class Position:
         if leverage > 1.0:
             if price_history is None:
                 raise ValueError("price_history must be provided when leverage > 1.0")
+            if kwargs.get("margin_trading") or kwargs.get("day_trading_long"):
+                raise ValueError(
+                    "leverage > 1 cannot be combined with margin_trading or day_trading_long"
+                )
             pos = cls._apply_leverage_to_position(
                 pos, price, price_history, leverage, board_lot_size
             )
@@ -451,23 +454,27 @@ class Position:
         vol = price_history.ffill().pct_change(fill_method=None).std() * math.sqrt(
             annualisation_factor
         )
-        orig = position.to_list()
         rows = []
-        for p in orig:
+        # 只有現股多單參與融資配置，其他部位原樣保留
+        kept = []
+        for p in position.to_list():
             sid = resolve_position_entry_symbol(p)
             qty = Decimal(p["quantity"])
-            if qty <= 0:
+            if (
+                qty <= 0
+                or p["order_condition"] != OrderCondition.CASH
+                or sid not in last_px
+            ):
+                kept.append(p)
                 continue
-            if sid not in last_px or sid not in vol:
-                continue
-            value = float(qty) * board_lot_size * float(last_px[sid])
+            lot_value = board_lot_size * float(last_px[sid])
             rows.append(
                 {
                     "symbol": sid,
-                    "stock_id": sid,
                     "quantity": qty,
-                    "value": value,
-                    "sigma": float(vol[sid]),
+                    "lot_value": lot_value,
+                    "value": float(qty) * lot_value,
+                    "sigma": float(vol.get(sid, math.nan)),
                     "weight": p.get("weight"),
                 }
             )
@@ -480,60 +487,33 @@ class Position:
         finance_remaining = target_finance
         new_entries = []
         for _, row in df.iterrows():
-            sid = row.symbol
             qty = row.quantity
-            value = row.value
-            base_entry = {
-                "symbol": sid,
-                "stock_id": sid,
-                "weight": row.weight,
-            }
-            if finance_remaining <= 0:
-                new_entries.append(
-                    {
-                        **base_entry,
-                        "quantity": qty,
-                        "order_condition": OrderCondition.CASH,
-                    }
+            # 沒有波動度的持股不配融資；零股不能融資，融資只用整張，零頭留在現股。
+            # 不足一張的融資額進位成一張，現股部分才不會超過資金
+            lots_margin = Decimal(0)
+            if not math.isnan(row.sigma):
+                lots = Decimal(max(finance_remaining / row.lot_value - 1e-9, 0.0))
+                lots_margin = min(
+                    lots.to_integral_value(rounding=ROUND_CEILING),
+                    qty.to_integral_value(rounding=ROUND_FLOOR),
                 )
-                continue
-            if value <= finance_remaining + 1e-6:
-                new_entries.append(
-                    {
-                        **base_entry,
-                        "quantity": qty,
-                        "order_condition": OrderCondition.MARGIN_TRADING,
-                    }
-                )
-                finance_remaining -= value
-            else:
-                frac = Decimal(finance_remaining / value)
-                lots_margin = (frac * 10).quantize(
-                    Decimal("1."), rounding="ROUND_CEILING"
-                ) / 10
-                lots_margin = min(lots_margin, qty)
-                lots_cash = qty - lots_margin
-                if lots_margin > 0:
+            finance_remaining -= float(lots_margin) * row.lot_value
+            for quantity, condition in (
+                (lots_margin, OrderCondition.MARGIN_TRADING),
+                (qty - lots_margin, OrderCondition.CASH),
+            ):
+                if quantity > 0:
                     new_entries.append(
-                        {
-                            **base_entry,
-                            "quantity": lots_margin,
-                            "order_condition": OrderCondition.MARGIN_TRADING,
-                        }
+                        _make_entry(row.symbol, quantity, condition, weight=row.weight)
                     )
-                if lots_cash > 0:
-                    new_entries.append(
-                        {
-                            **base_entry,
-                            "quantity": lots_cash,
-                            "order_condition": OrderCondition.CASH,
-                        }
-                    )
-                finance_remaining = 0
-        for p in orig:
-            if p["quantity"] <= 0 or p["order_condition"] != OrderCondition.CASH:
-                new_entries.append(p)
-        return Position.from_list(new_entries)
+        # 部位是用 fund * leverage 買的，融資不夠時現股部分會超過資金
+        if finance_remaining > 1e-6 * total_val:
+            raise ValueError(
+                f"leverage={leverage} cannot be financed: only whole lots of holdings "
+                "with price_history can use margin trading. Lower leverage, "
+                "increase fund, or provide price_history for all holdings."
+            )
+        return Position.from_list(new_entries + kept)
 
     @classmethod
     def from_report(cls, report: Any, fund: int, **kwargs: Any) -> Position:
@@ -653,8 +633,8 @@ class Position:
         if hasattr(report.market, "get_board_lot_size"):
             kwargs["board_lot_size"] = report.market.get_board_lot_size()
 
-        if "leverage" in kwargs:
-            kwargs["historical_price"] = (
+        if kwargs.get("leverage", 1.0) > 1.0 and "price_history" not in kwargs:
+            kwargs["price_history"] = (
                 report.market.get_price("close", adj=True).iloc[-252:].copy()
             )
 

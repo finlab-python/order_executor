@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -387,3 +388,100 @@ def test_from_report_forwards_custom_allocation() -> None:
     allocator.assert_called_once()
     assert allocator.call_args.args[0].to_dict() == {"2330": 1.0}
     assert position.position[0]["quantity"] == Decimal("7")
+
+
+_LEVERAGE_HISTORY = pd.DataFrame(
+    {"A": np.linspace(100, 110, 60), "B": np.linspace(50, 40, 60)}
+)
+
+
+def _legs(position: Position) -> list[tuple[str, str, str]]:
+    return sorted(
+        (p["stock_id"], str(p["quantity"]), p["order_condition"].name)
+        for p in position.to_list()
+    )
+
+
+def _leveraged(weights: dict[str, float], **kwargs) -> Position:
+    return Position.from_weight(
+        weights,
+        fund=3_000_000,
+        price={"A": 100, "B": 50, "C": 200},
+        board_lot_size=1000,
+        leverage=1.2,
+        price_history=_LEVERAGE_HISTORY,
+        **kwargs,
+    )
+
+
+def test_leverage_keeps_holdings_without_history_and_margins_whole_lots() -> None:
+    weights = {"A": 0.4, "B": 0.3, "C": 0.3}
+    assert _legs(_leveraged(weights)) == [
+        ("A", "6", "MARGIN_TRADING"),
+        ("A", "8", "CASH"),
+        ("B", "21", "CASH"),
+        ("C", "5", "CASH"),
+    ]
+    odd_lot = _leveraged(weights, odd_lot=True).to_list()
+    assert {p["stock_id"] for p in odd_lot} == {"A", "B", "C"}
+    assert all(
+        Decimal(p["quantity"]) % 1 == 0
+        for p in odd_lot
+        if p["order_condition"] == OrderCondition.MARGIN_TRADING
+    )
+
+
+def test_leverage_rounds_margin_up_so_cash_stays_within_fund() -> None:
+    position = Position.from_weight(
+        {"A": 1.0},
+        fund=100_000,
+        price={"A": 120},
+        board_lot_size=1000,
+        leverage=1.2,
+        price_history=_LEVERAGE_HISTORY,
+    )
+    assert _legs(position) == [("A", "1", "MARGIN_TRADING")]
+
+
+def test_leverage_rejects_target_that_margin_cannot_finance() -> None:
+    with pytest.raises(ValueError, match="cannot be financed"):
+        Position.from_weight(
+            {"A": 1.0},
+            fund=50_000,
+            price={"A": 100},
+            board_lot_size=1000,
+            leverage=1.2,
+            price_history=_LEVERAGE_HISTORY,
+            odd_lot=True,
+        )
+    with pytest.raises(ValueError, match="cannot be financed"):
+        _leveraged({"A": 0.1, "C": 0.9})
+
+
+def test_leverage_does_not_double_margin_trading_holdings() -> None:
+    with pytest.raises(ValueError, match="margin_trading"):
+        _leveraged({"A": 0.5, "B": 0.5}, margin_trading=True)
+
+
+def test_from_report_with_leverage_allocates_margin() -> None:
+    market = _ReportMarket()
+    market.get_price = lambda *args, **kwargs: _LEVERAGE_HISTORY
+    weights = pd.Series({"A": 0.5, "B": 0.5}, name=pd.Timestamp("2024-01-01", tz="UTC"))
+    report = SimpleNamespace(
+        weights=weights,
+        next_weights=weights.copy(),
+        actions=pd.Series(dtype=object),
+        next_trading_date=pd.Timestamp("2100-01-01", tz="UTC"),
+        market=market,
+    )
+    position = Position.from_report(
+        report, fund=3_000_000, price={"A": 100, "B": 50}, leverage=1.2
+    )
+    assert ("A", "6", "MARGIN_TRADING") in _legs(position)
+
+
+def test_precision_is_ignored_for_whole_lot_trading() -> None:
+    kwargs = {"fund": 100_000, "price": {"A": 60, "B": 70}, "board_lot_size": 1000}
+    assert _quantities(
+        Position.from_weight({"A": 0.5, "B": 0.5}, precision=1, **kwargs)
+    ) == _quantities(Position.from_weight({"A": 0.5, "B": 0.5}, **kwargs))
