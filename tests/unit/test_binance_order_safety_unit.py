@@ -92,8 +92,8 @@ def test_locked_coins_count_as_position(monkeypatch: Any) -> None:
 
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
 @pytest.mark.parametrize("quantity, expected", [(None, "0.6"), (0.1, "0.1")])
-def test_update_order_reprices_remaining_in_same_direction(
-    monkeypatch: Any, side: str, quantity: Any, expected: str
+def test_update_order_reprices_in_same_direction(
+    monkeypatch: Any, side: str, quantity: float | None, expected: str
 ) -> None:
     account = _account(monkeypatch)
     client = account.simple_client.client
