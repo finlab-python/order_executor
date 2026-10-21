@@ -9,6 +9,8 @@ import pytest
 from finlab.online.core.enums import Action, OrderStatus
 from finlab.online.core.realtime_models import ConnectionState
 
+from ..utils.mock_helpers import patch_utc_host_clock
+
 
 class _FakeQuote:
     def __init__(self) -> None:
@@ -574,3 +576,26 @@ def test_sinopac_update_odd_lot_order_keeps_original_when_cancel_fails(
     assert api.placed_orders == []
     assert list(account.get_orders()) == [_ODD_LOT_ORDER_ID]
     assert "order already filled" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "utc_time, odd_lot, order_lot",
+    [
+        ((5, 40, 30), True, "Odd"),
+        ((6, 0, 10), False, "Fixing"),
+        ((6, 30, 0), True, "IntradayOdd"),
+        ((1, 0, 0), False, "Common"),
+        ((1, 0, 0), True, "IntradayOdd"),
+    ],
+)
+def test_sinopac_create_order_session_starts_at_taipei_minute(
+    monkeypatch: pytest.MonkeyPatch, utc_time: tuple, odd_lot: bool, order_lot: str
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    patch_utc_host_clock(monkeypatch, sinopac_module, utc_time)
+    api = _FakeShioaji()
+    account = _make_odd_lot_account(sinopac_module, api)
+
+    account.create_order(Action.BUY, "2330", 1, price=580, odd_lot=odd_lot)
+
+    assert api.placed_orders[0][1].order_lot == order_lot

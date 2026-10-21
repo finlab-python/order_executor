@@ -4,7 +4,8 @@ Mock 輔助函數
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -153,3 +154,16 @@ class MockBuilder:
             setattr(mock_data, key, value)
 
         return mock_data
+
+
+def patch_utc_host_clock(monkeypatch: Any, module: Any, utc_time: tuple) -> None:
+    """讓 module 看到的時間是 UTC 主機上 2026-10-21 的 utc_time"""
+    instant = datetime(2026, 10, 21, *utc_time, tzinfo=timezone.utc)
+
+    class _UtcHostDatetime(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+    fake = SimpleNamespace(datetime=_UtcHostDatetime, time=time)
+    monkeypatch.setattr(module, "datetime", fake)
