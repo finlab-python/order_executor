@@ -459,22 +459,15 @@ class FugleAccount(Account, RealtimeProvider):
                     stock_id = fugle_order["stock_no"]
                     # 零股要用股數算：cel_qty 以張計，100 股會被 int() 算成 0
                     user_cancel_shares = float(fugle_order["cel_qty_share"])
-                    (
-                        fugle_order["org_qty_share"]
-                        - fugle_order["mat_qty_share"]
-                        - fugle_order["cel_qty_share"]
-                    )
 
                     self.cancel_order(order_id)
 
                     def callback(order: Order) -> bool:
                         if order.status == OrderStatus.CANCEL:
                             # 委託回報（ACK）沒有股數欄位，重查委託明細
-                            self.get_orders()
+                            orders = self.get_orders()
                             all_canceled_shares = float(
-                                trades[self.user_account][order_id].org_order[
-                                    "cel_qty_share"
-                                ]
+                                orders[order_id].org_order["cel_qty_share"]
                             )
                             quantity = int(all_canceled_shares - user_cancel_shares)
                             self.create_order(
@@ -587,30 +580,21 @@ class FugleAccount(Account, RealtimeProvider):
         ret: list[dict[str, Any]] = []
         for i in inv:
             o = order_condition[i["trade"]]
+            qty_l, qty_bm, qty_sm = int(i["qty_l"]), int(i["qty_bm"]), int(i["qty_sm"])
 
             if o == OrderCondition.SHORT_SELLING:
                 # 融券庫存：今賣成交增加、今買回補減少，qty_c（現償）負號為減庫存
-                total_qty = (
-                    -Decimal(
-                        int(i["qty_l"])
-                        + int(i["qty_sm"])
-                        - int(i["qty_bm"])
-                        + int(i["qty_c"])
-                    )
-                    / 1000
-                )
+                shares = -(qty_l + qty_sm - qty_bm + int(i["qty_c"]))
             else:
-                total_qty = (
-                    Decimal(int(i["qty_l"]) + int(i["qty_bm"]) - int(i["qty_sm"]))
-                    / 1000
-                )
+                shares = qty_l + qty_bm - qty_sm
+            total_qty = Decimal(shares) / 1000
 
             if total_qty != 0:
                 ret.append(
                     {
                         "stock_id": i["stk_no"],
                         "quantity": total_qty,
-                        "order_condition": order_condition[i["trade"]],
+                        "order_condition": o,
                     }
                 )
 
