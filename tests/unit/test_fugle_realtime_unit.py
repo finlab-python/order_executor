@@ -17,12 +17,14 @@ def _import_fugle_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     sdk_module.SDK = object
 
     order_module = types.ModuleType("esun_trade.order")
-    order_module.OrderObject = object
+    order_module.OrderObject = types.SimpleNamespace
 
     constant_module = types.ModuleType("esun_trade.constant")
     constant_module.Action = types.SimpleNamespace(Buy="B", Sell="S")
-    constant_module.APCode = types.SimpleNamespace(Common="0")
-    constant_module.Trade = types.SimpleNamespace(Cash="0")
+    ap_codes = ("Common", "IntradayOdd", "Odd", "AfterMarket")
+    constant_module.APCode = types.SimpleNamespace(**{c: c for c in ap_codes})
+    trades = ("Cash", "Margin", "Short", "DayTradingSell")
+    constant_module.Trade = types.SimpleNamespace(**{t: t for t in trades})
     constant_module.PriceFlag = types.SimpleNamespace(Limit="L")
     constant_module.BSFlag = types.SimpleNamespace()
 
@@ -187,18 +189,6 @@ def test_fugle_create_order_session_starts_at_taipei_minute(
 ) -> None:
     fugle_module = _import_fugle_module_with_fake_sdk(monkeypatch)
     patch_utc_host_clock(monkeypatch, fugle_module, utc_time)
-    codes = ("Common", "IntradayOdd", "Odd", "AfterMarket")
-    monkeypatch.setattr(
-        fugle_module, "APCode", types.SimpleNamespace(**{c: c for c in codes})
-    )
-    trades = ("Cash", "Margin", "Short", "DayTrading", "DayTradingSell")
-    monkeypatch.setattr(
-        fugle_module, "Trade", types.SimpleNamespace(**{t: t for t in trades})
-    )
-    monkeypatch.setattr(fugle_module, "PriceFlag", types.SimpleNamespace(Limit="L"))
-    monkeypatch.setattr(
-        fugle_module, "OrderObject", lambda **kwargs: types.SimpleNamespace(**kwargs)
-    )
     placed: list[Any] = []
     account = fugle_module.FugleAccount.__new__(fugle_module.FugleAccount)
     account.sdk = types.SimpleNamespace(
