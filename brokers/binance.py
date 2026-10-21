@@ -415,9 +415,13 @@ class BinanceAccount(Account):
 
         order = self.simple_client.client.get_order(symbol=stock_id, orderId=order_id)
 
-        # 幣安回傳的數量是字串；剩餘量帶上原單方向（賣單為負），先算好再取消
-        total = Decimal(str(quantity)) if quantity else Decimal(order["origQty"])
-        quantity = total - Decimal(order["executedQty"])
+        # quantity 是新的待成交量；沒給就用原單剩餘量（幣安回傳的數量是字串）。
+        # 帶上原單方向（賣單為負），先算好再取消
+        quantity = (
+            Decimal(str(quantity))
+            if quantity
+            else Decimal(order["origQty"]) - Decimal(order["executedQty"])
+        )
         if order["side"] == SIDE_SELL:
             quantity = -quantity
 
