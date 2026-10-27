@@ -458,7 +458,7 @@ class Position:
                     "leverage > 1 cannot be combined with margin_trading or day_trading_long"
                 )
             pos = cls._apply_leverage_to_position(
-                pos, price, price_history, leverage, margin_ratio, board_lot_size
+                pos, price, price_history, leverage, board_lot_size, margin_ratio
             )
         return pos
 
@@ -468,8 +468,8 @@ class Position:
         price: pd.Series,
         price_history: pd.DataFrame,
         leverage: float,
-        margin_ratio: float,
         board_lot_size: int = 1000,
+        margin_ratio: float = 0.6,
         annualisation_factor: int = 252,
     ) -> Position:
         """
