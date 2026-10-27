@@ -727,3 +727,21 @@ def test_masterlink_settlement_on_monday_includes_friday_trades(monkeypatch: Any
         today_settlement=lambda _: types.SimpleNamespace(net_amount="-300000.00"),
     ))
     assert account.get_settlement() == -1_300_000
+
+
+@pytest.mark.parametrize("utc_time, rejected", [((6, 10), True), ((2, 0), False)])
+def test_masterlink_fixing_best_price_limit_rejected_before_cancelling(
+    monkeypatch: Any, utc_time: tuple, rejected: bool
+) -> None:
+    from finlab.online.core.executor import OrderExecutor
+    from finlab.online.core.position import Position
+
+    module, account = _new_masterlink_account(monkeypatch)
+    patch_utc_host_clock(monkeypatch, module, utc_time)  # 台北 14:10／10:00
+    account.get_orders = lambda: pytest.fail("不應先查委託、刪舊單")
+    executor = OrderExecutor(Position({}), account)
+    if rejected:
+        with pytest.raises(ValueError, match="best_price_limit"):
+            executor.create_orders(best_price_limit=True)
+    else:
+        assert account.support_best_price_limit()

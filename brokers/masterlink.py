@@ -1571,6 +1571,11 @@ class MasterlinkAccount(Account, RealtimeProvider):
             self.target_account, "s_mark"
         ) and self.target_account.s_mark in ["B", "Y", "A"]
 
+    def support_best_price_limit(self) -> bool:
+        """盤後定價（14:00–14:30）只以收盤價成交，掛不了芭樂價；讓 executor 在刪舊單前就擋下"""
+        now = datetime.datetime.now(TWMarket.tzinfo()).time()
+        return not datetime.time(14, 0) <= now < datetime.time(14, 30)
+
     def sep_odd_lot_order(self) -> bool:
         """
         是否支援零股交易

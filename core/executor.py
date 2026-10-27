@@ -132,7 +132,7 @@ class OrderExecutor:
             )
         if best_price_limit and not self.account.support_best_price_limit():
             raise ValueError(
-                "這個券商沒有漲跌停價，不支援 best_price_limit；想掛不會立刻成交的單可改用負的 extra_bid_pct（例如 -0.05），要立即成交用 market_order=True"
+                "目前不支援 best_price_limit（券商沒有漲跌停價，或正值只以收盤價成交的盤後定價時段）；想掛不會立刻成交的單可改用負的 extra_bid_pct（例如 -0.05），要立即成交用 market_order=True"
             )
 
     @staticmethod
