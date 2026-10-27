@@ -10,9 +10,7 @@ import datetime
 import logging
 import os
 import time
-from collections.abc import Callable
 from decimal import Decimal
-from functools import wraps
 from typing import Any
 
 from fubon_neo.constant import BSAction, MarketType, OrderType, PriceType, TimeInForce
@@ -46,25 +44,6 @@ from finlab.online.core.realtime_provider import RealtimeProvider
 # 常數定義
 STOCK_LOT_SIZE = 1000  # 一張股票的股數
 ODD_LOT_THRESHOLD = STOCK_LOT_SIZE  # 零股判斷閾值
-
-
-def handle_exceptions(
-    default_return: Any = None, log_prefix: str = ""
-) -> Callable[..., Any]:
-    """錯誤處理裝飾器"""
-
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                logging.warning(f"{log_prefix}{func.__name__}: {e}")
-                return default_return
-
-        return wrapper
-
-    return decorator
 
 
 class FubonAccount(Account, RealtimeProvider):
@@ -135,7 +114,7 @@ class FubonAccount(Account, RealtimeProvider):
             if not self.target_account:
                 raise ValueError(
                     f"未找到指定帳號 {self.account}，可用帳號："
-                    f"{[acc.account for acc in self.accounts.data or []]}"
+                    f"{[acc.account for acc in self.accounts.data]}"
                 )
         else:
             self.target_account = next(
@@ -1172,7 +1151,7 @@ class FubonAccount(Account, RealtimeProvider):
         )
         total_position_value = 0.0
         for p in holdings:
-            price = stocks[p.stock_no].close if p.stock_no in stocks else 0
+            price = getattr(stocks.get(p.stock_no), "close", 0)
             if not price:
                 raise ValueError(f"get_total_balance: 無法獲取 {p.stock_no} 的股價")
             value = abs(float(p.today_qty)) * price
@@ -1247,8 +1226,7 @@ class FubonAccount(Account, RealtimeProvider):
                 )
                 return None
             if price is not None and not market_order:
-                stock = self.get_stocks([stock_id]).get(stock_id)
-                close = stock.close if stock else 0
+                close = getattr(self.get_stocks([stock_id]).get(stock_id), "close", 0)
                 worse = (
                     float(price) < close
                     if action == Action.BUY
@@ -1414,16 +1392,14 @@ class FubonAccount(Account, RealtimeProvider):
 
                     # 創建新委託單
                     if qty > 0:
-                        reorder_failed = (
-                            self.create_order(
-                                action=action,
-                                stock_id=stock_id,
-                                quantity=qty,
-                                price=price,
-                                odd_lot=True,
-                            )
-                            is None
+                        new_order_id = self.create_order(
+                            action=action,
+                            stock_id=stock_id,
+                            quantity=qty,
+                            price=price,
+                            odd_lot=True,
                         )
+                        reorder_failed = new_order_id is None
                         if not reorder_failed:
                             logging.info(
                                 f"已以新價格 {price} 重新創建零股委託單 {stock_id}"

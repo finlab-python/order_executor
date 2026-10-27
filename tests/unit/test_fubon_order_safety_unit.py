@@ -16,6 +16,10 @@ OK = types.SimpleNamespace(is_success=True, message="", data=[])
 RATE_LIMITED = types.SimpleNamespace(is_success=False, message="rate limit", data=None)
 
 
+def _ok(data: Any) -> Any:
+    return types.SimpleNamespace(is_success=True, message="", data=data)
+
+
 def _load(monkeypatch: Any) -> tuple[types.ModuleType, Any]:
     module = import_fubon_module_with_fake_sdk(monkeypatch)
     account = module.FubonAccount.__new__(module.FubonAccount)
@@ -37,10 +41,7 @@ def _load(monkeypatch: Any) -> tuple[types.ModuleType, Any]:
 def _capture_orders(account: Any) -> list[dict[str, Any]]:
     placed: list[dict[str, Any]] = []
     account.sdk.stock.place_order = lambda acc, order: (
-        placed.append(order)
-        or types.SimpleNamespace(
-            is_success=True, data=types.SimpleNamespace(seq_no="x")
-        )
+        placed.append(order) or _ok(types.SimpleNamespace(seq_no="x"))
     )
     return placed
 
@@ -143,10 +144,6 @@ def test_fixing_order_uses_reference_price(
         price_type,
         price,
     )
-
-
-def _ok(data: Any) -> Any:
-    return types.SimpleNamespace(is_success=True, message="", data=data)
 
 
 def _order_result(**kw: Any) -> Any:
@@ -313,8 +310,8 @@ def test_odd_lot_reprice_uses_remaining_quantity(
     account.sdk.stock.get_order_results = lambda acc: _ok([order])
     account.sdk.stock.make_modify_quantity_obj = lambda o, q: q
     account.sdk.stock.modify_quantity = lambda acc, obj: OK
-    placed = _capture_orders(account)
     if reorder_ok:
+        placed = _capture_orders(account)
         account.update_order("S1", price=1005.0)
         assert [(o["quantity"], o["price"]) for o in placed] == [(200, "1005.0")]
     else:
