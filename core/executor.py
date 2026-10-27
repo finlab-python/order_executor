@@ -221,8 +221,9 @@ class OrderExecutor:
 
             def scale(quantity: float) -> float:
                 scaled = round(quantity * progress, progress_precision)
-                # 進位後超過剩餘差額（例如差 0.8 張進位成 1 張）時改往零捨去
-                if abs(scaled) > abs(quantity):
+                # 進位後超過剩餘差額（例如差 0.8 張進位成 1 張）時改往零捨去；
+                # 容差避免 1.4 - 0.4 = 0.9999999999999999 這類浮點誤差把整張捨掉
+                if abs(scaled) - abs(quantity) > 1e-9:
                     unit = 10**progress_precision
                     scaled = math.trunc(quantity * progress * unit) / unit
                 return scaled

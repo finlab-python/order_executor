@@ -177,6 +177,8 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
             ({"2330": 0.2}, {"2330": 1.0}, 0.7, 0),
             ({"2330": 0.6}, {}, 0.9, 0),
             ({}, {"2330": 2.9}, 0.9, 2),
+            ({"2330": 0.4}, {"2330": 1.4}, 0.9, 1),
+            ({"2330": 1.4}, {"2330": 0.4}, 0.9, -1),
         ]
         for present, target, progress, expected in cases:
             with self.subTest(present=present, target=target, progress=progress):
