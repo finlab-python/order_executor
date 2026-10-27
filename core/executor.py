@@ -6,7 +6,7 @@ import math
 import numbers
 from decimal import Decimal
 from io import StringIO
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 import requests
@@ -116,6 +116,7 @@ class OrderExecutor:
         extra_bid_pct: float,
         buy_only: bool,
         sell_only: bool,
+        orders: Callable[[], list[dict[str, Any]]],
     ) -> None:
         # 在取消舊委託之前檢查，參數不合法時不會撤掉掛單卻沒下新單
         if [market_order, best_price_limit, bool(extra_bid_pct)].count(True) > 1:
@@ -130,10 +131,20 @@ class OrderExecutor:
             raise ValueError(
                 "The buy_only and sell_only parameters cannot be set to True at the same time."
             )
-        if best_price_limit and not self.account.support_best_price_limit():
+        if (
+            best_price_limit
+            and not self.account.support_best_price_limit()
+            and self._has_board_lot(orders)
+        ):
             raise ValueError(
                 "目前不支援 best_price_limit（券商沒有漲跌停價，或正值只以收盤價成交的盤後定價時段）；想掛不會立刻成交的單可改用負的 extra_bid_pct（例如 -0.05），要立即成交用 market_order=True"
             )
+
+    def _has_board_lot(self, orders: Callable[[], list[dict[str, Any]]]) -> bool:
+        # 零股另外下單的券商，support_best_price_limit() 只管整股；只有零股時交給券商的 create_order
+        if not self.account.sep_odd_lot_order():
+            return True
+        return any(round(abs(o["quantity"]) * 1000) >= 1000 for o in orders())
 
     @staticmethod
     def _convert_quantity_type(
@@ -317,7 +328,8 @@ class OrderExecutor:
             sell_only (bool): 若設為 True，只下賣單
         """
         self._validate_execute_args(
-            market_order, best_price_limit, extra_bid_pct, buy_only, sell_only
+            market_order, best_price_limit, extra_bid_pct, buy_only, sell_only,
+            lambda: orders,
         )
 
         if cancel_orders and not view_only:
@@ -477,7 +489,8 @@ class OrderExecutor:
             sell_only (bool): 若設為 True，只下賣單
         """
         self._validate_execute_args(
-            market_order, best_price_limit, extra_bid_pct, buy_only, sell_only
+            market_order, best_price_limit, extra_bid_pct, buy_only, sell_only,
+            lambda: self.generate_orders(progress, progress_precision, _internal=True),
         )
         if not view_only:
             self.cancel_orders()

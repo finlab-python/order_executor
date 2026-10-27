@@ -738,6 +738,16 @@ def test_masterlink_fixing_best_price_limit_rejected_before_cancelling(monkeypat
     assert account.support_best_price_limit()
 
     patch_utc_host_clock(monkeypatch, module, (6, 10))  # 台北 14:10
+    stock_api = _FakeStockTradeApi()
+    account.sdk = types.SimpleNamespace(stock=stock_api, marketdata=_FakeSdk().marketdata)
+    account.get_position = lambda: Position({})
+    account.get_price_info = lambda: {"2330": {"漲停價": 616.0, "跌停價": 504.0}}
     account.get_orders = lambda: pytest.fail("不應先查委託、刪舊單")
     with pytest.raises(ValueError, match="best_price_limit"):
-        OrderExecutor(Position({}), account).create_orders(best_price_limit=True)
+        OrderExecutor(Position({"2330": 1.2}), account).create_orders(best_price_limit=True)
+
+    # 只有零股時照舊送盤後零股芭樂價
+    account.get_orders = lambda: {}
+    OrderExecutor(Position({"2330": 0.2}), account).create_orders(best_price_limit=True)
+    placed = stock_api.placed_orders[0]
+    assert (placed.market_type, placed.price_type, placed.quantity) == ("Odd", "LimitDown", 200)
