@@ -450,7 +450,6 @@ class BinanceAccount(Account):
             # 幣安回傳的數量、價格是字串
             quantity = Decimal(o["origQty"])
             filled_quantity = Decimal(o["executedQty"])
-            status = OrderStatus.NEW
             if filled_quantity == 0:
                 status = OrderStatus.NEW
             elif quantity != filled_quantity:

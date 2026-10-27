@@ -46,9 +46,9 @@ class _FakeClient:
         return self.open_orders
 
     def get_ticker(self, symbols: str) -> list[dict[str, str]]:
-        price = {"lastPrice": "60500", "bidPrice": "60499", "askPrice": "60501"}
         return [{"symbol": "BTCUSDT", "openPrice": "60000", "highPrice": "61000",
-                 "lowPrice": "59000", "bidQty": "1", "askQty": "1", **price}]
+                 "lowPrice": "59000", "lastPrice": "60500", "bidPrice": "60499",
+                 "askPrice": "60501", "bidQty": "1", "askQty": "1"}]
 
     def cancel_order(self, symbol: str, orderId: str) -> None:
         self.canceled.append(orderId)
