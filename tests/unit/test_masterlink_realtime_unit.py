@@ -632,6 +632,12 @@ def test_masterlink_reprice_limit_down_order_intraday_replaces(monkeypatch: Any)
     with pytest.raises(RuntimeError):
         account.update_order("o-1", price=1005)
 
+    # 刪單失敗：原委託還在跌停，要報錯，也不能另外重下
+    stock_api.modify_volume = _timeout
+    account.create_order = lambda **_: pytest.fail("刪單失敗不應重下")
+    with pytest.raises(RuntimeError):
+        account.update_order("o-1", price=1005)
+
 
 @pytest.mark.parametrize(
     "action, kwargs",

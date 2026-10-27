@@ -908,10 +908,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
                         f"update_order: 只能減量，委託單 {order_id} 剩 {remaining_qty} 股，"
                         f"新數量 {quantity} 張"
                     )
-            try:
-                self.sdk.stock.modify_volume(self.target_account, order_record, cel_qty)
-            except Exception as e:
-                logging.warning(f"update_order: 無法更新委託單 {order_id} 的數量: {e}")
+            self.sdk.stock.modify_volume(self.target_account, order_record, cel_qty)
 
     def _needs_reprice_by_replace(self, order_record: Any, odd_lot: bool) -> bool:
         """零股不能改價；盤中也不能改 PriceType（芭樂價、市價單改限價），都要刪單重下。"""
@@ -925,13 +922,9 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
     def _replace_order(
         self, order: Order, remaining_qty: int, price: float, odd_lot: bool
-    ) -> str | None:
-        """刪單後以新價格重下剩餘股數；刪單後重下失敗，原委託已不存在，要報錯。"""
-        try:
-            self.sdk.stock.modify_volume(self.target_account, order.org_order, 0)
-        except Exception as e:
-            logging.warning(f"update_order: 無法刪除委託單 {order.order_id} 以改價: {e}")
-            return None
+    ) -> str:
+        """刪單後以新價格重下剩餘股數；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
+        self.sdk.stock.modify_volume(self.target_account, order.org_order, 0)
         new_order_id = self.create_order(
             action=order.action,
             stock_id=order.stock_id,
