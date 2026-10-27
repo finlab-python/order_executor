@@ -124,7 +124,7 @@ def _import_sinopac_module_with_fake_sdk(
     )
     constant_module.Action = types.SimpleNamespace(Buy="Buy", Sell="Sell")
     constant_module.OrderType = types.SimpleNamespace(ROD="ROD")
-    constant_module.Unit = types.SimpleNamespace()
+    constant_module.Unit = types.SimpleNamespace(Share="Share")
     constant_module.OrderState = types.SimpleNamespace(
         StockDeal=types.SimpleNamespace(value="SDEAL"),
         FuturesDeal=types.SimpleNamespace(value="FDEAL"),
@@ -134,7 +134,8 @@ def _import_sinopac_module_with_fake_sdk(
 
     order_module = types.ModuleType("shioaji.order")
     order_module.Trade = object
-    order_module.StockOrder = object
+    # shioaji >= 1.7: Trade.order is an OrderResult, not a StockOrder.
+    order_module.StockOrder = type("StockOrder", (), {})
 
     position_module = types.ModuleType("shioaji.position")
     position_module.StockPosition = object
@@ -448,22 +449,28 @@ _ODD_LOT_ORDER_ID = "odd-1"
 _ODD_LOT_PRICE_INFO = {"2330": {"漲停價": 638.0, "跌停價": 522.0}}
 
 
-def _odd_lot_trade(order_id: str = _ODD_LOT_ORDER_ID) -> types.SimpleNamespace:
-    """A working intraday odd-lot buy of 300 shares of 2330."""
+def _odd_lot_trade(
+    order_id: str = _ODD_LOT_ORDER_ID,
+    quantity: int = 300,
+    deal_quantity: int = 0,
+    cancel_quantity: int = 0,
+) -> types.SimpleNamespace:
+    """A working intraday odd-lot buy of 2330, 300 shares by default."""
     return types.SimpleNamespace(
         contract=types.SimpleNamespace(code="2330", exchange="TSE"),
         order=types.SimpleNamespace(
             action="Buy",
             order_cond="Cash",
             daytrade_short=False,
-            quantity=300,
+            quantity=quantity,
             price=580.0,
             order_lot="IntradayOdd",
         ),
         status=types.SimpleNamespace(
             id=order_id,
             status="Submitted",
-            deal_quantity=0,
+            deal_quantity=deal_quantity,
+            cancel_quantity=cancel_quantity,
             modified_price=0,
             order_datetime=None,
         ),
@@ -477,17 +484,19 @@ class _FakeOrderShioaji(_FakeShioaji):
         self,
         cancel_error: Exception | None = None,
         place_error: Exception | None = None,
+        **trade_fields: int,
     ) -> None:
         super().__init__()
         self.cancel_error = cancel_error
         self.place_error = place_error
+        self.trade_fields = trade_fields
         self.cancelled: list[str] = []
 
     def update_status(self, account: object) -> None:
         pass
 
     def list_trades(self) -> list[types.SimpleNamespace]:
-        return [] if self.cancelled else [_odd_lot_trade()]
+        return [] if self.cancelled else [_odd_lot_trade(**self.trade_fields)]
 
     def cancel_order(self, trade: types.SimpleNamespace) -> None:
         if self.cancel_error is not None:
@@ -511,11 +520,18 @@ def _make_odd_lot_account(
     return account
 
 
+@pytest.mark.parametrize(
+    "trade_fields, remaining_shares",
+    [
+        ({}, 300),
+        ({"quantity": 500, "deal_quantity": 100, "cancel_quantity": 200}, 200),
+    ],
+)
 def test_sinopac_update_odd_lot_order_cancels_and_replaces_remaining_shares(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, trade_fields: dict, remaining_shares: int
 ) -> None:
     sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
-    api = _FakeOrderShioaji()
+    api = _FakeOrderShioaji(**trade_fields)
     account = _make_odd_lot_account(sinopac_module, api)
 
     account.update_order(_ODD_LOT_ORDER_ID, price=585.0)
@@ -523,7 +539,9 @@ def test_sinopac_update_odd_lot_order_cancels_and_replaces_remaining_shares(
     assert api.cancelled == [_ODD_LOT_ORDER_ID]
     [(contract, order)] = api.placed_orders
     assert contract.code == "2330"
-    assert order.quantity == 300
+    # shioaji's Order only accepts int quantities.
+    assert type(order.quantity) is int
+    assert order.quantity == remaining_shares
     assert order.price == 585.0
 
 
@@ -599,3 +617,31 @@ def test_sinopac_create_order_session_starts_at_taipei_minute(
     account.create_order(Action.BUY, "2330", 1, price=580, odd_lot=odd_lot)
 
     assert api.placed_orders[0][1].order_lot == order_lot
+
+
+@pytest.mark.parametrize(
+    "last_price, short_value", [(500.0, 449_287.5), (600.0, 349_145.0)]
+)
+def test_sinopac_total_balance_values_short_position_at_buyback_cost(
+    monkeypatch: pytest.MonkeyPatch, last_price: float, short_value: float
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    long = {"direction": "Buy", "quantity": 1000, "last_price": 100.0,
+            "collateral": 0, "short_sale_margin": 0,
+            "margin_purchase_amount": 0, "interest": 0}
+    # Sold short 1000 shares at 500: 500,000 collateral, 450,000 margin.
+    short = {**long, "direction": "Sell", "last_price": last_price,
+             "collateral": 500_000, "short_sale_margin": 450_000}
+    api = types.SimpleNamespace(
+        stock_account=object(),
+        list_positions=lambda account, unit: [
+            types.SimpleNamespace(dict=lambda p=p: p) for p in (long, short)
+        ],
+        account_balance=lambda: types.SimpleNamespace(acc_balance=1_000_000),
+        settlements=lambda account: [],
+    )
+    account = _make_account(sinopac_module, api)
+
+    assert account.get_total_balance() == pytest.approx(
+        1_000_000 + 99_557.9275 + short_value
+    )

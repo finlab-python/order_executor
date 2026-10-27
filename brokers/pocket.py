@@ -131,7 +131,9 @@ class PocketAccount(Account):
             price=price,
             quantity=quantity,
             action=action,
-            price_type="MKT" if market_order else "LMT",
+            # Odd-lot and fixing sessions only take limit orders; market_order
+            # already set the price to the limit-up / limit-down price.
+            price_type="MKT" if market_order and order_lot == "Common" else "LMT",
             order_type="ROD",
             order_cond=order_cond,
             account=self.api.stock_account,
@@ -220,8 +222,16 @@ class PocketAccount(Account):
         if not positions:
             return self.get_settlement() + self.get_cash()
 
+        # A short position is worth its collateral and margin minus the cost
+        # of buying the shares back.
         position_value = sum(
-            p.last_price * p.quantity * (1 - 0.001425) * (1 - 0.003)
+            (
+                p.last_price * p.quantity * (1 - 0.001425) * (1 - 0.003)
+                if p.direction == "Buy"
+                else p.collateral
+                + p.short_sale_margin
+                - p.last_price * p.quantity * (1 + 0.001425)
+            )
             - p.margin_purchase_amount
             - p.interest
             for p in positions
