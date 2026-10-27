@@ -781,7 +781,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
         # 定盤處理：盤後定價只接受參考價，一律以收盤價成交
         if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
             unfilled = best_price_limit
-            if price is not None and not unfilled:
+            if price is not None:
                 stock = self.get_stocks([stock_id]).get(stock_id)
                 # 買價低於、賣價高於收盤價不會照限價成交；查不到收盤價也不送
                 unfilled = stock is None or (
