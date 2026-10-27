@@ -137,7 +137,7 @@ def test_position_from_weight() -> None:
         [
             {
                 "stock_id": "1101",
-                "quantity": Decimal("-166.66"),
+                "quantity": Decimal("-166"),
                 "order_condition": OrderCondition.SHORT_SELLING,
             },
             {
@@ -189,7 +189,7 @@ def test_margin_allocation_retains_gap_return(frame: type[pd.DataFrame]) -> None
     margin = [
         p for p in actual if p["order_condition"] == OrderCondition.MARGIN_TRADING
     ]
-    assert [(p["stock_id"], p["quantity"]) for p in margin] == [("B", "10")]
+    assert [(p["stock_id"], p["quantity"]) for p in margin] == [("B", "10"), ("A", "7")]
     pd.testing.assert_frame_equal(history, original)
 
 
@@ -393,6 +393,7 @@ def test_from_report_forwards_custom_allocation() -> None:
 _LEVERAGE_HISTORY = pd.DataFrame(
     {"A": np.linspace(100, 110, 60), "B": np.linspace(50, 40, 60)}
 )
+_LEVERAGE_PRICE = {"A": 100, "B": 50, "C": 200}
 
 
 def _legs(position: Position) -> list[tuple[str, str, str]]:
@@ -402,13 +403,13 @@ def _legs(position: Position) -> list[tuple[str, str, str]]:
     )
 
 
-def _leveraged(weights: dict[str, float], **kwargs) -> Position:
+def _leveraged(weights: dict[str, float], leverage: float = 1.2, **kwargs) -> Position:
     return Position.from_weight(
         weights,
         fund=3_000_000,
-        price={"A": 100, "B": 50, "C": 200},
+        price=_LEVERAGE_PRICE,
         board_lot_size=1000,
-        leverage=1.2,
+        leverage=leverage,
         price_history=_LEVERAGE_HISTORY,
         **kwargs,
     )
@@ -417,8 +418,8 @@ def _leveraged(weights: dict[str, float], **kwargs) -> Position:
 def test_leverage_keeps_holdings_without_history_and_margins_whole_lots() -> None:
     weights = {"A": 0.4, "B": 0.3, "C": 0.3}
     assert _legs(_leveraged(weights)) == [
-        ("A", "6", "MARGIN_TRADING"),
-        ("A", "8", "CASH"),
+        ("A", "10", "MARGIN_TRADING"),
+        ("A", "4", "CASH"),
         ("B", "21", "CASH"),
         ("C", "5", "CASH"),
     ]
@@ -477,7 +478,7 @@ def test_from_report_with_leverage_allocates_margin() -> None:
     position = Position.from_report(
         report, fund=3_000_000, price={"A": 100, "B": 50}, leverage=1.2
     )
-    assert ("A", "6", "MARGIN_TRADING") in _legs(position)
+    assert ("A", "10", "MARGIN_TRADING") in _legs(position)
 
 
 def test_precision_is_ignored_for_whole_lot_trading() -> None:
@@ -485,3 +486,62 @@ def test_precision_is_ignored_for_whole_lot_trading() -> None:
     assert _quantities(
         Position.from_weight({"A": 0.5, "B": 0.5}, precision=1, **kwargs)
     ) == _quantities(Position.from_weight({"A": 0.5, "B": 0.5}, **kwargs))
+
+
+@pytest.mark.parametrize(
+    ("leverage", "margin_ratio"), [(1.2, 0.6), (2.0, 0.6), (1.2, 0.5)]
+)
+def test_leverage_own_cash_stays_within_fund(
+    leverage: float, margin_ratio: float
+) -> None:
+    position = _leveraged(
+        {"A": 0.5, "B": 0.5}, leverage=leverage, margin_ratio=margin_ratio
+    )
+    value = {c: 0.0 for c in OrderCondition}
+    for p in position.to_list():
+        value[p["order_condition"]] += (
+            float(p["quantity"]) * _LEVERAGE_PRICE[p["stock_id"]] * 1000
+        )
+    exposure = value[OrderCondition.CASH] + value[OrderCondition.MARGIN_TRADING]
+    own_cash = exposure - value[OrderCondition.MARGIN_TRADING] * margin_ratio
+    assert exposure == 3_000_000 * leverage
+    assert 3_000_000 - 100_000 < own_cash <= 3_000_000
+
+
+@pytest.mark.parametrize(
+    ("credit", "sign", "expected"),
+    [
+        (
+            "margin_trading",
+            1,
+            [
+                ("2317", "0.694", "CASH"),
+                ("2317", "4", "MARGIN_TRADING"),
+                ("2330", "0.966", "CASH"),
+            ],
+        ),
+        ("short_selling", -1, [("2317", "-4", "SHORT_SELLING")]),
+    ],
+)
+def test_odd_lot_credit_positions_keep_whole_lots_only(
+    credit: str, sign: int, expected: list[tuple[str, str, str]]
+) -> None:
+    position = Position.from_weight(
+        {"2330": 0.5 * sign, "2317": 0.5 * sign},
+        fund=2_000_000,
+        price={"2330": 1035, "2317": 213},
+        board_lot_size=1000,
+        odd_lot=True,
+        **{credit: True},
+    )
+    assert _legs(position) == expected
+
+
+def test_precision_without_odd_lot_stays_within_fund() -> None:
+    kwargs = {"fund": 1000, "price": {"A": 60}, "board_lot_size": 1}
+    assert _quantities(Position.from_weight({"A": 1.0}, precision=1, **kwargs)) == {
+        "A": 16
+    }
+    assert _quantities(
+        Position.from_weight({"A": 1.0}, precision=1, odd_lot=True, **kwargs)
+    ) == {"A": 16.6}
