@@ -562,6 +562,13 @@ def test_masterlink_cancel_order_raises_instead_of_reordering(monkeypatch: Any) 
     with pytest.raises(RuntimeError):
         account.cancel_order("o-2")
 
+    # 快取裡還不可取消（等交易所確認）的委託，要重查後再刪
+    pending, accepted = _record(order_no="o-3", can_cancel=False), _record(order_no="o-3")
+    account.order_records["o-3"] = pending
+    account.get_orders = lambda: account.order_records.update({"o-3": accepted}) or {}
+    account.cancel_order("o-3")
+    assert stock_api.modified_volumes[-1] == (None, accepted, 0)
+
     stock_api.modify_volume = _timeout
     with pytest.raises(RuntimeError):
         account.cancel_order("o-1")

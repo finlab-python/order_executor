@@ -975,9 +975,12 @@ class MasterlinkAccount(Account, RealtimeProvider):
             order_id (str): 委託單編號
         """
         # 用 get_orders() 剛存的委託，不再每刪一筆查一次；刪不掉要報錯，否則呼叫端會再補下一次
-        if order_id not in self.order_records and self.get_orders() is None:
-            raise RuntimeError(f"cancel_order: 無法查詢委託單，委託單 {order_id} 未取消")
         order_record = self.order_records.get(order_id)
+        if not getattr(order_record, "can_cancel", False):
+            # 快取沒有或還不可取消（可能在等交易所確認），重查一次
+            if self.get_orders() is None:
+                raise RuntimeError(f"cancel_order: 無法查詢委託單，委託單 {order_id} 未取消")
+            order_record = self.order_records.get(order_id)
         if order_record is None:
             raise KeyError(f"cancel_order: 找不到委託單 {order_id}")
         logging.debug(f"#cancel_order order({order_id}): {order_record}")
