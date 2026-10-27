@@ -6,7 +6,7 @@ import logging
 import math
 import warnings
 from collections.abc import Callable, Iterator
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR, Decimal
 from typing import Any
 
 import pandas as pd
@@ -119,6 +119,27 @@ def _make_entry(
     }
     d.update(extra)
     return d
+
+
+def _credit_whole_lots_only(position: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """零股不能融資融券：信用部位只留整張，多方零頭改現股、空方零頭不做。"""
+    ret = []
+    for p in position:
+        qty = Decimal(p["quantity"])
+        whole = qty.to_integral_value(rounding=ROUND_DOWN)
+        if whole == qty or p["order_condition"] not in (
+            OrderCondition.MARGIN_TRADING,
+            OrderCondition.SHORT_SELLING,
+        ):
+            ret.append(p)
+            continue
+        if whole != 0:
+            ret.append({**p, "quantity": whole})
+        if qty > 0:
+            ret.append(
+                {**p, "quantity": qty - whole, "order_condition": OrderCondition.CASH}
+            )
+    return ret
 
 
 class Position:
@@ -297,6 +318,7 @@ class Position:
         precision: int | None = None,
         leverage: float = 1.0,
         price_history: pd.DataFrame | None = None,
+        margin_ratio: float = 0.6,
         **kwargs: Any,
     ) -> Position:
         """利用 `weight` 建構股票部位
@@ -314,11 +336,14 @@ class Position:
                 其中 effective_fund 在 leverage > 1 時為 fund * leverage，否則為 fund；
                 precision 為依零股與 board_lot_size 調整後的有效精度。
                 需回傳 `(dict[股票代號, 張數 * 10**precision], 剩餘資金)`。
-            precision (None 或 int): 計算張數時的精度，預設為 None 代表依照 board_lot_size 而定，而 1 代表 0.1 張，2 代表 0.01 張，以此類推。
-            leverage (float): 目標槓桿倍數，預設為1.0（不使用融資）。若>1.0，會根據波動度分配融資。
+            precision (None 或 int): board_lot_size 為 1 且 odd_lot=True 時，計算張數的精度，1 代表 0.1 張，2 代表 0.01 張，以此類推。
+                其他情況只買整數張，精度為 0。
+            leverage (float): 目標槓桿倍數，預設為1.0（不使用融資）。若>1.0，會根據波動度分配融資，
+                總曝險為 fund * leverage，自備款（現股加融資自備款）不超過 fund。
             price_history (None 或 pd.DataFrame): 股票歷史價格，若 leverage > 1.0 時必須提供。
-            margin_trading (bool): 做多部位是否使用融資
-            short_selling (bool): 做空部位是否使用融券
+            margin_ratio (float): 融資成數，預設 0.6（上市股票）；上櫃股票為 0.5。只在 leverage > 1.0 時使用。
+            margin_trading (bool): 做多部位是否使用融資。odd_lot=True 時零股不能融資，不足一張的部分用現股。
+            short_selling (bool): 做空部位是否使用融券。odd_lot=True 時零股不能融券，不足一張的部分不放空。
             day_trading_long (bool): 做多部位為當沖先做多
 
         Examples:
@@ -372,7 +397,8 @@ class Position:
             )
             precision = None
 
-        if precision is None:
+        # 整數張交易最後會取整數，用小數配置再四捨五入會超出資金
+        if precision is None or not odd_lot:
             precision = 0
 
         if odd_lot:
@@ -422,6 +448,8 @@ class Position:
                 quantities[s] = 0
 
         pos = cls(quantities, weights=weights, **kwargs)
+        if odd_lot:
+            pos.position = _credit_whole_lots_only(pos.position)
 
         if leverage > 1.0:
             if price_history is None:
@@ -431,7 +459,7 @@ class Position:
                     "leverage > 1 cannot be combined with margin_trading or day_trading_long"
                 )
             pos = cls._apply_leverage_to_position(
-                pos, price, price_history, leverage, board_lot_size
+                pos, price, price_history, leverage, board_lot_size, margin_ratio
             )
         return pos
 
@@ -442,10 +470,13 @@ class Position:
         price_history: pd.DataFrame,
         leverage: float,
         board_lot_size: int = 1000,
+        margin_ratio: float = 0.6,
         annualisation_factor: int = 252,
     ) -> Position:
         """
         Return a *new* Position whose cash + margin legs reach target leverage.
+        Each margin lot borrows ``margin_ratio`` of its value; the rest is paid
+        in cash, so the cash needed stays within ``total / leverage``.
         Safety: allocate margin to lowest-volatility holdings first.
         """
         # Latest price per share
@@ -482,6 +513,7 @@ class Position:
             raise ValueError("Empty or incompatible position – nothing to leverage.")
         df = pd.DataFrame(rows)
         total_val = df["value"].sum()
+        # 要借的錢；每張融資只借到市值的 margin_ratio
         target_finance = (leverage - 1.0) / leverage * total_val
         df = df.sort_values("sigma", kind="mergesort")
         finance_remaining = target_finance
@@ -492,12 +524,14 @@ class Position:
             # 不足一張的融資額進位成一張，現股部分才不會超過資金
             lots_margin = Decimal(0)
             if not math.isnan(row.sigma):
-                lots = Decimal(max(finance_remaining / row.lot_value - 1e-9, 0.0))
+                lots = Decimal(
+                    max(finance_remaining / (row.lot_value * margin_ratio) - 1e-9, 0.0)
+                )
                 lots_margin = min(
                     lots.to_integral_value(rounding=ROUND_CEILING),
                     qty.to_integral_value(rounding=ROUND_FLOOR),
                 )
-            finance_remaining -= float(lots_margin) * row.lot_value
+            finance_remaining -= float(lots_margin) * row.lot_value * margin_ratio
             for quantity, condition in (
                 (lots_margin, OrderCondition.MARGIN_TRADING),
                 (qty - lots_margin, OrderCondition.CASH),
@@ -509,8 +543,9 @@ class Position:
         # 部位是用 fund * leverage 買的，融資不夠時現股部分會超過資金
         if finance_remaining > 1e-6 * total_val:
             raise ValueError(
-                f"leverage={leverage} cannot be financed: only whole lots of holdings "
-                "with price_history can use margin trading. Lower leverage, "
+                f"leverage={leverage} cannot be financed: margin trading lends "
+                f"{margin_ratio:.0%} of each lot, and only whole lots of holdings "
+                "with price_history can use it. Lower leverage, "
                 "increase fund, or provide price_history for all holdings."
             )
         return Position.from_list(new_entries + kept)
