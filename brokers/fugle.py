@@ -106,7 +106,9 @@ class FugleAccount(Account, RealtimeProvider):
         global trades, threads
         trades[self.user_account] = {}
 
-        # 註冊接收委託回報的 callback
+        self._init_realtime()
+
+        # 註冊接收委託回報的 callback；SDK 一個事件只留一個 callback，realtime 也從這裡送
         @self.sdk.on("order")
         def on_order(order: dict[str, Any]) -> None:
 
@@ -124,12 +126,13 @@ class FugleAccount(Account, RealtimeProvider):
                 traceback.print_exc()
                 logging.warning(f"on_order: Cannot process order {order}: {e}")
 
+            if self._realtime_connected:
+                self._realtime_on_order(order)
+
         if self.user_account not in threads:
             self.thread = Thread(target=self.sdk.connect_websocket)
             self.thread.daemon = True
             self.thread.start()
-
-        self._init_realtime()
 
     # ── RealtimeProvider implementation ──────────────────────────────
 
@@ -145,7 +148,6 @@ class FugleAccount(Account, RealtimeProvider):
             "A": OrderCondition.DAY_TRADING_SHORT,
         }
 
-        @self.sdk.on("order")
         def _on_order(data: dict[str, Any]) -> None:
             try:
                 order_id = self.get_org_order_id(data)
@@ -156,6 +158,14 @@ class FugleAccount(Account, RealtimeProvider):
                 cel_qty = float(data.get("cel_qty", 0))
                 if org_qty == mat_qty and mat_qty > 0:
                     status = OrderStatus.FILLED
+                elif (
+                    round(org_qty - mat_qty - cel_qty, 3) > 0
+                    and data.get("celable", "1") == "1"
+                ):
+                    # 減量過但還有剩餘量可取消，仍是有效委託
+                    status = (
+                        OrderStatus.PARTIALLY_FILLED if mat_qty > 0 else OrderStatus.NEW
+                    )
                 elif cel_qty > 0:
                     status = OrderStatus.CANCEL
                 elif mat_qty > 0:
@@ -186,6 +196,9 @@ class FugleAccount(Account, RealtimeProvider):
                 )
             except Exception:
                 logging.exception("Error in realtime on_order handler")
+
+        # 不另外 sdk.on("order")：會蓋掉 __init__ 的 on_order（零股改價重下靠它）
+        self._realtime_on_order = _on_order
 
         @self.sdk.on("dealt")
         def _on_dealt(data: dict[str, Any]) -> None:
@@ -462,13 +475,19 @@ class FugleAccount(Account, RealtimeProvider):
                                 orders[order_id].org_order["cel_qty_share"]
                             )
                             quantity = int(all_canceled_shares - user_cancel_shares)
-                            self.create_order(
+                            new_order_id = self.create_order(
                                 action=action,
                                 stock_id=stock_id,
                                 quantity=quantity,
                                 price=price,
                                 odd_lot=True,
                             )
+                            if new_order_id is None:
+                                logging.error(
+                                    f"update_order: 零股委託 {order_id}（{stock_id} {quantity} 股）"
+                                    f"改價時原單已取消，但以新價格 {price} 重下失敗，需手動重下"
+                                )
+                                return False
                             return True
                         return False
 
@@ -685,21 +704,16 @@ def create_finlab_order(order: dict[str, Any]) -> Order:
     order["mat_qty"] = float(order["mat_qty"])
     order["cel_qty"] = float(order["cel_qty"])
 
+    remaining_qty = round(order["org_qty"] - order["mat_qty"] - order["cel_qty"], 3)
+
     status = OrderStatus.NEW
     if order["org_qty"] == order["mat_qty"]:
         status = OrderStatus.FILLED
-    elif (
-        order["mat_qty"] == 0
-        and order["cel_qty"] == 0
-        and order.get("celable", "1") == "1"
-    ):
-        status = OrderStatus.NEW
-    elif (
-        order["org_qty"] > order["mat_qty"] + order["cel_qty"]
-        and order.get("celable", "1") == "1"
-        and order["mat_qty"] > 0
-    ):
-        status = OrderStatus.PARTIALLY_FILLED
+    elif remaining_qty > 0 and order.get("celable", "1") == "1":
+        # 減量過（cel_qty > 0）但還有剩餘量可取消，仍是有效委託
+        status = (
+            OrderStatus.PARTIALLY_FILLED if order["mat_qty"] > 0 else OrderStatus.NEW
+        )
     elif (
         order["cel_qty"] > 0
         or order["err_code"] != "00000000"
