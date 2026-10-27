@@ -577,7 +577,7 @@ def test_masterlink_cancel_order_raises_instead_of_reordering(monkeypatch: Any) 
 def test_masterlink_total_balance_raises_when_queries_fail(monkeypatch: Any) -> None:
     _, account = _new_masterlink_account(monkeypatch)
     accounting = types.SimpleNamespace(
-        skbank_balance=lambda _: types.SimpleNamespace(available_balance="50,000"),
+        skbank_balance=lambda _: types.SimpleNamespace(available_balance=50000.0),
         today_settlement=lambda _: types.SimpleNamespace(net_amount="0"),
         inventories=lambda _: types.SimpleNamespace(market_value="2000000"),
     )
@@ -587,6 +587,9 @@ def test_masterlink_total_balance_raises_when_queries_fail(monkeypatch: Any) -> 
     accounting.inventories = _timeout
     with pytest.raises(RuntimeError):
         account.get_total_balance()
+    # 即時餘額照樣送出，總淨值給 None（未知），不給偏小的數字
+    update = account._get_realtime_balance()
+    assert (update.cash, update.total_balance) == (50_000, None)
     accounting.skbank_balance = _timeout
     with pytest.raises(RuntimeError):
         account.get_cash()
@@ -638,6 +641,7 @@ def _fill_1000_then_cancel(record: Any) -> None:
         (1, None, 1.0),
         (0, None, None),
         (None, _fill_1000_then_cancel, 1.0),  # 刪單前一刻成交的 1 張不重下
+        (1, _fill_1000_then_cancel, None),  # 剩 1 張的要求已由這 1 張成交滿足
     ],
 )
 def test_masterlink_reprice_limit_down_order_intraday_replaces(
@@ -648,7 +652,9 @@ def test_masterlink_reprice_limit_down_order_intraday_replaces(
     module, account, stock_api = _account_with_order(monkeypatch, record)
     patch_utc_host_clock(monkeypatch, module, (1, 30))  # 台北 09:30
     if before_cancel:
-        stock_api.modify_volume = lambda *args: before_cancel(record)
+        stock_api.modify_volume = lambda *args: (
+            stock_api.modified_volumes.append(args), before_cancel(record)
+        )
     created: list[dict[str, Any]] = []
     account.create_order = lambda **kwargs: created.append(kwargs) or "new-o-1"
 

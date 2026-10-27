@@ -361,8 +361,9 @@ class MasterlinkAccount(Account, RealtimeProvider):
             reserved_amount=reserved_amount,
             dedicated_account_balance=dedicated_account_balance,
             cash=available_balance,
-            settlement=to_optional_float(self.get_settlement()),
-            total_balance=to_optional_float(self.get_total_balance()),
+            # 查詢失敗時這兩項給 None（未知），不讓整筆餘額更新消失
+            settlement=self._safe_call_number("get_settlement"),
+            total_balance=self._safe_call_number("get_total_balance"),
             time=datetime.datetime.now(),
             org_event=balance_payload,
         )
@@ -931,11 +932,13 @@ class MasterlinkAccount(Account, RealtimeProvider):
     ) -> str | None:
         """刪單後以新價格重下 new_qty 股；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
         cel_qty_before = getattr(order.org_order, "cel_qty", 0)
+        remaining_before = self._remaining_shares(order.org_order)
         self.sdk.stock.modify_volume(self.target_account, order.org_order, 0)
         if new_qty == 0:
             return None
-        # 刪單前一刻成交的部分不能重下：以實際刪掉的股數為上限
-        qty = min(new_qty, self._confirmed_cancel_qty(order.order_id) - cel_qty_before)
+        # 刪單前一刻成交的股數算在新數量裡，不重下（與 modify_volume 減量的結果一致）
+        canceled = self._confirmed_cancel_qty(order.order_id) - cel_qty_before
+        qty = new_qty - (remaining_before - canceled)
         if qty <= 0:
             return None
         new_order_id = self.create_order(
