@@ -170,6 +170,20 @@ def _round_to_tick(price: float, direction: str = "floor") -> float:
         return fn(price / 5) * 5
 
 
+def _round_to_etf_tick(price: float, direction: str = "floor") -> float:
+    """Round price to Taiwan ETF tick boundary.
+
+    Tick sizes: 0.01 (<50), 0.05 (>=50).
+
+    Args:
+        price: The price to round.
+        direction: "floor" to round down, "ceil" to round up.
+    """
+    fn = math.floor if direction == "floor" else math.ceil
+    scale = 100 if price < 50 else 20
+    return fn(round(price * scale, 6)) / scale
+
+
 def _round_to_us_tick(price: float, direction: str = "floor") -> float:
     """Round price to US tick boundary.
 

@@ -7,6 +7,7 @@ OrderExecutor 單元測試
 from __future__ import annotations
 
 import unittest
+from decimal import Decimal
 from unittest.mock import Mock, patch
 
 # 導入被測試的模組
@@ -170,6 +171,51 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         self.assertEqual(len(orders), 1)
         self.assertEqual(orders[0]["quantity"], 5)  # 10 * 0.5 = 5
 
+    def test_generate_orders_progress_does_not_round_past_difference(self) -> None:
+        """progress 進位後超過剩餘差額時往零捨去"""
+        # (現有部位, 目標部位, progress, 預期下單量)
+        cases = [
+            ({"2330": 0.2}, {"2330": 1.0}, 0.7, 0),
+            ({"2330": 0.6}, {}, 0.9, 0),
+            ({}, {"2330": 2.9}, 0.9, 2),
+            ({"2330": 0.4}, {"2330": 1.4}, 0.9, 1),
+            ({"2330": 1.4}, {"2330": 0.4}, 0.9, -1),
+        ]
+        for present, target, progress, expected in cases:
+            with self.subTest(present=present, target=target, progress=progress):
+                self.mock_account.get_position.return_value = Position(present)
+                oe = OrderExecutor(Position(target), self.mock_account)
+                orders = oe.generate_orders(progress=progress)
+                self.assertEqual(orders[0]["quantity"], expected)
+
+    def test_generate_orders_day_trading_long_filled_as_cash(self) -> None:
+        """現沖先買成交後券商回報成現股，盤中再同步不再一賣一買"""
+        target = Position({"2330": 1}, day_trading_long=True)
+        self.mock_account.get_position.return_value = Position({"2330": 1})
+        orders = OrderExecutor(target, self.mock_account).generate_orders()
+        self.assertEqual(orders, [])
+
+        # 目標同檔也有現股時照舊分開比對（數量型別混用也不出錯）
+        mixed = Position.from_list(
+            [
+                {"stock_id": "2330", "quantity": q, "order_condition": oc}
+                for q, oc in [
+                    (Decimal("1"), OrderCondition.CASH),
+                    (1.0, OrderCondition.DAY_TRADING_LONG),
+                ]
+            ]
+        )
+        orders = OrderExecutor(mixed, self.mock_account).generate_orders()
+        self.assertEqual(
+            [(o["quantity"], o["order_condition"]) for o in orders],
+            [(1.0, OrderCondition.DAY_TRADING_LONG)],
+        )
+
+        # 還沒成交時照舊送現沖先買
+        self.mock_account.get_position.return_value = Position({})
+        orders = OrderExecutor(target, self.mock_account).generate_orders()
+        self.assertEqual(orders[0]["order_condition"], OrderCondition.DAY_TRADING_LONG)
+
     def test_cancel_orders(self) -> None:
         """測試取消委託單"""
         # 設置現有委託單
@@ -332,6 +378,23 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         oe.execute_orders(orders, extra_bid_pct=0.001)
 
         self.assertEqual(self.mock_account.create_order.call_args.kwargs["price"], 157.45)
+
+    def test_execute_orders_extra_bid_pct_uses_etf_tick(self) -> None:
+        """台股 ETF 追價用 ETF 跳動單位，買價不低於、賣價不高於現價"""
+        self.mock_account.get_stocks.return_value = {
+            "006208": Mock(close=120.15),
+            "00878": Mock(close=21.33),
+        }
+        orders = [
+            {"stock_id": sid, "quantity": qty, "order_condition": OrderCondition.CASH}
+            for sid, qty in [("006208", 1), ("00878", -1)]
+        ]
+
+        oe = OrderExecutor(Position({}), self.mock_account)
+        oe.execute_orders(orders, extra_bid_pct=0.002)
+
+        calls = self.mock_account.create_order.call_args_list
+        self.assertEqual([c.kwargs["price"] for c in calls], [120.35, 21.29])
 
     def test_execute_orders_market_order(self) -> None:
         """測試市價單"""

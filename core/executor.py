@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 import numbers
 from decimal import Decimal
 from io import StringIO
@@ -196,6 +197,23 @@ class OrderExecutor:
                     )
 
         present_position = self.account.get_position()
+        # 現沖先買成交後，多數券商把部位回報成現股；這時目標也用現股比對，避免盤中重跑同步一賣一買
+        present_keys = {
+            (self._symbol(p), p["order_condition"]) for p in present_position.position
+        }
+        target_keys = {
+            (self._symbol(p), p["order_condition"]) for p in target_position.position
+        }
+        for pp in target_position.position:
+            sid = self._symbol(pp)
+            if (
+                pp["order_condition"] == OrderCondition.DAY_TRADING_LONG
+                and (sid, OrderCondition.CASH) in present_keys
+                and (sid, OrderCondition.DAY_TRADING_LONG) not in present_keys
+                and (sid, OrderCondition.CASH) not in target_keys
+            ):
+                pp["order_condition"] = OrderCondition.CASH
+
         orders = target_position - present_position
         if progress != 1:
             if not (progress >= 0 and progress <= 1):
@@ -205,14 +223,18 @@ class OrderExecutor:
                     "progress_precision should be set when progress is not 1"
                 )
 
+            def scale(quantity: float) -> float:
+                scaled = round(quantity * progress, progress_precision)
+                # 進位後超過剩餘差額（例如差 0.8 張進位成 1 張）時改往零捨去；
+                # 容差避免 1.4 - 0.4 = 0.9999999999999999 這類浮點誤差把整張捨掉
+                if abs(scaled) - abs(quantity) > 1e-9:
+                    unit = 10**progress_precision
+                    scaled = math.trunc(quantity * progress * unit) / unit
+                return scaled
+
             orders = Position.from_list(
                 [
-                    {
-                        **o,
-                        "quantity": round(
-                            float(o["quantity"]) * progress, progress_precision
-                        ),
-                    }
+                    {**o, "quantity": scale(float(o["quantity"]))}
                     for o in orders.position
                 ]
             )
@@ -315,6 +337,7 @@ class OrderExecutor:
                     price,
                     extra_bid_pct if action == Action.BUY else -extra_bid_pct,
                     market,
+                    sid,
                 )
 
             if pinfo and sid in pinfo:
@@ -492,6 +515,7 @@ class OrderExecutor:
                     price,
                     extra_bid_pct if o.action == Action.BUY else -extra_bid_pct,
                     market,
+                    sid,
                 )
 
                 if pinfo and sid in pinfo:
@@ -555,7 +579,7 @@ class OrderExecutor:
 
 
 def calculate_price_with_extra_bid(
-    price: float, extra_bid_pct: float, market: Any = None
+    price: float, extra_bid_pct: float, market: Any = None, symbol: str = ""
 ) -> float:
 
     if extra_bid_pct == 0:
@@ -566,11 +590,19 @@ def calculate_price_with_extra_bid(
         return price * (1 + Decimal(str(extra_bid_pct)))
 
     from finlab.markets.us import USMarket
-    from finlab.online.core.utils import _round_to_tick, _round_to_us_tick
+    from finlab.online.core.utils import (
+        _round_to_etf_tick,
+        _round_to_tick,
+        _round_to_us_tick,
+    )
 
     result = price * (1 + extra_bid_pct)
     direction = "floor" if extra_bid_pct > 0 else "ceil"
-    round_to_tick = (
-        _round_to_us_tick if isinstance(market, USMarket) else _round_to_tick
-    )
+    if isinstance(market, USMarket):
+        round_to_tick = _round_to_us_tick
+    elif symbol.startswith("00"):
+        # 台股 ETF 代號 00 開頭，跳動單位比股票細
+        round_to_tick = _round_to_etf_tick
+    else:
+        round_to_tick = _round_to_tick
     return round_to_tick(result, direction)
