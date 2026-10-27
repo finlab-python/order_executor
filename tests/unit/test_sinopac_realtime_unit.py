@@ -489,12 +489,18 @@ class _FakeOrderShioaji(_FakeShioaji):
         self.place_error = place_error
         self.trade_fields = trade_fields
         self.cancelled: list[str] = []
+        self.updated: list[tuple[str, float | None, int | None]] = []
 
     def update_status(self, account: object) -> None:
         pass
 
     def list_trades(self) -> list[types.SimpleNamespace]:
         return [] if self.cancelled else [_odd_lot_trade(**self.trade_fields)]
+
+    def update_order(
+        self, trade: types.SimpleNamespace, price: float | None = None, qty: int | None = None
+    ) -> None:
+        self.updated.append((trade.status.id, price, qty))
 
     def cancel_order(self, trade: types.SimpleNamespace) -> None:
         if self.cancel_error is not None:
@@ -541,6 +547,20 @@ def test_sinopac_update_odd_lot_order_cancels_and_replaces_remaining_shares(
     assert type(order.quantity) is int
     assert order.quantity == remaining_shares
     assert order.price == 585.0
+
+
+def test_sinopac_update_odd_lot_order_reduces_quantity_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sinopac_module = _import_sinopac_module_with_fake_sdk(monkeypatch)
+    api = _FakeOrderShioaji()
+    account = _make_odd_lot_account(sinopac_module, api)
+
+    account.update_order(_ODD_LOT_ORDER_ID, quantity=100)
+
+    assert api.updated == [(_ODD_LOT_ORDER_ID, None, 100)]
+    assert api.cancelled == []
+    assert api.placed_orders == []
 
 
 def test_sinopac_update_odd_lot_order_raises_when_replace_fails_after_cancel(

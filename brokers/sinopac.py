@@ -604,10 +604,13 @@ class SinopacAccount(Account, RealtimeProvider):
         trade: SJTrade = self.trades[order_id]
 
         try:
-            # shioaji >= 1.7 returns OrderResult, not StockOrder, so read the
-            # lot directly.
+            # Odd-lot orders can be reduced but not repriced. shioaji >= 1.7
+            # returns OrderResult, not StockOrder, so read the lot directly.
             order_lot = trade.order.order_lot
-            if order_lot in (SJStockOrderLot.IntradayOdd, SJStockOrderLot.Odd):
+            if price is not None and order_lot in (
+                SJStockOrderLot.IntradayOdd,
+                SJStockOrderLot.Odd,
+            ):
                 # Odd-lot quantities are shares; a reduced order keeps its
                 # original quantity and reports the reduction separately.
                 shares = int(
