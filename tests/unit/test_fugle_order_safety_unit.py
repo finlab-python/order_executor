@@ -98,3 +98,64 @@ def test_update_odd_lot_price_replaces_cancelled_shares(monkeypatch: Any) -> Non
     fugle.callbacks.pop("accB1")(ack)
 
     assert [(o["quantity"], o["price"]) for o in placed] == [(200, 510)]
+
+
+def _row(**kw: Any) -> dict:
+    base = {"ord_no": "B1", "pre_ord_no": "", "ap_code": "5", "buy_sell": "B", "stock_no": "2330",
+            "trade": "0", "od_price": 500, "org_qty": 0.3, "mat_qty": 0.1, "cel_qty": 0,
+            "org_qty_share": 300, "mat_qty_share": 100, "cel_qty_share": 0, "celable": "1",
+            "err_code": "00000000", "ord_date": "20261027", "ord_time": "100000000"}
+    return {**base, **kw}
+
+
+@pytest.mark.parametrize(
+    "kw, expected",
+    [
+        ({"org_qty": 3, "mat_qty": 0, "cel_qty": 1}, ("NEW", 2)),  # App 減量 1 張，剩 2 張排隊
+        ({"org_qty": 3, "mat_qty": 1, "cel_qty": 1}, ("PARTIALLY_FILLED", 2)),
+        ({"cel_qty": 0.2, "celable": "2"}, ("CANCEL", 0.1)),
+        ({"org_qty": 3, "mat_qty": 0}, ("NEW", 3)),
+    ],
+)
+def test_reduced_order_with_remaining_quantity_stays_open(
+    monkeypatch: Any, kw: dict, expected: tuple
+) -> None:
+    order = _import_fugle(monkeypatch).create_finlab_order(_row(**kw))
+    assert (order.status.name, round(order.quantity, 3)) == expected
+
+
+@pytest.mark.parametrize("realtime", [False, True])
+@pytest.mark.parametrize("place_fails", [False, True])
+def test_odd_lot_price_update_after_cancel_ack(
+    monkeypatch: Any, tmp_path: Any, caplog: Any, realtime: bool, place_fails: bool
+) -> None:
+    fugle = _import_fugle(monkeypatch)
+    handlers: dict[str, Any] = {}
+    results, placed = [_row()], []
+
+    def place_order(o: dict) -> dict:
+        if place_fails:
+            raise ValueError("餘額不足")
+        return placed.append(o) or {"ord_no": "B2"}
+
+    sdk = types.SimpleNamespace(  # on() 同 fugle_trade：一個事件只留最後註冊的 callback
+        login=lambda: None, connect_websocket=lambda: None, get_order_results=lambda: results,
+        on=lambda name: lambda f: handlers.__setitem__(name, f),
+        cancel_order=lambda o: None, place_order=place_order)
+    monkeypatch.setattr(fugle, "SDK", lambda config: sdk)
+    monkeypatch.setattr(fugle.FugleAccount, "check_version", classmethod(lambda cls: None))
+    (tmp_path / "config.ini").write_text("[User]\nAccount = 9999999\n")
+    account = fugle.FugleAccount(config_path=str(tmp_path / "config.ini"))
+    updates: list[Any] = []
+    if realtime:
+        account.connect_realtime()
+        account.on_order_update(updates.append)
+    account.get_orders()
+
+    account.update_order("B1", price=510)
+    results[0] = _row(cel_qty=0.2, cel_qty_share=200, celable="2")
+    handlers["order"]({**results[0], "kind": "ACK"})
+
+    assert [(o["quantity"], o["price"]) for o in placed] == ([] if place_fails else [(200, 510)])
+    assert ("需手動重下" in caplog.text) == place_fails
+    assert [u.status.name for u in updates] == (["CANCEL"] if realtime else [])
