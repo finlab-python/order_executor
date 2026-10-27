@@ -201,12 +201,16 @@ class OrderExecutor:
         present_keys = {
             (self._symbol(p), p["order_condition"]) for p in present_position.position
         }
+        target_keys = {
+            (self._symbol(p), p["order_condition"]) for p in target_position.position
+        }
         for pp in target_position.position:
             sid = self._symbol(pp)
             if (
                 pp["order_condition"] == OrderCondition.DAY_TRADING_LONG
                 and (sid, OrderCondition.CASH) in present_keys
                 and (sid, OrderCondition.DAY_TRADING_LONG) not in present_keys
+                and (sid, OrderCondition.CASH) not in target_keys
             ):
                 pp["order_condition"] = OrderCondition.CASH
 

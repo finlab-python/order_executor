@@ -7,6 +7,7 @@ OrderExecutor 單元測試
 from __future__ import annotations
 
 import unittest
+from decimal import Decimal
 from unittest.mock import Mock, patch
 
 # 導入被測試的模組
@@ -193,6 +194,22 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         self.mock_account.get_position.return_value = Position({"2330": 1})
         orders = OrderExecutor(target, self.mock_account).generate_orders()
         self.assertEqual(orders, [])
+
+        # 目標同檔也有現股時照舊分開比對（數量型別混用也不出錯）
+        mixed = Position.from_list(
+            [
+                {"stock_id": "2330", "quantity": q, "order_condition": oc}
+                for q, oc in [
+                    (Decimal("1"), OrderCondition.CASH),
+                    (1.0, OrderCondition.DAY_TRADING_LONG),
+                ]
+            ]
+        )
+        orders = OrderExecutor(mixed, self.mock_account).generate_orders()
+        self.assertEqual(
+            [(o["quantity"], o["order_condition"]) for o in orders],
+            [(1.0, OrderCondition.DAY_TRADING_LONG)],
+        )
 
         # 還沒成交時照舊送現沖先買
         self.mock_account.get_position.return_value = Position({})
