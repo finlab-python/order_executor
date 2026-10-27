@@ -213,6 +213,15 @@ class OrderExecutor:
                 and (sid, OrderCondition.CASH) not in target_keys
             ):
                 pp["order_condition"] = OrderCondition.CASH
+            # 空單目標預設是現股，券商（例如嘉信）回報成融券時也用融券比對，避免每次同步一賣一買
+            elif (
+                pp["order_condition"] == OrderCondition.CASH
+                and pp["quantity"] < 0
+                and (sid, OrderCondition.SHORT_SELLING) in present_keys
+                and (sid, OrderCondition.CASH) not in present_keys
+                and (sid, OrderCondition.SHORT_SELLING) not in target_keys
+            ):
+                pp["order_condition"] = OrderCondition.SHORT_SELLING
 
         orders = target_position - present_position
         if progress != 1:
