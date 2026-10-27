@@ -275,6 +275,10 @@ class Account(ABC):
     def sep_odd_lot_order(self) -> bool:
         return True
 
+    def support_best_price_limit(self) -> bool:
+        """是否能以漲跌停價掛單（best_price_limit）"""
+        return True
+
     def get_price(self, stock_ids: list[str]) -> dict[str, Number]:
 
         s = self.get_stocks(stock_ids)
