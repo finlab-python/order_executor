@@ -371,9 +371,9 @@ class BinanceAccount(Account):
         if quantity <= 0:
             raise ValueError("quantity should be larger than zero")
 
-        if best_price_limit and market_order:
+        if best_price_limit:
             raise ValueError(
-                "The flags best_price_limit and  market_order should not both be True"
+                "幣安沒有漲跌停價，不支援 best_price_limit；請用 price 指定限價，或 market_order=True 下市價單"
             )
 
         if not market_order:
@@ -425,6 +425,10 @@ class BinanceAccount(Account):
         if order["side"] == SIDE_SELL:
             quantity = -quantity
 
+        # 只改量時沿用原單限價，不重下成市價單
+        if price is None:
+            price = Decimal(order["price"])
+
         self.simple_client.client.cancel_order(symbol=stock_id, orderId=order_id)
         self.simple_client.create_order(
             symbol=stock_id, quantity=quantity, price=price, market_type="SPOT"
@@ -443,11 +447,13 @@ class BinanceAccount(Account):
         orders = self.simple_client.client.get_open_orders()
         ret = {}
         for o in orders:
+            # 幣安回傳的數量、價格是字串
+            quantity = Decimal(o["origQty"])
+            filled_quantity = Decimal(o["executedQty"])
             status = OrderStatus.NEW
-            if o["executedQty"] == 0:
+            if filled_quantity == 0:
                 status = OrderStatus.NEW
-            elif o["origQty"] != o["executedQty"]:
-                status = "Filling"
+            elif quantity != filled_quantity:
                 status = OrderStatus.PARTIALLY_FILLED
             else:
                 status = OrderStatus.FILLED
@@ -457,13 +463,13 @@ class BinanceAccount(Account):
 
             ret[str(o["symbol"]) + "|" + str(o["orderId"])] = Order(
                 order_id=o["orderId"],
-                action=o["side"],
-                price=o["price"],
-                quantity=o["origQty"],
-                filled_quantity=o["executedQty"],
+                action=Action.BUY if o["side"] == SIDE_BUY else Action.SELL,
+                price=Decimal(o["price"]),
+                quantity=quantity,
+                filled_quantity=filled_quantity,
                 status=status,
                 time=datetime.datetime.fromtimestamp(int(o["time"]) / 1000),
-                stock_id=o["symbol"],
+                stock_id=o["symbol"].removesuffix(self.base_currency),
                 order_condition=OrderCondition.CASH,
                 org_order=o,
             )
