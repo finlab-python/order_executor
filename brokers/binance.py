@@ -533,6 +533,9 @@ class BinanceAccount(Account):
     def support_day_trade_condition(self) -> bool:
         return True
 
+    def support_best_price_limit(self) -> bool:
+        return False
+
     def on_trades(self, func: Callable[..., Any]) -> None:
         pass
 

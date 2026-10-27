@@ -176,3 +176,21 @@ def test_get_orders_use_finlab_types(monkeypatch: Any) -> None:
     client.order = client.open_orders[0]
     executor.update_order_price(buy_only=True)
     assert [(o["side"], o["price"]) for o in client.created] == [("BUY", "60500.00000000")]
+
+
+@pytest.mark.parametrize("entry", ["create_orders", "execute_orders"])
+def test_best_price_limit_rejected_before_cancelling(monkeypatch: Any, entry: str) -> None:
+    from finlab.online.core.executor import OrderExecutor
+    from finlab.online.core.position import Position
+
+    account = _account(monkeypatch)
+    client = account.simple_client.client
+    client.open_orders = [
+        {"symbol": "BTCUSDT", "orderId": "1", "side": "BUY", "price": "59000.00000000",
+         "origQty": "0.10000000", "executedQty": "0.00000000", "status": "NEW", "time": 0}
+    ]
+    executor = OrderExecutor(Position({}), account)
+    args = ([],) if entry == "execute_orders" else ()
+    with pytest.raises(ValueError, match="best_price_limit"):
+        getattr(executor, entry)(*args, best_price_limit=True)
+    assert (client.canceled, client.created) == ([], [])

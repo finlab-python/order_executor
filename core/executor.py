@@ -109,6 +109,13 @@ class OrderExecutor:
                 continue
             self.account.cancel_order(oid)
 
+    def _check_best_price_limit(self, best_price_limit: bool) -> None:
+        # 在取消舊委託之前檢查，券商不支援時不會撤掉掛單卻沒下新單
+        if best_price_limit and not self.account.support_best_price_limit():
+            raise ValueError(
+                "這個券商沒有漲跌停價，不支援 best_price_limit；想掛不會立刻成交的單可改用負的 extra_bid_pct（例如 -0.05），要立即成交用 market_order=True"
+            )
+
     @staticmethod
     def _convert_quantity_type(
         quantity: float | Decimal, quantity_type: str
@@ -303,6 +310,7 @@ class OrderExecutor:
             raise ValueError(
                 "The buy_only and sell_only parameters cannot be set to True at the same time."
             )
+        self._check_best_price_limit(best_price_limit)
 
         if cancel_orders and not view_only:
             self.cancel_orders()
@@ -460,6 +468,7 @@ class OrderExecutor:
             buy_only (bool): 若設為 True，只下買單
             sell_only (bool): 若設為 True，只下賣單
         """
+        self._check_best_price_limit(best_price_limit)
         if not view_only:
             self.cancel_orders()
 
