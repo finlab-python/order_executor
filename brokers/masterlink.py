@@ -779,22 +779,22 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 price_type = PriceType.LimitUp
 
         # 定盤處理：盤後定價只接受參考價，一律以收盤價成交
-        if self._in_fixing_session(now) and not odd_lot:
-            if best_price_limit:
-                raise ValueError("盤後定價只以收盤價成交，不能用 best_price_limit 掛單")
+        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
+            unfilled = best_price_limit
             if price is not None:
                 stock = self.get_stocks([stock_id]).get(stock_id)
-                if stock is None:
-                    raise RuntimeError(f"無法取得 {stock_id} 收盤價，盤後定價不送單")
-                close = stock.close
-                # 買價低於收盤價、賣價高於收盤價都不會成交
-                unfilled = (
-                    float(price) < close if action == Action.BUY else float(price) > close
+                # 買價低於、賣價高於收盤價不會照限價成交；查不到收盤價也不送
+                unfilled = stock is None or (
+                    float(price) < stock.close
+                    if action == Action.BUY
+                    else float(price) > stock.close
                 )
-                if unfilled:
-                    raise ValueError(
-                        f"盤後定價以收盤價 {close} 成交，與限價 {price} 不符，不送單"
-                    )
+            if unfilled:
+                # 跟券商拒單一樣不送、不中斷：呼叫端可能已先撤單，後面的單要照常下
+                logging.warning(
+                    f"create_order: 盤後定價只以收盤價成交，{stock_id} 的芭樂價或比收盤價差的限價不送單"
+                )
+                return None
             market_type = MarketType.Fixing
             price = None
             price_type = PriceType.Reference
@@ -1570,15 +1570,6 @@ class MasterlinkAccount(Account, RealtimeProvider):
         return hasattr(
             self.target_account, "s_mark"
         ) and self.target_account.s_mark in ["B", "Y", "A"]
-
-    @staticmethod
-    def _in_fixing_session(now: datetime.time) -> bool:
-        """台北時間 now 是否在盤後定價時段（14:00–14:30）"""
-        return datetime.time(14, 0) <= now < datetime.time(14, 30)
-
-    def support_best_price_limit(self) -> bool:
-        """盤後定價只以收盤價成交，掛不了芭樂價；讓 executor 在刪舊單前就擋下"""
-        return not self._in_fixing_session(datetime.datetime.now(TWMarket.tzinfo()).time())
 
     def sep_odd_lot_order(self) -> bool:
         """
