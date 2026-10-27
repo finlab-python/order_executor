@@ -746,8 +746,11 @@ def test_masterlink_fixing_best_price_limit_rejected_before_cancelling(monkeypat
     with pytest.raises(ValueError, match="best_price_limit"):
         OrderExecutor(Position({"2330": 1.2}), account).create_orders(best_price_limit=True)
 
-    # 只有零股時照舊送盤後零股芭樂價
+    # 只有零股（或只下零股那一邊）時照舊送盤後零股芭樂價
     account.get_orders = lambda: {}
-    OrderExecutor(Position({"2330": 0.2}), account).create_orders(best_price_limit=True)
+    account.get_position = lambda: Position({"2317": 1})
+    OrderExecutor(Position({"2330": 0.2}), account).create_orders(
+        best_price_limit=True, buy_only=True
+    )
     placed = stock_api.placed_orders[0]
     assert (placed.market_type, placed.price_type, placed.quantity) == ("Odd", "LimitDown", 200)

@@ -134,17 +134,27 @@ class OrderExecutor:
         if (
             best_price_limit
             and not self.account.support_best_price_limit()
-            and self._has_board_lot(orders)
+            and self._has_board_lot(orders, buy_only, sell_only)
         ):
             raise ValueError(
                 "目前不支援 best_price_limit（券商沒有漲跌停價，或正值只以收盤價成交的盤後定價時段）；想掛不會立刻成交的單可改用負的 extra_bid_pct（例如 -0.05），要立即成交用 market_order=True"
             )
 
-    def _has_board_lot(self, orders: Callable[[], list[dict[str, Any]]]) -> bool:
+    def _has_board_lot(
+        self,
+        orders: Callable[[], list[dict[str, Any]]],
+        buy_only: bool,
+        sell_only: bool,
+    ) -> bool:
         # 零股另外下單的券商，support_best_price_limit() 只管整股；只有零股時交給券商的 create_order
         if not self.account.sep_odd_lot_order():
             return True
-        return any(round(abs(o["quantity"]) * 1000) >= 1000 for o in orders())
+        return any(
+            round(abs(o["quantity"]) * 1000) >= 1000
+            and not (buy_only and o["quantity"] < 0)
+            and not (sell_only and o["quantity"] > 0)
+            for o in orders()
+        )
 
     @staticmethod
     def _convert_quantity_type(
