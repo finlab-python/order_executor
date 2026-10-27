@@ -210,6 +210,7 @@ def test_masterlink_update_order_price_recreates_odd_lot_orders(
                 "quantity": 380,
                 "price": 567.5,
                 "odd_lot": True,
+                "order_cond": OrderCondition.CASH,
             }
         ]
 
@@ -479,7 +480,7 @@ def test_masterlink_update_odd_lot_price_excludes_canceled_quantity(
     created_orders: list[dict[str, Any]] = []
     account.sdk = types.SimpleNamespace(stock=_FakeStockTradeApi())
     account.get_orders = lambda: {"o-1": order}
-    account.create_order = lambda **kwargs: created_orders.append(kwargs)
+    account.create_order = lambda **kwargs: created_orders.append(kwargs) or "new-o-1"
 
     account.update_order("o-1", price=567.5)
     assert created_orders[0]["quantity"] == 180
@@ -511,10 +512,169 @@ def test_masterlink_create_order_session_uses_taipei_time(
     )
     monkeypatch.setattr(masterlink_module, "datetime", fake_datetime)
     stock_api = _FakeStockTradeApi()
-    account.sdk = types.SimpleNamespace(stock=stock_api)
+    account.sdk = types.SimpleNamespace(stock=stock_api, marketdata=_FakeSdk().marketdata)
 
     assert account.create_order(Action.BUY, "2330", 1, price=560, odd_lot=odd_lot)
     placed = stock_api.placed_orders[0]
     assert (placed.market_type, placed.price_type, placed.price) == (
         market_type, price_type, price
     )
+
+
+def _freeze_taipei(monkeypatch: Any, module: Any, hour: int, minute: int) -> None:
+    # 2026-10-26 是週一
+    taipei = datetime.timezone(datetime.timedelta(hours=8))
+    instant = datetime.datetime(2026, 10, 26, hour, minute, tzinfo=taipei)
+
+    class _Frozen(datetime.datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr(module, "datetime", types.SimpleNamespace(
+        datetime=_Frozen, time=datetime.time, timedelta=datetime.timedelta
+    ))
+
+
+def _record(**kwargs: Any) -> Any:
+    return types.SimpleNamespace(**{
+        "order_no": "o-1", "symbol": "2330", "buy_sell": "B", "order_type": "Stock",
+        "market_type": "Common", "price_type": "Limit", "order_price": 1000.0,
+        "org_qty": 5000, "filled_qty": 0, "cel_qty": 0, "can_cancel": True,
+        "err_code": "000000", "order_date": "20261026", "order_time": "090000000",
+        **kwargs,
+    })
+
+
+def test_masterlink_cancel_order_raises_instead_of_reordering(monkeypatch: Any) -> None:
+    _, account = _new_masterlink_account(monkeypatch)
+    stock_api = _FakeStockTradeApi()
+    account.sdk = types.SimpleNamespace(stock=stock_api)
+    account.order_records = {"o-1": _record()}
+    account.get_orders = lambda: pytest.fail("不應每刪一筆再查一次委託")
+    account.cancel_order("o-1")
+    assert stock_api.modified_volumes == [(None, account.order_records["o-1"], 0)]
+
+    account.get_orders = lambda: None
+    with pytest.raises(RuntimeError):
+        account.cancel_order("o-2")
+
+    def timeout(*_: Any) -> None:
+        raise RuntimeError("000008 Timeout")
+
+    stock_api.modify_volume = timeout
+    with pytest.raises(RuntimeError):
+        account.cancel_order("o-1")
+
+
+def test_masterlink_total_balance_raises_when_queries_fail(monkeypatch: Any) -> None:
+    _, account = _new_masterlink_account(monkeypatch)
+
+    def timeout(_: Any) -> None:
+        raise RuntimeError("000008 Timeout")
+
+    accounting = types.SimpleNamespace(
+        skbank_balance=lambda _: types.SimpleNamespace(available_balance="50,000"),
+        today_settlement=lambda _: types.SimpleNamespace(net_amount="0"),
+        inventories=lambda _: types.SimpleNamespace(market_value="2000000"),
+    )
+    account.sdk = types.SimpleNamespace(accounting=accounting)
+    assert account.get_total_balance() == 2_050_000
+
+    accounting.inventories = timeout
+    with pytest.raises(RuntimeError):
+        account.get_total_balance()
+    accounting.skbank_balance = timeout
+    with pytest.raises(RuntimeError):
+        account.get_cash()
+    # 另一個來源有回應（帳戶不走新光銀交割）時維持原本的 0
+    accounting.bank_balance = lambda _: []
+    assert account.get_cash() == 0
+
+
+@pytest.mark.parametrize(
+    "quantity, cel_qty", [(2, 3000), (0.5, 4500), (0, 0), (5, None), (6, None)]
+)
+def test_masterlink_update_order_quantity_is_new_remaining_lots(
+    monkeypatch: Any, quantity: float, cel_qty: int | None
+) -> None:
+    _, account = _new_masterlink_account(monkeypatch)
+    stock_api = _FakeStockTradeApi()
+    account.sdk = types.SimpleNamespace(stock=stock_api)
+    record = _record()
+    account.get_orders = lambda: {"o-1": account._create_finlab_order(record)}
+    if cel_qty is None:
+        with pytest.raises(ValueError):
+            account.update_order("o-1", quantity=quantity)
+        assert stock_api.modified_volumes == []
+    else:
+        account.update_order("o-1", quantity=quantity)
+        assert stock_api.modified_volumes == [(None, record, cel_qty)]
+
+
+@pytest.mark.parametrize("hour, new_order_id", [(8, None), (9, "new-o-1"), (9, None)])
+def test_masterlink_reprice_limit_down_order_intraday_replaces(
+    monkeypatch: Any, hour: int, new_order_id: str | None
+) -> None:
+    module, account = _new_masterlink_account(monkeypatch)
+    _freeze_taipei(monkeypatch, module, hour, 30)
+    stock_api = _FakeStockTradeApi()
+    account.sdk = types.SimpleNamespace(stock=stock_api)
+    record = _record(price_type="LimitDown", org_qty=3000, filled_qty=1000)
+    account.get_orders = lambda: {"o-1": account._create_finlab_order(record)}
+    created: list[dict[str, Any]] = []
+    account.create_order = lambda **kwargs: created.append(kwargs) or new_order_id
+
+    if hour < 9:
+        account.update_order("o-1", price=1005)
+        assert stock_api.modified_prices == [(None, record, "1005", "Limit")]
+        assert created == []
+    elif new_order_id is None:
+        with pytest.raises(RuntimeError):
+            account.update_order("o-1", price=1005)
+    else:
+        assert account.update_order("o-1", price=1005) == "new-o-1"
+        assert stock_api.modified_volumes == [(None, record, 0)]
+        assert created == [{
+            "action": Action.BUY, "stock_id": "2330", "quantity": 2.0,
+            "price": 1005, "odd_lot": False, "order_cond": OrderCondition.CASH,
+        }]
+
+
+@pytest.mark.parametrize(
+    "action, kwargs",
+    [(Action.BUY, {"best_price_limit": True}), (Action.BUY, {"price": 559}),
+     (Action.SELL, {"price": 561})],
+)
+def test_masterlink_fixing_session_rejects_prices_not_filled_at_close(
+    monkeypatch: Any, action: Any, kwargs: dict[str, Any]
+) -> None:
+    module, account = _new_masterlink_account(monkeypatch)
+    _freeze_taipei(monkeypatch, module, 14, 10)
+    stock_api = _FakeStockTradeApi()
+    account.sdk = types.SimpleNamespace(stock=stock_api, marketdata=_FakeSdk().marketdata)
+    with pytest.raises(ValueError):
+        account.create_order(action, "2330", 1, **kwargs)
+    assert stock_api.placed_orders == []
+
+
+def test_masterlink_settlement_on_monday_includes_friday_trades(monkeypatch: Any) -> None:
+    module, account = _new_masterlink_account(monkeypatch)
+    _freeze_taipei(monkeypatch, module, 9, 0)
+    rows = [
+        ("20261021", "20261023", "-50,000.00"),
+        ("20261022", "20261026", "-300,000.00"),
+        ("20261023", "20261027", "-1,000,000.00"),
+    ]
+
+    def history_settlement(_: Any, start: str, end: str) -> Any:
+        return types.SimpleNamespace(settlements=[
+            types.SimpleNamespace(t_date=t, s_date=s, net_amount=n)
+            for t, s, n in rows if start <= t <= end
+        ])
+
+    account.sdk = types.SimpleNamespace(accounting=types.SimpleNamespace(
+        history_settlement=history_settlement,
+        today_settlement=lambda _: types.SimpleNamespace(net_amount="-300000.00"),
+    ))
+    assert account.get_settlement() == -1_300_000

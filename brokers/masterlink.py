@@ -777,8 +777,19 @@ class MasterlinkAccount(Account, RealtimeProvider):
             elif action == Action.SELL:
                 price_type = PriceType.LimitUp
 
-        # 定盤處理：盤後定價只接受參考價
+        # 定盤處理：盤後定價只接受參考價，一律以收盤價成交
         if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
+            if best_price_limit:
+                raise ValueError("盤後定價只以收盤價成交，不能用 best_price_limit 掛單")
+            if price is not None:
+                stock = self.get_stocks([stock_id]).get(stock_id)
+                if stock is None:
+                    raise RuntimeError(f"無法取得 {stock_id} 收盤價，盤後定價不送單")
+                close = stock.close
+                if float(price) < close if action == Action.BUY else float(price) > close:
+                    raise ValueError(
+                        f"盤後定價以收盤價 {close} 成交，與限價 {price} 不符，不送單"
+                    )
             market_type = MarketType.Fixing
             price = None
             price_type = PriceType.Reference
@@ -857,39 +868,82 @@ class MasterlinkAccount(Account, RealtimeProvider):
         """
         try:
             order = self.get_orders()[order_id]
-            logging.debug(
-                f"#update_order price: {price}, qty: {quantity}, order({order_id}): {order}"
-            )
-            if price:
-                order_record = order.org_order
-                if self._is_odd_lot_market_type(
-                    getattr(order_record, "market_type", "")
-                ):
-                    action = order.action
-                    stock_id = order.stock_id
-                    filled_qty = getattr(order_record, "filled_qty", 0)
-                    org_qty = getattr(order_record, "org_qty", 0)
-                    cel_qty = getattr(order_record, "cel_qty", 0)
-                    qty = org_qty - filled_qty - cel_qty
-                    self.sdk.stock.modify_volume(self.target_account, order_record, 0)
-                    return self.create_order(
-                        action=action,
-                        stock_id=stock_id,
-                        quantity=qty,
-                        price=price,
-                        odd_lot=True,
-                    )
+        except Exception as e:
+            logging.warning(f"update_order: 無法取得委託單 {order_id}: {e}")
+            return None
+        logging.debug(
+            f"#update_order price: {price}, qty: {quantity}, order({order_id}): {order}"
+        )
+        order_record = order.org_order
+        remaining_qty = (
+            getattr(order_record, "org_qty", 0)
+            - getattr(order_record, "filled_qty", 0)
+            - getattr(order_record, "cel_qty", 0)
+        )
+        if price:
+            if self._needs_reprice_by_replace(order_record):
+                return self._replace_order(order, remaining_qty, price)
+            try:
                 self.sdk.stock.modify_price(
                     self.target_account, order_record, str(price), PriceType.Limit
                 )
-            if quantity:
-                order_record = order.org_order
-                self.sdk.stock.modify_volume(
-                    self.target_account, order_record, int(quantity)
-                )
+            except Exception as e:
+                logging.warning(f"update_order: 無法更新委託單 {order_id} 的價格: {e}")
+        if quantity is not None:
+            # modify_volume 收的是「刪減股數」，0 表刪單；quantity 是新的待成交張數
+            cel_qty = 0
+            if quantity != 0:
+                cel_qty = remaining_qty - round(quantity * 1000)
+                if cel_qty <= 0:
+                    raise ValueError(
+                        f"update_order: 只能減量，委託單 {order_id} 剩 {remaining_qty} 股，"
+                        f"新數量 {quantity} 張"
+                    )
+            try:
+                self.sdk.stock.modify_volume(self.target_account, order_record, cel_qty)
+            except Exception as e:
+                logging.warning(f"update_order: 無法更新委託單 {order_id} 的數量: {e}")
 
+    def _needs_reprice_by_replace(self, order_record: Any) -> bool:
+        """零股不能改價；盤中也不能改 PriceType（芭樂價、市價單改限價），都要刪單重下。"""
+        market_type = getattr(order_record, "market_type", "")
+        if self._is_odd_lot_market_type(market_type):
+            return True
+        price_type = str(getattr(order_record, "price_type", "")).upper().split(".")[-1]
+        now = datetime.datetime.now(TWMarket.tzinfo()).time()
+        return (
+            str(market_type).upper().split(".")[-1] == "COMMON"
+            and price_type in {"LIMITUP", "LIMITDOWN", "MARKET"}
+            and now >= datetime.time(9, 0)
+        )
+
+    def _replace_order(
+        self, order: Order, remaining_qty: int, price: float
+    ) -> str | None:
+        """刪單後以新價格重下剩餘股數；刪單後重下失敗，原委託已不存在，要報錯。"""
+        order_record = order.org_order
+        odd_lot = self._is_odd_lot_market_type(
+            getattr(order_record, "market_type", "")
+        )
+        try:
+            self.sdk.stock.modify_volume(self.target_account, order_record, 0)
         except Exception as e:
-            logging.warning(f"update_order: 無法更新委託單 {order_id} 的數量: {e}")
+            logging.warning(f"update_order: 無法刪除委託單 {order.order_id} 以改價: {e}")
+            return None
+        new_order_id = self.create_order(
+            action=order.action,
+            stock_id=order.stock_id,
+            quantity=remaining_qty if odd_lot else remaining_qty / 1000,
+            price=price,
+            odd_lot=odd_lot,
+            order_cond=order.order_condition,
+        )
+        if not new_order_id:
+            raise RuntimeError(
+                f"update_order: 委託單 {order.order_id} 已刪單改價，但以 {price} 重下 "
+                f"{remaining_qty} 股失敗，原委託已不存在，請手動補單"
+            )
+        return new_order_id
 
     def cancel_order(self, order_id: str) -> None:
         """
@@ -898,19 +952,20 @@ class MasterlinkAccount(Account, RealtimeProvider):
         Args:
             order_id (str): 委託單編號
         """
-        try:
-            order = self.get_orders()[order_id]
-            order_record = order.org_order
-            logging.debug(f"#cancel_order order({order_id}): {order}")
-            # 檢查是否可以取消
-            if getattr(order_record, "can_cancel", False):
-                # 使用 modify_volume 並將數量設為 0 來取消委託單
-                self.sdk.stock.modify_volume(self.target_account, order_record, 0)
-                logging.info(f"已取消委託單 {order_id}")
-            else:
-                logging.warning(f"cancel_order: 委託單 {order_id} 不可取消")
-        except Exception as e:
-            logging.warning(f"cancel_order: 無法取消委託單 {order_id}: {e}")
+        # 用 get_orders() 剛存的委託，不再每刪一筆查一次；刪不掉要報錯，否則呼叫端會再補下一次
+        if order_id not in self.order_records and self.get_orders() is None:
+            raise RuntimeError(f"cancel_order: 無法查詢委託單，委託單 {order_id} 未取消")
+        order_record = self.order_records.get(order_id)
+        if order_record is None:
+            raise KeyError(f"cancel_order: 找不到委託單 {order_id}")
+        logging.debug(f"#cancel_order order({order_id}): {order_record}")
+        # 檢查是否可以取消
+        if getattr(order_record, "can_cancel", False):
+            # 使用 modify_volume 並將數量設為 0 來取消委託單
+            self.sdk.stock.modify_volume(self.target_account, order_record, 0)
+            logging.info(f"已取消委託單 {order_id}")
+        else:
+            logging.warning(f"cancel_order: 委託單 {order_id} 不可取消")
 
     def get_orders(self) -> dict[str, Order] | None:
         """
@@ -1341,12 +1396,13 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 return total_market_value + cash + settlements
 
             except Exception as e:
+                # 不回傳只剩現金的淨值：偏小的淨值會讓部位被算成全賣
                 logging.warning(f"無法獲取持倉資訊: {e}")
-                return cash + settlements
+                raise
 
         except Exception as e:
             logging.warning(f"get_total_balance: 獲取總資產失敗: {e}")
-            return 0
+            raise
 
     def get_cash(self) -> float:
         """
@@ -1355,11 +1411,15 @@ class MasterlinkAccount(Account, RealtimeProvider):
         Returns:
             float: 可用資金
         """
+        # 每個來源都查詢失敗時報錯：回傳 0 會讓淨值偏小
+        error: Exception | None = None
+        answered = False
         try:
             # 先嘗試使用 skbank_balance
             if hasattr(self.sdk.accounting, "skbank_balance"):
                 try:
                     balance = self.sdk.accounting.skbank_balance(self.target_account)
+                    answered = True
                     if balance is not None:
                         available_balance = getattr(balance, "available_balance", 0)
                         # 確保 available_balance 不為 None
@@ -1376,12 +1436,14 @@ class MasterlinkAccount(Account, RealtimeProvider):
                                     f"get_cash: 無法將 available_balance 轉換為浮點數: {available_balance}"
                                 )
                 except Exception as e:
+                    error = e
                     logging.warning(f"get_cash: 無法獲取 skbank_balance: {e}")
 
             # 如果 skbank_balance 失敗或找不到有效餘額，嘗試 bank_balance
             if hasattr(self.sdk.accounting, "bank_balance"):
                 try:
                     balance = self.sdk.accounting.bank_balance(self.target_account)
+                    answered = True
                     if balance and isinstance(balance, list) and len(balance) > 0:
                         available_balance = getattr(balance[0], "available_balance", 0)
                         # 確保 available_balance 不為 None
@@ -1398,14 +1460,17 @@ class MasterlinkAccount(Account, RealtimeProvider):
                                     f"get_cash: 無法將 bank_balance 中的 available_balance 轉換為浮點數: {available_balance}"
                                 )
                 except Exception as e:
+                    error = e
                     logging.warning(f"get_cash: 無法獲取 bank_balance: {e}")
 
+            if error is not None and not answered:
+                raise RuntimeError(f"get_cash: 查詢可用資金失敗: {error}") from error
             logging.warning("get_cash: 無法從任何來源獲取可用資金")
             return 0
 
         except Exception as e:
             logging.warning(f"get_cash: 處理過程中發生異常: {e}")
-            return 0
+            raise
 
     def get_settlement(self) -> float:
         """
@@ -1441,7 +1506,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
         except Exception as e:
             logging.warning(f"get_settlement: 無法獲取未交割款項: {e}")
-            return 0
+            raise
 
     def _get_settlement_from_history_settlement(self) -> float:
         """
@@ -1451,22 +1516,23 @@ class MasterlinkAccount(Account, RealtimeProvider):
             float: 未交割款項
         """
         try:
-            # 取得日期範圍
-            today = datetime.datetime.now()
+            # 查詢區間是交易日期：往前多查幾天，週一或連假後才不會漏掉上個交易日的款項
+            today = datetime.datetime.now(TWMarket.tzinfo())
             today_str = today.strftime("%Y%m%d")
-            one_days_ago = today - datetime.timedelta(days=1)
-            one_days_ago_str = one_days_ago.strftime("%Y%m%d")
+            start_str = (today - datetime.timedelta(days=10)).strftime("%Y%m%d")
 
             # 查詢交割款
             response = self.sdk.accounting.history_settlement(
-                self.target_account, one_days_ago_str, today_str
+                self.target_account, start_str, today_str
             )
 
-            # 從 settlements 加總 net_amount
+            # 加總交割日在今天之後的 net_amount（今天交割的由 today_settlement 計入）
             settlement_amount = 0
             settlements = getattr(response, "settlements", [])
             if hasattr(settlements, "__iter__"):
                 for s in settlements:
+                    if getattr(s, "s_date", "") <= today_str:
+                        continue
                     net_amount = getattr(s, "net_amount", "0")
                     try:
                         # 移除千分位符號並轉換為浮點數
@@ -1480,7 +1546,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
             logging.warning(
                 f"_get_settlement_from_history_settlement: 無法處理歷史交割: {e}"
             )
-            return 0
+            raise
 
     def _get_settlement_from_today_settlement(self) -> float:
         """
@@ -1502,7 +1568,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
             logging.warning(
                 f"_get_settlement_from_today_settlement: 無法處理今日交割: {e}"
             )
-            return 0
+            raise
 
     def support_day_trade_condition(self) -> bool:
         """
