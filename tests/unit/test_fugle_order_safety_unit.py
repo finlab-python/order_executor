@@ -100,7 +100,6 @@ def test_update_odd_lot_price_replaces_cancelled_shares(monkeypatch: Any) -> Non
     assert [(o["quantity"], o["price"]) for o in placed] == [(200, 510)]
 
 
-
 def _row(**kw: Any) -> dict:
     base = {"ord_no": "B1", "pre_ord_no": "", "ap_code": "5", "buy_sell": "B", "stock_no": "2330",
             "trade": "0", "od_price": 500, "org_qty": 0.3, "mat_qty": 0.1, "cel_qty": 0,
@@ -137,7 +136,7 @@ def test_odd_lot_price_update_after_cancel_ack(
     def place_order(o: dict) -> dict:
         if place_fails:
             raise ValueError("餘額不足")
-        return placed.append(o) or {"ord_no": "B2", "pre_ord_no": ""}
+        return placed.append(o) or {"ord_no": "B2"}
 
     sdk = types.SimpleNamespace(  # on() 同 fugle_trade：一個事件只留最後註冊的 callback
         login=lambda: None, connect_websocket=lambda: None, get_order_results=lambda: results,
