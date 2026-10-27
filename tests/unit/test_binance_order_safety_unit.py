@@ -178,8 +178,15 @@ def test_get_orders_use_finlab_types(monkeypatch: Any) -> None:
     assert [(o["side"], o["price"]) for o in client.created] == [("BUY", "60500.00000000")]
 
 
-@pytest.mark.parametrize("entry", ["create_orders", "execute_orders"])
-def test_best_price_limit_rejected_before_cancelling(monkeypatch: Any, entry: str) -> None:
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda e: e.create_orders(best_price_limit=True),
+        lambda e: e.execute_orders([], best_price_limit=True),
+    ],
+    ids=["create_orders", "execute_orders"],
+)
+def test_best_price_limit_rejected_before_cancelling(monkeypatch: Any, call: Any) -> None:
     from finlab.online.core.executor import OrderExecutor
     from finlab.online.core.position import Position
 
@@ -190,7 +197,6 @@ def test_best_price_limit_rejected_before_cancelling(monkeypatch: Any, entry: st
          "origQty": "0.10000000", "executedQty": "0.00000000", "status": "NEW", "time": 0}
     ]
     executor = OrderExecutor(Position({}), account)
-    args = ([],) if entry == "execute_orders" else ()
     with pytest.raises(ValueError, match="best_price_limit"):
-        getattr(executor, entry)(*args, best_price_limit=True)
+        call(executor)
     assert (client.canceled, client.created) == ([], [])

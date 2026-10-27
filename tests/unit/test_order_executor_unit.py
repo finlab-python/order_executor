@@ -580,6 +580,21 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
             call_names.index("get_position"),
         )
 
+    def test_create_orders_rejects_invalid_args_before_cancelling(self) -> None:
+        """測試參數不合法時在取消委託之前就報錯"""
+        self.mock_account.get_orders.return_value = {
+            "old_sell": Mock(status=OrderStatus.NEW, action=Action.SELL)
+        }
+        oe = OrderExecutor(Position({}), self.mock_account)
+        for kwargs in (
+            {"market_order": True, "best_price_limit": True},
+            {"extra_bid_pct": 0.2},
+            {"buy_only": True, "sell_only": True},
+        ):
+            with self.subTest(**kwargs), self.assertRaises(ValueError):
+                oe.create_orders(**kwargs)
+        self.mock_account.cancel_order.assert_not_called()
+
     @patch("finlab.online.order_executor.data")
     def test_update_order_price(self, mock_data: Mock) -> None:
         """測試更新委託單價格"""
