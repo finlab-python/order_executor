@@ -786,7 +786,11 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 if stock is None:
                     raise RuntimeError(f"無法取得 {stock_id} 收盤價，盤後定價不送單")
                 close = stock.close
-                if float(price) < close if action == Action.BUY else float(price) > close:
+                # 買價低於收盤價、賣價高於收盤價都不會成交
+                unfilled = (
+                    float(price) < close if action == Action.BUY else float(price) > close
+                )
+                if unfilled:
                     raise ValueError(
                         f"盤後定價以收盤價 {close} 成交，與限價 {price} 不符，不送單"
                     )
@@ -833,7 +837,11 @@ class MasterlinkAccount(Account, RealtimeProvider):
             return None
 
     @staticmethod
-    def _is_odd_lot_market_type(market_type: Any) -> bool:
+    def _enum_name(value: Any) -> str:
+        return str(value).upper().split(".")[-1]
+
+    @classmethod
+    def _is_odd_lot_market_type(cls, market_type: Any) -> bool:
         odd_lot_market_types = tuple(
             value
             for value in (
@@ -846,7 +854,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
         if market_type in odd_lot_market_types:
             return True
 
-        return str(market_type).upper().split(".")[-1] in {
+        return cls._enum_name(market_type) in {
             "INTRADAYODD",
             "ODD",
             "EMGODD",
@@ -875,14 +883,15 @@ class MasterlinkAccount(Account, RealtimeProvider):
             f"#update_order price: {price}, qty: {quantity}, order({order_id}): {order}"
         )
         order_record = order.org_order
+        odd_lot = self._is_odd_lot_market_type(getattr(order_record, "market_type", ""))
         remaining_qty = (
             getattr(order_record, "org_qty", 0)
             - getattr(order_record, "filled_qty", 0)
             - getattr(order_record, "cel_qty", 0)
         )
         if price:
-            if self._needs_reprice_by_replace(order_record):
-                return self._replace_order(order, remaining_qty, price)
+            if self._needs_reprice_by_replace(order_record, odd_lot):
+                return self._replace_order(order, remaining_qty, price, odd_lot)
             try:
                 self.sdk.stock.modify_price(
                     self.target_account, order_record, str(price), PriceType.Limit
@@ -904,29 +913,22 @@ class MasterlinkAccount(Account, RealtimeProvider):
             except Exception as e:
                 logging.warning(f"update_order: 無法更新委託單 {order_id} 的數量: {e}")
 
-    def _needs_reprice_by_replace(self, order_record: Any) -> bool:
+    def _needs_reprice_by_replace(self, order_record: Any, odd_lot: bool) -> bool:
         """零股不能改價；盤中也不能改 PriceType（芭樂價、市價單改限價），都要刪單重下。"""
-        market_type = getattr(order_record, "market_type", "")
-        if self._is_odd_lot_market_type(market_type):
-            return True
-        price_type = str(getattr(order_record, "price_type", "")).upper().split(".")[-1]
         now = datetime.datetime.now(TWMarket.tzinfo()).time()
-        return (
-            str(market_type).upper().split(".")[-1] == "COMMON"
+        price_type = self._enum_name(getattr(order_record, "price_type", ""))
+        return odd_lot or (
+            self._enum_name(getattr(order_record, "market_type", "")) == "COMMON"
             and price_type in {"LIMITUP", "LIMITDOWN", "MARKET"}
             and now >= datetime.time(9, 0)
         )
 
     def _replace_order(
-        self, order: Order, remaining_qty: int, price: float
+        self, order: Order, remaining_qty: int, price: float, odd_lot: bool
     ) -> str | None:
         """刪單後以新價格重下剩餘股數；刪單後重下失敗，原委託已不存在，要報錯。"""
-        order_record = order.org_order
-        odd_lot = self._is_odd_lot_market_type(
-            getattr(order_record, "market_type", "")
-        )
         try:
-            self.sdk.stock.modify_volume(self.target_account, order_record, 0)
+            self.sdk.stock.modify_volume(self.target_account, order.org_order, 0)
         except Exception as e:
             logging.warning(f"update_order: 無法刪除委託單 {order.order_id} 以改價: {e}")
             return None
@@ -1322,87 +1324,76 @@ class MasterlinkAccount(Account, RealtimeProvider):
         Returns:
             float: 總淨值
         """
-        try:
-            # 獲取可用資金
-            cash = self.get_cash()
+        # 獲取可用資金
+        cash = self.get_cash()
 
-            # 獲取未交割款項
-            settlements = self.get_settlement()
+        # 獲取未交割款項
+        settlements = self.get_settlement()
 
-            # 獲取庫存資料
-            try:
-                position_response = self.sdk.accounting.inventories(self.target_account)
+        # 獲取庫存資料；查不到要報錯，不回傳只剩現金的淨值：偏小的淨值會讓部位被算成全賣
+        position_response = self.sdk.accounting.inventories(self.target_account)
 
-                # 從帳戶摘要獲取融資/融券相關資訊
-                account_summary = getattr(position_response, "account_summary", None)
+        # 從帳戶摘要獲取融資/融券相關資訊
+        account_summary = getattr(position_response, "account_summary", None)
 
-                if account_summary:
-                    # 從API獲取各項數值
-                    margin_position_market_value = float(
-                        getattr(account_summary, "margin_position_market_value_sum", 0)
-                        or 0
-                    )  # 融資市值
-                    margin_amount = float(
-                        getattr(account_summary, "margin_amount_sum", 0) or 0
-                    )  # 融資金額
-                    short_position_market_value = float(
-                        getattr(account_summary, "short_position_market_value_sum", 0)
-                        or 0
-                    )  # 融券市值
-                    short_collateral = float(
-                        getattr(account_summary, "short_collateral_sum", 0) or 0
-                    )  # 擔保品
-                    guarantee_amount = float(
-                        getattr(account_summary, "guarantee_amount_sum", 0) or 0
-                    )  # 保證金
+        if account_summary:
+            # 從API獲取各項數值
+            margin_position_market_value = float(
+                getattr(account_summary, "margin_position_market_value_sum", 0)
+                or 0
+            )  # 融資市值
+            margin_amount = float(
+                getattr(account_summary, "margin_amount_sum", 0) or 0
+            )  # 融資金額
+            short_position_market_value = float(
+                getattr(account_summary, "short_position_market_value_sum", 0)
+                or 0
+            )  # 融券市值
+            short_collateral = float(
+                getattr(account_summary, "short_collateral_sum", 0) or 0
+            )  # 擔保品
+            guarantee_amount = float(
+                getattr(account_summary, "guarantee_amount_sum", 0) or 0
+            )  # 保證金
 
-                    # 計算總市值
-                    total_market_value = float(
-                        getattr(position_response, "market_value", 0) or 0
-                    )
+            # 計算總市值
+            total_market_value = float(
+                getattr(position_response, "market_value", 0) or 0
+            )
 
-                    # 計算現股市值（總市值減去融資和融券市值）
-                    cash_position_market_value = (
-                        total_market_value
-                        - margin_position_market_value
-                        - short_position_market_value
-                    )
+            # 計算現股市值（總市值減去融資和融券市值）
+            cash_position_market_value = (
+                total_market_value
+                - margin_position_market_value
+                - short_position_market_value
+            )
 
-                    # 套用公式計算總淨值
-                    total_balance = (
-                        cash_position_market_value  # 現股市值
-                        + (margin_position_market_value - margin_amount)  # 融資淨值
-                        + (
-                            short_collateral
-                            + guarantee_amount
-                            - short_position_market_value
-                        )  # 融券淨值
-                        + cash  # 可用資金
-                        + settlements  # 未交割款項
-                    )
+            # 套用公式計算總淨值
+            total_balance = (
+                cash_position_market_value  # 現股市值
+                + (margin_position_market_value - margin_amount)  # 融資淨值
+                + (
+                    short_collateral
+                    + guarantee_amount
+                    - short_position_market_value
+                )  # 融券淨值
+                + cash  # 可用資金
+                + settlements  # 未交割款項
+            )
 
-                    logging.info(
-                        f"總淨值計算: 現股市值={cash_position_market_value}, 融資淨值={(margin_position_market_value - margin_amount)}, "
-                        f"融券淨值={(short_collateral + guarantee_amount - short_position_market_value)}, "
-                        f"現金={cash}, 未交割款項={settlements}"
-                    )
+            logging.info(
+                f"總淨值計算: 現股市值={cash_position_market_value}, 融資淨值={(margin_position_market_value - margin_amount)}, "
+                f"融券淨值={(short_collateral + guarantee_amount - short_position_market_value)}, "
+                f"現金={cash}, 未交割款項={settlements}"
+            )
 
-                    return total_balance
-                # 如果沒有帳戶摘要，使用簡化的計算方式
-                total_market_value = float(
-                    getattr(position_response, "market_value", 0) or 0
-                )
-                logging.warning("帳戶摘要資訊不完整，使用簡化的淨值計算方式")
-                return total_market_value + cash + settlements
-
-            except Exception as e:
-                # 不回傳只剩現金的淨值：偏小的淨值會讓部位被算成全賣
-                logging.warning(f"無法獲取持倉資訊: {e}")
-                raise
-
-        except Exception as e:
-            logging.warning(f"get_total_balance: 獲取總資產失敗: {e}")
-            raise
+            return total_balance
+        # 如果沒有帳戶摘要，使用簡化的計算方式
+        total_market_value = float(
+            getattr(position_response, "market_value", 0) or 0
+        )
+        logging.warning("帳戶摘要資訊不完整，使用簡化的淨值計算方式")
+        return total_market_value + cash + settlements
 
     def get_cash(self) -> float:
         """
@@ -1414,63 +1405,58 @@ class MasterlinkAccount(Account, RealtimeProvider):
         # 每個來源都查詢失敗時報錯：回傳 0 會讓淨值偏小
         error: Exception | None = None
         answered = False
-        try:
-            # 先嘗試使用 skbank_balance
-            if hasattr(self.sdk.accounting, "skbank_balance"):
-                try:
-                    balance = self.sdk.accounting.skbank_balance(self.target_account)
-                    answered = True
-                    if balance is not None:
-                        available_balance = getattr(balance, "available_balance", 0)
-                        # 確保 available_balance 不為 None
-                        if available_balance is not None:
-                            try:
-                                # 處理可能的字串格式（例如去除逗號）
-                                if isinstance(available_balance, str):
-                                    available_balance = (
-                                        available_balance.strip().replace(",", "")
-                                    )
-                                return float(available_balance)
-                            except (ValueError, TypeError):
-                                logging.warning(
-                                    f"get_cash: 無法將 available_balance 轉換為浮點數: {available_balance}"
+        # 先嘗試使用 skbank_balance
+        if hasattr(self.sdk.accounting, "skbank_balance"):
+            try:
+                balance = self.sdk.accounting.skbank_balance(self.target_account)
+                answered = True
+                if balance is not None:
+                    available_balance = getattr(balance, "available_balance", 0)
+                    # 確保 available_balance 不為 None
+                    if available_balance is not None:
+                        try:
+                            # 處理可能的字串格式（例如去除逗號）
+                            if isinstance(available_balance, str):
+                                available_balance = (
+                                    available_balance.strip().replace(",", "")
                                 )
-                except Exception as e:
-                    error = e
-                    logging.warning(f"get_cash: 無法獲取 skbank_balance: {e}")
+                            return float(available_balance)
+                        except (ValueError, TypeError):
+                            logging.warning(
+                                f"get_cash: 無法將 available_balance 轉換為浮點數: {available_balance}"
+                            )
+            except Exception as e:
+                error = e
+                logging.warning(f"get_cash: 無法獲取 skbank_balance: {e}")
 
-            # 如果 skbank_balance 失敗或找不到有效餘額，嘗試 bank_balance
-            if hasattr(self.sdk.accounting, "bank_balance"):
-                try:
-                    balance = self.sdk.accounting.bank_balance(self.target_account)
-                    answered = True
-                    if balance and isinstance(balance, list) and len(balance) > 0:
-                        available_balance = getattr(balance[0], "available_balance", 0)
-                        # 確保 available_balance 不為 None
-                        if available_balance is not None:
-                            try:
-                                # 處理可能的字串格式
-                                if isinstance(available_balance, str):
-                                    available_balance = (
-                                        available_balance.strip().replace(",", "")
-                                    )
-                                return float(available_balance)
-                            except (ValueError, TypeError):
-                                logging.warning(
-                                    f"get_cash: 無法將 bank_balance 中的 available_balance 轉換為浮點數: {available_balance}"
+        # 如果 skbank_balance 失敗或找不到有效餘額，嘗試 bank_balance
+        if hasattr(self.sdk.accounting, "bank_balance"):
+            try:
+                balance = self.sdk.accounting.bank_balance(self.target_account)
+                answered = True
+                if balance and isinstance(balance, list) and len(balance) > 0:
+                    available_balance = getattr(balance[0], "available_balance", 0)
+                    # 確保 available_balance 不為 None
+                    if available_balance is not None:
+                        try:
+                            # 處理可能的字串格式
+                            if isinstance(available_balance, str):
+                                available_balance = (
+                                    available_balance.strip().replace(",", "")
                                 )
-                except Exception as e:
-                    error = e
-                    logging.warning(f"get_cash: 無法獲取 bank_balance: {e}")
+                            return float(available_balance)
+                        except (ValueError, TypeError):
+                            logging.warning(
+                                f"get_cash: 無法將 bank_balance 中的 available_balance 轉換為浮點數: {available_balance}"
+                            )
+            except Exception as e:
+                error = e
+                logging.warning(f"get_cash: 無法獲取 bank_balance: {e}")
 
-            if error is not None and not answered:
-                raise RuntimeError(f"get_cash: 查詢可用資金失敗: {error}") from error
-            logging.warning("get_cash: 無法從任何來源獲取可用資金")
-            return 0
-
-        except Exception as e:
-            logging.warning(f"get_cash: 處理過程中發生異常: {e}")
-            raise
+        if error is not None and not answered:
+            raise RuntimeError(f"get_cash: 查詢可用資金失敗: {error}") from error
+        logging.warning("get_cash: 無法從任何來源獲取可用資金")
+        return 0
 
     def get_settlement(self) -> float:
         """
@@ -1479,34 +1465,29 @@ class MasterlinkAccount(Account, RealtimeProvider):
         Returns:
             float: 未交割款項
         """
-        try:
-            total_settlement = 0
+        total_settlement = 0
 
-            # 檢查是否支援 history_settlement
-            if hasattr(self.sdk.accounting, "history_settlement"):
-                history_settlement = self._get_settlement_from_history_settlement()
-                try:
-                    total_settlement += float(history_settlement)
-                except (ValueError, TypeError):
-                    logging.warning(
-                        f"get_settlement: 無法轉換 history_settlement 為數字: {history_settlement}"
-                    )
+        # 檢查是否支援 history_settlement
+        if hasattr(self.sdk.accounting, "history_settlement"):
+            history_settlement = self._get_settlement_from_history_settlement()
+            try:
+                total_settlement += float(history_settlement)
+            except (ValueError, TypeError):
+                logging.warning(
+                    f"get_settlement: 無法轉換 history_settlement 為數字: {history_settlement}"
+                )
 
-            # 檢查是否支援 today_settlement
-            if hasattr(self.sdk.accounting, "today_settlement"):
-                today_settlement = self._get_settlement_from_today_settlement()
-                try:
-                    total_settlement += float(today_settlement)
-                except (ValueError, TypeError):
-                    logging.warning(
-                        f"get_settlement: 無法轉換 today_settlement 為數字: {today_settlement}"
-                    )
+        # 檢查是否支援 today_settlement
+        if hasattr(self.sdk.accounting, "today_settlement"):
+            today_settlement = self._get_settlement_from_today_settlement()
+            try:
+                total_settlement += float(today_settlement)
+            except (ValueError, TypeError):
+                logging.warning(
+                    f"get_settlement: 無法轉換 today_settlement 為數字: {today_settlement}"
+                )
 
-            return total_settlement
-
-        except Exception as e:
-            logging.warning(f"get_settlement: 無法獲取未交割款項: {e}")
-            raise
+        return total_settlement
 
     def _get_settlement_from_history_settlement(self) -> float:
         """
@@ -1515,38 +1496,32 @@ class MasterlinkAccount(Account, RealtimeProvider):
         Returns:
             float: 未交割款項
         """
-        try:
-            # 查詢區間是交易日期：往前多查幾天，週一或連假後才不會漏掉上個交易日的款項
-            today = datetime.datetime.now(TWMarket.tzinfo())
-            today_str = today.strftime("%Y%m%d")
-            start_str = (today - datetime.timedelta(days=10)).strftime("%Y%m%d")
+        # 查詢區間是交易日期：往前多查幾天，週一或連假後才不會漏掉上個交易日的款項
+        today = datetime.datetime.now(TWMarket.tzinfo())
+        today_str = today.strftime("%Y%m%d")
+        start_str = (today - datetime.timedelta(days=10)).strftime("%Y%m%d")
 
-            # 查詢交割款
-            response = self.sdk.accounting.history_settlement(
-                self.target_account, start_str, today_str
-            )
+        # 查詢交割款
+        response = self.sdk.accounting.history_settlement(
+            self.target_account, start_str, today_str
+        )
 
-            # 加總交割日在今天之後的 net_amount（今天交割的由 today_settlement 計入）
-            settlement_amount = 0
-            settlements = getattr(response, "settlements", [])
-            if hasattr(settlements, "__iter__"):
-                for s in settlements:
-                    if getattr(s, "s_date", "") <= today_str:
-                        continue
-                    net_amount = getattr(s, "net_amount", "0")
-                    try:
-                        # 移除千分位符號並轉換為浮點數
-                        net_amount_cleaned = net_amount.strip().replace(",", "")
-                        settlement_amount += float(net_amount_cleaned)
-                    except (ValueError, TypeError):
-                        logging.warning(f"無法解析金額: {net_amount}")
+        # 加總交割日在今天之後的 net_amount（今天交割的由 today_settlement 計入）
+        settlement_amount = 0
+        settlements = getattr(response, "settlements", [])
+        if hasattr(settlements, "__iter__"):
+            for s in settlements:
+                if getattr(s, "s_date", "") <= today_str:
+                    continue
+                net_amount = getattr(s, "net_amount", "0")
+                try:
+                    # 移除千分位符號並轉換為浮點數
+                    net_amount_cleaned = net_amount.strip().replace(",", "")
+                    settlement_amount += float(net_amount_cleaned)
+                except (ValueError, TypeError):
+                    logging.warning(f"無法解析金額: {net_amount}")
 
-            return settlement_amount
-        except Exception as e:
-            logging.warning(
-                f"_get_settlement_from_history_settlement: 無法處理歷史交割: {e}"
-            )
-            raise
+        return settlement_amount
 
     def _get_settlement_from_today_settlement(self) -> float:
         """
@@ -1555,20 +1530,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
         Returns:
             float: 未交割款項
         """
-        try:
-            today_settlements = self.sdk.accounting.today_settlement(
-                self.target_account
-            )
-            settle_amount = 0
-            if hasattr(today_settlements, "net_amount"):
-                settle_amount = today_settlements.net_amount
-
-            return settle_amount
-        except Exception as e:
-            logging.warning(
-                f"_get_settlement_from_today_settlement: 無法處理今日交割: {e}"
-            )
-            raise
+        today_settlements = self.sdk.accounting.today_settlement(self.target_account)
+        return getattr(today_settlements, "net_amount", 0)
 
     def support_day_trade_condition(self) -> bool:
         """
