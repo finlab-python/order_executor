@@ -393,6 +393,7 @@ def test_from_report_forwards_custom_allocation() -> None:
 _LEVERAGE_HISTORY = pd.DataFrame(
     {"A": np.linspace(100, 110, 60), "B": np.linspace(50, 40, 60)}
 )
+_LEVERAGE_PRICE = {"A": 100, "B": 50, "C": 200}
 
 
 def _legs(position: Position) -> list[tuple[str, str, str]]:
@@ -402,13 +403,13 @@ def _legs(position: Position) -> list[tuple[str, str, str]]:
     )
 
 
-def _leveraged(weights: dict[str, float], **kwargs) -> Position:
+def _leveraged(weights: dict[str, float], leverage: float = 1.2, **kwargs) -> Position:
     return Position.from_weight(
         weights,
         fund=3_000_000,
-        price={"A": 100, "B": 50, "C": 200},
+        price=_LEVERAGE_PRICE,
         board_lot_size=1000,
-        leverage=1.2,
+        leverage=leverage,
         price_history=_LEVERAGE_HISTORY,
         **kwargs,
     )
@@ -493,20 +494,13 @@ def test_precision_is_ignored_for_whole_lot_trading() -> None:
 def test_leverage_own_cash_stays_within_fund(
     leverage: float, margin_ratio: float
 ) -> None:
-    price = {"A": 100, "B": 50}
-    position = Position.from_weight(
-        {"A": 0.5, "B": 0.5},
-        fund=3_000_000,
-        price=price,
-        board_lot_size=1000,
-        leverage=leverage,
-        price_history=_LEVERAGE_HISTORY,
-        margin_ratio=margin_ratio,
+    position = _leveraged(
+        {"A": 0.5, "B": 0.5}, leverage=leverage, margin_ratio=margin_ratio
     )
     value = {c: 0.0 for c in OrderCondition}
     for p in position.to_list():
         value[p["order_condition"]] += (
-            float(p["quantity"]) * price[p["stock_id"]] * 1000
+            float(p["quantity"]) * _LEVERAGE_PRICE[p["stock_id"]] * 1000
         )
     exposure = value[OrderCondition.CASH] + value[OrderCondition.MARGIN_TRADING]
     own_cash = exposure - value[OrderCondition.MARGIN_TRADING] * margin_ratio
@@ -514,9 +508,24 @@ def test_leverage_own_cash_stays_within_fund(
     assert 3_000_000 - 100_000 < own_cash <= 3_000_000
 
 
-@pytest.mark.parametrize("credit", ["margin_trading", "short_selling"])
-def test_odd_lot_credit_positions_keep_whole_lots_only(credit: str) -> None:
-    sign = 1 if credit == "margin_trading" else -1
+@pytest.mark.parametrize(
+    ("credit", "sign", "expected"),
+    [
+        (
+            "margin_trading",
+            1,
+            [
+                ("2317", "0.694", "CASH"),
+                ("2317", "4", "MARGIN_TRADING"),
+                ("2330", "0.966", "CASH"),
+            ],
+        ),
+        ("short_selling", -1, [("2317", "-4", "SHORT_SELLING")]),
+    ],
+)
+def test_odd_lot_credit_positions_keep_whole_lots_only(
+    credit: str, sign: int, expected: list[tuple[str, str, str]]
+) -> None:
     position = Position.from_weight(
         {"2330": 0.5 * sign, "2317": 0.5 * sign},
         fund=2_000_000,
@@ -525,14 +534,7 @@ def test_odd_lot_credit_positions_keep_whole_lots_only(credit: str) -> None:
         odd_lot=True,
         **{credit: True},
     )
-    if credit == "margin_trading":
-        assert _legs(position) == [
-            ("2317", "0.694", "CASH"),
-            ("2317", "4", "MARGIN_TRADING"),
-            ("2330", "0.966", "CASH"),
-        ]
-    else:
-        assert _legs(position) == [("2317", "-4", "SHORT_SELLING")]
+    assert _legs(position) == expected
 
 
 def test_precision_without_odd_lot_stays_within_fund() -> None:

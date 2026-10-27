@@ -395,7 +395,6 @@ class Position:
             logger.warning(
                 "The precision parameter is ignored when board_lot_size is not 1."
             )
-            precision = None
 
         # 整數張交易最後會取整數，用小數配置再四捨五入會超出資金
         if precision is None or not odd_lot:
@@ -459,7 +458,7 @@ class Position:
                     "leverage > 1 cannot be combined with margin_trading or day_trading_long"
                 )
             pos = cls._apply_leverage_to_position(
-                pos, price, price_history, leverage, board_lot_size, margin_ratio
+                pos, price, price_history, leverage, margin_ratio, board_lot_size
             )
         return pos
 
@@ -469,8 +468,8 @@ class Position:
         price: pd.Series,
         price_history: pd.DataFrame,
         leverage: float,
+        margin_ratio: float,
         board_lot_size: int = 1000,
-        margin_ratio: float = 0.6,
         annualisation_factor: int = 252,
     ) -> Position:
         """
@@ -522,16 +521,15 @@ class Position:
             qty = row.quantity
             # 沒有波動度的持股不配融資；零股不能融資，融資只用整張，零頭留在現股。
             # 不足一張的融資額進位成一張，現股部分才不會超過資金
+            lot_loan = row.lot_value * margin_ratio
             lots_margin = Decimal(0)
             if not math.isnan(row.sigma):
-                lots = Decimal(
-                    max(finance_remaining / (row.lot_value * margin_ratio) - 1e-9, 0.0)
-                )
+                lots = Decimal(max(finance_remaining / lot_loan - 1e-9, 0.0))
                 lots_margin = min(
                     lots.to_integral_value(rounding=ROUND_CEILING),
                     qty.to_integral_value(rounding=ROUND_FLOOR),
                 )
-            finance_remaining -= float(lots_margin) * row.lot_value * margin_ratio
+            finance_remaining -= float(lots_margin) * lot_loan
             for quantity, condition in (
                 (lots_margin, OrderCondition.MARGIN_TRADING),
                 (qty - lots_margin, OrderCondition.CASH),
