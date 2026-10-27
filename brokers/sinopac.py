@@ -28,14 +28,13 @@ from shioaji.constant import (
 from shioaji.constant import (
     Unit as SJUnit,
 )
-from shioaji.order import StockOrder as SJStockOrder
 from shioaji.order import Trade as SJTrade
 from shioaji.position import SettlementV1 as SJSettlementV1
 from shioaji.position import StockPosition as SJStockPosition
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock, typesafe_op
+from finlab.online.core.account import Account, Order, Stock
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_models import (
@@ -57,8 +56,6 @@ from finlab.online.core.realtime_normalizers import (
 from finlab.online.core.realtime_provider import RealtimeProvider
 
 logger = logging.getLogger(__name__)
-
-SHARES_PER_LOT = 1000
 
 
 class OddLotRepriceError(RuntimeError):
@@ -607,14 +604,22 @@ class SinopacAccount(Account, RealtimeProvider):
         trade: SJTrade = self.trades[order_id]
 
         try:
-            order_lot = (
-                trade.order.order_lot
-                if isinstance(trade.order, SJStockOrder)
-                else SJStockOrderLot.Common
-            )
-            if order_lot in (SJStockOrderLot.IntradayOdd, SJStockOrderLot.Odd):
+            # Odd-lot orders can be reduced but not repriced. shioaji >= 1.7
+            # returns OrderResult, not StockOrder, so read the lot directly.
+            order_lot = trade.order.order_lot
+            if price is not None and order_lot in (
+                SJStockOrderLot.IntradayOdd,
+                SJStockOrderLot.Odd,
+            ):
+                # Odd-lot quantities are shares; a reduced order keeps its
+                # original quantity and reports the reduction separately.
+                shares = int(
+                    trade.order.quantity
+                    - trade.status.deal_quantity
+                    - (trade.status.cancel_quantity or 0)
+                )
                 self.cancel_order(order_id)
-                self._replace_cancelled_odd_lot_order(order, price)
+                self._replace_cancelled_odd_lot_order(order, shares, price)
             else:
                 if price is None and quantity is None:
                     logger.warning(
@@ -633,7 +638,7 @@ class SinopacAccount(Account, RealtimeProvider):
             )
 
     def _replace_cancelled_odd_lot_order(
-        self, order: Order, price: float | None
+        self, order: Order, shares: int, price: float | None
     ) -> None:
         """Re-place the remaining shares of an odd-lot order that was just cancelled.
 
@@ -641,9 +646,6 @@ class SinopacAccount(Account, RealtimeProvider):
         cancel-then-place. Once the cancel went through, any failure here
         leaves no working order, so it is raised instead of logged.
         """
-        shares = (
-            typesafe_op(order.quantity, order.filled_quantity, "-") * SHARES_PER_LOT
-        )
         context = (
             f"odd-lot order {order.order_id} ({order.action.name} {order.stock_id} "
             f"{shares} shares @ {price}) was cancelled for repricing but could not "
@@ -731,11 +733,19 @@ class SinopacAccount(Account, RealtimeProvider):
         if len(ac_pos) == 0:
             return self.get_settlement() + self.get_cash()
 
+        market_value = ac_pos.last_price * ac_pos.quantity
+        long_value = market_value * (1 - 1.425 / 1000) * (1 - 3 / 1000)
+        # A short position is worth its collateral and margin minus the cost
+        # of buying the shares back.
+        short_value = (
+            ac_pos.collateral
+            + ac_pos.short_sale_margin
+            - market_value * (1 + 1.425 / 1000)
+        )
+        position_value = long_value.mask(ac_pos.direction == SJAction.Sell, short_value)
         return (
             (
-                (ac_pos.last_price * ac_pos.quantity)
-                * (1 - 1.425 / 1000)
-                * (1 - 3 / 1000)
+                position_value
                 - ac_pos.get("margin_purchase_amount", 0)
                 - ac_pos.get("interest", 0)
             ).sum()
