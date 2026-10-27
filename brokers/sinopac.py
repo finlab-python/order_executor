@@ -605,8 +605,8 @@ class SinopacAccount(Account, RealtimeProvider):
 
         try:
             # shioaji >= 1.7 returns OrderResult, not StockOrder, so read the
-            # lot directly; futures orders have no order_lot.
-            order_lot = getattr(trade.order, "order_lot", None)
+            # lot directly.
+            order_lot = trade.order.order_lot
             if order_lot in (SJStockOrderLot.IntradayOdd, SJStockOrderLot.Odd):
                 # Odd-lot quantities are shares; a reduced order keeps its
                 # original quantity and reports the reduction separately.
@@ -731,14 +731,15 @@ class SinopacAccount(Account, RealtimeProvider):
             return self.get_settlement() + self.get_cash()
 
         market_value = ac_pos.last_price * ac_pos.quantity
+        long_value = market_value * (1 - 1.425 / 1000) * (1 - 3 / 1000)
         # A short position is worth its collateral and margin minus the cost
         # of buying the shares back.
-        position_value = (market_value * (1 - 1.425 / 1000) * (1 - 3 / 1000)).mask(
-            ac_pos.direction == SJAction.Sell,
+        short_value = (
             ac_pos.collateral
             + ac_pos.short_sale_margin
-            - market_value * (1 + 1.425 / 1000),
+            - market_value * (1 + 1.425 / 1000)
         )
+        position_value = long_value.mask(ac_pos.direction == SJAction.Sell, short_value)
         return (
             (
                 position_value

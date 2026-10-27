@@ -134,8 +134,6 @@ def _import_sinopac_module_with_fake_sdk(
 
     order_module = types.ModuleType("shioaji.order")
     order_module.Trade = object
-    # shioaji >= 1.7: Trade.order is an OrderResult, not a StockOrder.
-    order_module.StockOrder = type("StockOrder", (), {})
 
     position_module = types.ModuleType("shioaji.position")
     position_module.StockPosition = object

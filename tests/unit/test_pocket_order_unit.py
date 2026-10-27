@@ -25,13 +25,14 @@ class _FakePocket:
         return types.SimpleNamespace(order=types.SimpleNamespace(entid="order-1"))
 
 
-_POCKET_MODULE = "finlab.online.brokers.pocket"
-
-
-def _make_account(monkeypatch: pytest.MonkeyPatch) -> object:
+def _make_account(
+    monkeypatch: pytest.MonkeyPatch, utc_time: tuple | None = None
+) -> object:
     monkeypatch.setitem(sys.modules, "pocket", types.ModuleType("pocket"))
-    sys.modules.pop(_POCKET_MODULE, None)
-    pocket_module = importlib.import_module(_POCKET_MODULE)
+    sys.modules.pop("finlab.online.brokers.pocket", None)
+    pocket_module = importlib.import_module("finlab.online.brokers.pocket")
+    if utc_time is not None:
+        patch_utc_host_clock(monkeypatch, pocket_module, utc_time)
     account = pocket_module.PocketAccount.__new__(pocket_module.PocketAccount)
     account.api = _FakePocket()
     account.trades = {}
@@ -54,8 +55,7 @@ def _make_account(monkeypatch: pytest.MonkeyPatch) -> object:
 def test_pocket_create_order_session_starts_at_taipei_minute(
     monkeypatch: pytest.MonkeyPatch, utc_time: tuple, odd_lot: bool, order_lot: str
 ) -> None:
-    account = _make_account(monkeypatch)
-    patch_utc_host_clock(monkeypatch, sys.modules[_POCKET_MODULE], utc_time)
+    account = _make_account(monkeypatch, utc_time)
 
     account.create_order(Action.BUY, "2330", 1, price=580, odd_lot=odd_lot)
 
@@ -74,8 +74,7 @@ def test_pocket_create_order_session_starts_at_taipei_minute(
 def test_pocket_market_order_is_limit_order_outside_common_session(
     monkeypatch: pytest.MonkeyPatch, utc_time: tuple, odd_lot: bool, price_type: str
 ) -> None:
-    account = _make_account(monkeypatch)
-    patch_utc_host_clock(monkeypatch, sys.modules[_POCKET_MODULE], utc_time)
+    account = _make_account(monkeypatch, utc_time)
 
     account.create_order(
         Action.BUY, "2330", 1, price=580, odd_lot=odd_lot, market_order=True
@@ -92,16 +91,15 @@ def test_pocket_total_balance_values_short_position_at_buyback_cost(
     monkeypatch: pytest.MonkeyPatch, last_price: float, short_value: float
 ) -> None:
     account = _make_account(monkeypatch)
-    long = types.SimpleNamespace(
-        direction="Buy", quantity=1000, last_price=100.0, collateral=0,
-        short_sale_margin=0, margin_purchase_amount=0, interest=0,
-    )
+    long = {"direction": "Buy", "quantity": 1000, "last_price": 100.0,
+            "collateral": 0, "short_sale_margin": 0,
+            "margin_purchase_amount": 0, "interest": 0}
     # Sold short 1000 shares at 500: 500,000 collateral, 450,000 margin.
-    short = types.SimpleNamespace(
-        **{**vars(long), "direction": "Sell", "last_price": last_price,
-           "collateral": 500_000, "short_sale_margin": 450_000}
-    )
-    account.api.list_positions = lambda account: [long, short]
+    short = {**long, "direction": "Sell", "last_price": last_price,
+             "collateral": 500_000, "short_sale_margin": 450_000}
+    account.api.list_positions = lambda account: [
+        types.SimpleNamespace(**p) for p in (long, short)
+    ]
     account.api.account_balance = lambda: types.SimpleNamespace(acc_balance=1_000_000)
     account.api.settlements = lambda account: []
 
