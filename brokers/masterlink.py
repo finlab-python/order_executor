@@ -884,14 +884,19 @@ class MasterlinkAccount(Account, RealtimeProvider):
         )
         order_record = order.org_order
         odd_lot = self._is_odd_lot_market_type(getattr(order_record, "market_type", ""))
-        remaining_qty = (
-            getattr(order_record, "org_qty", 0)
-            - getattr(order_record, "filled_qty", 0)
-            - getattr(order_record, "cel_qty", 0)
-        )
+        remaining_qty = self._remaining_shares(order_record)
+        # quantity 是新的待成交張數，只能減量，0 表刪單；先檢查再送任何委託異動
+        new_qty = remaining_qty
+        if quantity is not None:
+            new_qty = round(quantity * 1000)
+            if quantity != 0 and new_qty >= remaining_qty:
+                raise ValueError(
+                    f"update_order: 只能減量，委託單 {order_id} 剩 {remaining_qty} 股，"
+                    f"新數量 {quantity} 張"
+                )
         if price:
             if self._needs_reprice_by_replace(order_record, odd_lot):
-                return self._replace_order(order, remaining_qty, price, odd_lot)
+                return self._replace_order(order, new_qty, price, odd_lot)
             try:
                 self.sdk.stock.modify_price(
                     self.target_account, order_record, str(price), PriceType.Limit
@@ -899,16 +904,17 @@ class MasterlinkAccount(Account, RealtimeProvider):
             except Exception as e:
                 logging.warning(f"update_order: 無法更新委託單 {order_id} 的價格: {e}")
         if quantity is not None:
-            # modify_volume 收的是「刪減股數」，0 表刪單；quantity 是新的待成交張數
-            cel_qty = 0
-            if quantity != 0:
-                cel_qty = remaining_qty - round(quantity * 1000)
-                if cel_qty <= 0:
-                    raise ValueError(
-                        f"update_order: 只能減量，委託單 {order_id} 剩 {remaining_qty} 股，"
-                        f"新數量 {quantity} 張"
-                    )
+            # modify_volume 收的是「刪減股數」，0 表刪單
+            cel_qty = remaining_qty - new_qty if quantity != 0 else 0
             self.sdk.stock.modify_volume(self.target_account, order_record, cel_qty)
+
+    @staticmethod
+    def _remaining_shares(order_record: Any) -> int:
+        return (
+            getattr(order_record, "org_qty", 0)
+            - getattr(order_record, "filled_qty", 0)
+            - getattr(order_record, "cel_qty", 0)
+        )
 
     def _needs_reprice_by_replace(self, order_record: Any, odd_lot: bool) -> bool:
         """零股不能改價；盤中也不能改 PriceType（芭樂價、市價單改限價），都要刪單重下。"""
@@ -921,14 +927,21 @@ class MasterlinkAccount(Account, RealtimeProvider):
         )
 
     def _replace_order(
-        self, order: Order, remaining_qty: int, price: float, odd_lot: bool
-    ) -> str:
-        """刪單後以新價格重下剩餘股數；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
+        self, order: Order, new_qty: int, price: float, odd_lot: bool
+    ) -> str | None:
+        """刪單後以新價格重下 new_qty 股；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
+        cel_qty_before = getattr(order.org_order, "cel_qty", 0)
         self.sdk.stock.modify_volume(self.target_account, order.org_order, 0)
+        if new_qty == 0:
+            return None
+        # 刪單前一刻成交的部分不能重下：以實際刪掉的股數為上限
+        qty = min(new_qty, self._confirmed_cancel_qty(order.order_id) - cel_qty_before)
+        if qty <= 0:
+            return None
         new_order_id = self.create_order(
             action=order.action,
             stock_id=order.stock_id,
-            quantity=remaining_qty if odd_lot else remaining_qty / 1000,
+            quantity=qty if odd_lot else qty / 1000,
             price=price,
             odd_lot=odd_lot,
             order_cond=order.order_condition,
@@ -936,9 +949,23 @@ class MasterlinkAccount(Account, RealtimeProvider):
         if not new_order_id:
             raise RuntimeError(
                 f"update_order: 委託單 {order.order_id} 已刪單改價，但以 {price} 重下 "
-                f"{remaining_qty} 股失敗，原委託已不存在，請手動補單"
+                f"{qty} 股失敗，原委託已不存在，請手動補單"
             )
         return new_order_id
+
+    def _confirmed_cancel_qty(self, order_id: str) -> int:
+        """重查委託，確認已刪到沒有剩餘量，回傳累計刪單股數。"""
+        for attempt in range(3):
+            if attempt:
+                time.sleep(1)
+            orders = self.get_orders() or {}
+            record = getattr(orders.get(order_id), "org_order", None)
+            if record is not None and self._remaining_shares(record) == 0:
+                return getattr(record, "cel_qty", 0)
+        raise RuntimeError(
+            f"update_order: 已送出委託單 {order_id} 的刪單，但無法確認刪除股數，未重下，"
+            "請確認委託狀態後手動補單"
+        )
 
     def cancel_order(self, order_id: str) -> None:
         """

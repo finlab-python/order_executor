@@ -111,6 +111,10 @@ class _FakeStockTradeApi:
 
     def modify_volume(self, account: Any, order_record: Any, quantity: int) -> None:
         self.modified_volumes.append((account, order_record, quantity))
+        if quantity == 0:  # 刪單：剩餘量全數刪除
+            order_record.cel_qty = getattr(order_record, "org_qty", 0) - getattr(
+                order_record, "filled_qty", 0
+            )
 
     def modify_price(
         self, account: Any, order_record: Any, price: str, price_type: Any
@@ -615,26 +619,59 @@ def test_masterlink_reprice_limit_down_order_before_open_modifies_price(
     assert stock_api.modified_prices == [(None, record, "1005", "Limit")]
 
 
-def test_masterlink_reprice_limit_down_order_intraday_replaces(monkeypatch: Any) -> None:
+def _fill_1000_then_cancel(record: Any) -> None:
+    record.filled_qty += 1000
+    record.cel_qty = record.org_qty - record.filled_qty
+
+
+@pytest.mark.parametrize(
+    "quantity, before_cancel, created_lots",
+    [
+        (None, None, 2.0),
+        (1, None, 1.0),
+        (0, None, None),
+        (None, _fill_1000_then_cancel, 1.0),  # 刪單前一刻成交的 1 張不重下
+    ],
+)
+def test_masterlink_reprice_limit_down_order_intraday_replaces(
+    monkeypatch: Any, quantity: float | None, before_cancel: Any,
+    created_lots: float | None,
+) -> None:
     record = _record(price_type="LimitDown", org_qty=3000, filled_qty=1000)
     module, account, stock_api = _account_with_order(monkeypatch, record)
     patch_utc_host_clock(monkeypatch, module, (1, 30))  # 台北 09:30
+    if before_cancel:
+        stock_api.modify_volume = lambda *args: before_cancel(record)
     created: list[dict[str, Any]] = []
     account.create_order = lambda **kwargs: created.append(kwargs) or "new-o-1"
-    assert account.update_order("o-1", price=1005) == "new-o-1"
-    assert stock_api.modified_volumes == [(None, record, 0)]
-    assert created == [{
-        "action": Action.BUY, "stock_id": "2330", "quantity": 2.0,
-        "price": 1005, "odd_lot": False, "order_cond": OrderCondition.CASH,
-    }]
 
-    account.create_order = lambda **_: None
-    with pytest.raises(RuntimeError):
-        account.update_order("o-1", price=1005)
+    new_order_id = account.update_order("o-1", price=1005, quantity=quantity)
+    if created_lots is None:
+        assert (new_order_id, created) == (None, [])
+        assert stock_api.modified_volumes == [(None, record, 0)]
+    else:
+        assert new_order_id == "new-o-1"
+        assert created == [{
+            "action": Action.BUY, "stock_id": "2330", "quantity": created_lots,
+            "price": 1005, "odd_lot": False, "order_cond": OrderCondition.CASH,
+        }]
 
-    # 刪單失敗：原委託還在跌停，要報錯，也不能另外重下
-    stock_api.modify_volume = _timeout
-    account.create_order = lambda **_: pytest.fail("刪單失敗不應重下")
+
+@pytest.mark.parametrize("failure", ["replace", "cancel", "unconfirmed"])
+def test_masterlink_reprice_by_replace_raises_on_failure(
+    monkeypatch: Any, failure: str
+) -> None:
+    record = _record(price_type="LimitDown", org_qty=3000, filled_qty=1000)
+    module, account, stock_api = _account_with_order(monkeypatch, record)
+    patch_utc_host_clock(monkeypatch, module, (1, 30))  # 台北 09:30
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    account.create_order = lambda **_: pytest.fail("不應重下")
+    if failure == "replace":
+        account.create_order = lambda **_: None
+    elif failure == "cancel":  # 原委託還在跌停，要報錯
+        stock_api.modify_volume = _timeout
+    else:  # 刪單後查不到委託，不知道刪了多少
+        stock_api.modify_volume = lambda *_: setattr(account, "get_orders", lambda: None)
     with pytest.raises(RuntimeError):
         account.update_order("o-1", price=1005)
 
