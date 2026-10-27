@@ -727,3 +727,30 @@ def test_masterlink_settlement_on_monday_includes_friday_trades(monkeypatch: Any
         today_settlement=lambda _: types.SimpleNamespace(net_amount="-300000.00"),
     ))
     assert account.get_settlement() == -1_300_000
+
+
+def test_masterlink_fixing_best_price_limit_rejected_before_cancelling(monkeypatch: Any) -> None:
+    from finlab.online.core.executor import OrderExecutor
+    from finlab.online.core.position import Position
+
+    module, account = _new_masterlink_account(monkeypatch)
+    patch_utc_host_clock(monkeypatch, module, (2, 0))  # 台北 10:00
+    assert account.support_best_price_limit()
+
+    patch_utc_host_clock(monkeypatch, module, (6, 10))  # 台北 14:10
+    stock_api = _FakeStockTradeApi()
+    account.sdk = types.SimpleNamespace(stock=stock_api, marketdata=_FakeSdk().marketdata)
+    account.get_position = lambda: Position({})
+    account.get_price_info = lambda: {"2330": {"漲停價": 616.0, "跌停價": 504.0}}
+    account.get_orders = lambda: pytest.fail("不應先查委託、刪舊單")
+    with pytest.raises(ValueError, match="best_price_limit"):
+        OrderExecutor(Position({"2330": 1.2}), account).create_orders(best_price_limit=True)
+
+    # 只有零股（或只下零股那一邊）時照舊送盤後零股芭樂價
+    account.get_orders = lambda: {}
+    account.get_position = lambda: Position({"2317": 1})
+    OrderExecutor(Position({"2330": 0.2}), account).create_orders(
+        best_price_limit=True, buy_only=True
+    )
+    placed = stock_api.placed_orders[0]
+    assert (placed.market_type, placed.price_type, placed.quantity) == ("Odd", "LimitDown", 200)

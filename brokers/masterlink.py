@@ -779,7 +779,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 price_type = PriceType.LimitUp
 
         # 定盤處理：盤後定價只接受參考價，一律以收盤價成交
-        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
+        if self._in_fixing_session(now) and not odd_lot:
             if best_price_limit:
                 raise ValueError("盤後定價只以收盤價成交，不能用 best_price_limit 掛單")
             if price is not None:
@@ -1570,6 +1570,15 @@ class MasterlinkAccount(Account, RealtimeProvider):
         return hasattr(
             self.target_account, "s_mark"
         ) and self.target_account.s_mark in ["B", "Y", "A"]
+
+    @staticmethod
+    def _in_fixing_session(now: datetime.time) -> bool:
+        """台北時間 now 是否在盤後定價時段（14:00–14:30）"""
+        return datetime.time(14, 0) <= now < datetime.time(14, 30)
+
+    def support_best_price_limit(self) -> bool:
+        """盤後定價只以收盤價成交，掛不了芭樂價；讓 executor 在刪舊單前就擋下"""
+        return not self._in_fixing_session(datetime.datetime.now(TWMarket.tzinfo()).time())
 
     def sep_odd_lot_order(self) -> bool:
         """
