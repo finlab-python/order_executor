@@ -172,18 +172,25 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
 
     def test_generate_orders_progress_does_not_round_past_difference(self) -> None:
         """progress 進位後超過剩餘差額時往零捨去"""
-        cases = [({"2330": 0.2}, {"2330": 1.0}, 0.7, 0), ({"2330": 0.6}, {}, 0.9, 0), ({}, {"2330": 2.9}, 0.9, 2)]
+        # (現有部位, 目標部位, progress, 預期下單量)
+        cases = [
+            ({"2330": 0.2}, {"2330": 1.0}, 0.7, 0),
+            ({"2330": 0.6}, {}, 0.9, 0),
+            ({}, {"2330": 2.9}, 0.9, 2),
+        ]
         for present, target, progress, expected in cases:
-            self.mock_account.get_position.return_value = Position(present)
-            orders = OrderExecutor(Position(target), self.mock_account).generate_orders(progress=progress)
-            self.assertEqual(orders[0]["quantity"], expected)
+            with self.subTest(present=present, target=target, progress=progress):
+                self.mock_account.get_position.return_value = Position(present)
+                oe = OrderExecutor(Position(target), self.mock_account)
+                orders = oe.generate_orders(progress=progress)
+                self.assertEqual(orders[0]["quantity"], expected)
 
     def test_generate_orders_day_trading_long_filled_as_cash(self) -> None:
         """現沖先買成交後券商回報成現股，盤中再同步不再一賣一買"""
         target = Position({"2330": 1}, day_trading_long=True)
         self.mock_account.get_position.return_value = Position({"2330": 1})
         orders = OrderExecutor(target, self.mock_account).generate_orders()
-        self.assertEqual([o for o in orders if o["quantity"] != 0], [])
+        self.assertEqual(orders, [])
 
         # 還沒成交時照舊送現沖先買
         self.mock_account.get_position.return_value = Position({})
@@ -356,16 +363,19 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
     def test_execute_orders_extra_bid_pct_uses_etf_tick(self) -> None:
         """台股 ETF 追價用 ETF 跳動單位，買價不低於、賣價不高於現價"""
         self.mock_account.get_stocks.return_value = {
-            "006208": Mock(close=120.15), "00878": Mock(close=21.33)
+            "006208": Mock(close=120.15),
+            "00878": Mock(close=21.33),
         }
         orders = [
-            {"stock_id": "006208", "quantity": 1, "order_condition": OrderCondition.CASH},
-            {"stock_id": "00878", "quantity": -1, "order_condition": OrderCondition.CASH},
+            {"stock_id": sid, "quantity": qty, "order_condition": OrderCondition.CASH}
+            for sid, qty in [("006208", 1), ("00878", -1)]
         ]
-        OrderExecutor(Position({}), self.mock_account).execute_orders(orders, extra_bid_pct=0.002)
 
-        prices = [c.kwargs["price"] for c in self.mock_account.create_order.call_args_list]
-        self.assertEqual(prices, [120.35, 21.29])
+        oe = OrderExecutor(Position({}), self.mock_account)
+        oe.execute_orders(orders, extra_bid_pct=0.002)
+
+        calls = self.mock_account.create_order.call_args_list
+        self.assertEqual([c.kwargs["price"] for c in calls], [120.35, 21.29])
 
     def test_execute_orders_market_order(self) -> None:
         """測試市價單"""
