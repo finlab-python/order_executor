@@ -127,18 +127,25 @@ class FubonAccount(Account, RealtimeProvider):
             logging.exception(f"登入失敗: {e}")
             raise Exception(f"無法登入富邦證券: {e}") from e
 
-        # 選擇帳戶
+        # 選擇帳戶：指定的帳號找不到就報錯，不改用別的帳號（可能是另一個證券或期貨帳號）
         if self.account:
             self.target_account = next(
                 (acc for acc in self.accounts.data if acc.account == self.account), None
             )
             if not self.target_account:
-                logging.warning(f"未找到指定帳號 {self.account}，將使用第一個帳號")
-                self.target_account = (
-                    self.accounts.data[0] if self.accounts.data else None
+                raise ValueError(
+                    f"未找到指定帳號 {self.account}，可用帳號："
+                    f"{[acc.account for acc in self.accounts.data or []]}"
                 )
         else:
-            self.target_account = self.accounts.data[0] if self.accounts.data else None
+            self.target_account = next(
+                (
+                    acc
+                    for acc in self.accounts.data or []
+                    if getattr(acc, "account_type", "stock") == "stock"
+                ),
+                None,
+            )
 
         if not self.target_account:
             raise ValueError("無法獲取有效的富邦證券帳戶")
@@ -340,8 +347,9 @@ class FubonAccount(Account, RealtimeProvider):
         dedicated_account_balance = get_first_valid_float(
             payload, "dedicated_account_balance", "dedicatedAccountBalance"
         )
-        settlement = to_optional_float(self.get_settlement())
-        total_balance = to_optional_float(self.get_total_balance())
+        # 子查詢失敗時該欄位留空，現金照常推送
+        settlement = self._safe_call_number("get_settlement")
+        total_balance = self._safe_call_number("get_total_balance")
 
         return BalanceUpdate(
             account_id=str(getattr(self.target_account, "account", "")),
@@ -659,18 +667,23 @@ class FubonAccount(Account, RealtimeProvider):
         except Exception as e:
             logging.warning(f"登出時發生錯誤: {e}")
 
-    @handle_exceptions(default_return=0, log_prefix="get_cash: ")
     def get_cash(self) -> float:
         """
         獲取可用資金
 
         Returns:
             float: 可用資金
+
+        Raises:
+            ValueError: 查詢失敗時，不回傳 0，避免總淨值少算現金
         """
         result = self.sdk.accounting.bank_remain(self.target_account)
         if result and result.is_success and result.data:
             return float(getattr(result.data, "available_balance", 0))
-        raise ValueError("無法獲取可用資金")
+        raise ValueError(
+            "無法獲取可用資金（富邦只支援交割銀行為台北富邦銀行或 LINE Bank 的帳戶查詢）: "
+            f"{getattr(result, 'message', '未知錯誤')}"
+        )
 
     def get_orders(self) -> dict[str, Order]:
         """
@@ -1103,155 +1116,89 @@ class FubonAccount(Account, RealtimeProvider):
 
     def get_settlement(self) -> float:
         """
-        獲取未交割款項
+        獲取未交割款項（過去 3 天）
 
         Returns:
             float: 未交割款項
+
+        Raises:
+            ValueError: 查詢失敗時，不回傳 0，避免總淨值少算交割款
         """
-        try:
-            # 獲取交割資訊 - 只查詢過去 3 天
-            total_settlement = 0
+        result = self.sdk.accounting.query_settlement(self.target_account, "3d")
+        logging.debug(result)
+        if not result or not result.is_success:
+            raise ValueError(
+                f"get_settlement: 無法獲取交割資訊: {getattr(result, 'message', '未知錯誤')}"
+            )
 
-            try:
-                result = self.sdk.accounting.query_settlement(self.target_account, "3d")
-                logging.debug(result)
-                if not result or not result.is_success or not result.data:
-                    logging.warning("get_settlement: 無法獲取 3d 交割資訊")
-                    return 0
+        total_settlement = 0.0
+        for detail in getattr(result.data, "details", None) or []:
+            # 交割日為空時表示無交割資訊
+            amount = getattr(detail, "total_settlement_amount", None)
+            if getattr(detail, "settlement_date", None) and amount is not None:
+                total_settlement += float(amount)
 
-                # 取得交割款資料
-                settlement_data = result.data
-                if (
-                    not hasattr(settlement_data, "details")
-                    or not settlement_data.details
-                ):
-                    return 0
-
-                # 處理每一筆交割款資料
-                for detail in settlement_data.details:
-                    try:
-                        # 交割日為空時表示無交割資訊
-                        if not getattr(detail, "settlement_date", None):
-                            continue
-
-                        # 使用合計交割金額欄位
-                        total_settlement_amount = getattr(
-                            detail, "total_settlement_amount", None
-                        )
-                        if total_settlement_amount is not None:
-                            # 加入總交割款
-                            total_settlement += float(total_settlement_amount)
-                            logging.debug(
-                                f"get_settlement: 加入交割款 {total_settlement_amount}, 日期: {getattr(detail, 'settlement_date', 'unknown')}"
-                            )
-                    except Exception as e:
-                        logging.warning(
-                            f"get_settlement: 處理交割款明細時發生錯誤: {e}"
-                        )
-            except Exception as e:
-                logging.warning(f"get_settlement: 查詢 3d 交割款失敗: {e}")
-
-            logging.info(f"get_settlement: 總交割款 = {total_settlement}")
-            return total_settlement
-
-        except Exception as e:
-            logging.warning(f"get_settlement: 獲取未交割款項失敗: {e}")
-            return 0
+        logging.info(f"get_settlement: 總交割款 = {total_settlement}")
+        return total_settlement
 
     def get_total_balance(self) -> float:
         """
         計算帳戶總淨值
 
-        總淨值 = 持倉市值 + 現金 + 未交割款項
+        總淨值 = 現股與融資市值 - 融券市值 - 融資金額 + 融券擔保品 + 融券保證金 + 現金 + 未交割款項
 
         Returns:
             float: 總淨值
+
+        Raises:
+            ValueError: 任一查詢失敗時，不回傳少算的淨值，避免 executor 依偏小的資金賣出持股
         """
-        try:
-            # 獲取可用資金
-            cash = self.get_cash()
+        cash = self.get_cash()
+        settlements = self.get_settlement()
 
-            # 獲取未交割款項
-            settlements = self.get_settlement()
+        result = self.sdk.accounting.unrealized_gains_and_loses(self.target_account)
+        if not result or not result.is_success:
+            raise ValueError(
+                f"get_total_balance: 無法獲取持倉資訊: {getattr(result, 'message', '未知錯誤')}"
+            )
+        holdings = [
+            p
+            for p in result.data or []
+            if getattr(p, "stock_no", "") and float(getattr(p, "today_qty", 0) or 0)
+        ]
 
-            # 獲取持倉市值
-            total_position_value = 0
+        stocks = (
+            self.get_stocks(list({p.stock_no for p in holdings})) if holdings else {}
+        )
+        total_position_value = 0.0
+        for p in holdings:
+            price = stocks[p.stock_no].close if p.stock_no in stocks else 0
+            if not price:
+                raise ValueError(f"get_total_balance: 無法獲取 {p.stock_no} 的股價")
+            value = abs(float(p.today_qty)) * price
+            # 融券是借來賣出的股票，市值要還給券商
+            total_position_value += -value if p.order_type == OrderType.Short else value
 
-            try:
-                # 使用未實現損益 API 獲取持倉資訊
-                result = self.sdk.accounting.unrealized_gains_and_loses(
-                    self.target_account
+        # 有信用部位時，扣回融資借款、加回融券擔保品與保證金
+        credit_value = 0.0
+        if any(p.order_type in (OrderType.Margin, OrderType.Short) for p in holdings):
+            maint = self.sdk.accounting.maintenance(self.target_account)
+            if not maint or not maint.is_success or not maint.data:
+                raise ValueError(
+                    f"get_total_balance: 無法獲取融資融券資訊: {getattr(maint, 'message', '未知錯誤')}"
                 )
-                if not result or not result.is_success:
-                    logging.warning("get_total_balance: 無法獲取持倉資訊")
-                    return cash + settlements
+            summary = maint.data.maintenance_summary
+            credit_value = (
+                float(summary.collateral)
+                + float(summary.shortsell_margin)
+                - float(summary.margin_loan_amt)
+            )
 
-                # 打印調試資訊
-                logging.debug(
-                    f"get_total_balance: unrealized_gains_and_loses API 回傳: {result}"
-                )
-
-                if not result.data:
-                    logging.info("get_total_balance: 目前沒有持倉")
-                    return cash + settlements
-
-                # 計算所有持倉的市值
-                for position_data in result.data:
-                    try:
-                        stock_id = getattr(position_data, "stock_no", "")
-                        today_qty = getattr(position_data, "today_qty", 0)
-
-                        if not stock_id or not today_qty or float(today_qty) == 0:
-                            continue
-
-                        # 獲取當前股價來計算市值
-                        try:
-                            stock_data = self.get_stocks([stock_id])
-                            if stock_id in stock_data:
-                                current_price = stock_data[stock_id].close
-                                if current_price:
-                                    # 計算市值 (股數 * 現價)  # noqa: ERA001
-                                    position_value = (
-                                        abs(float(today_qty)) * current_price
-                                    )
-                                    total_position_value += position_value
-                                    logging.info(
-                                        f"get_total_balance: {stock_id} 數量={today_qty}, 現價={current_price}, 市值={position_value}"
-                                    )
-                                else:
-                                    logging.warning(
-                                        f"get_total_balance: {stock_id} 無法獲取有效價格"
-                                    )
-                            else:
-                                logging.warning(
-                                    f"get_total_balance: 無法獲取 {stock_id} 的股價資訊"
-                                )
-                        except Exception as e:
-                            logging.warning(
-                                f"get_total_balance: 計算 {stock_id} 市值時發生錯誤: {e}"
-                            )
-
-                    except Exception as e:
-                        logging.warning(
-                            f"get_total_balance: 處理持倉項目時發生錯誤: {e}"
-                        )
-
-                # 計算總淨值：持倉市值 + 現金 + 未交割款項
-                total_balance = total_position_value + cash + settlements
-
-                logging.info(
-                    f"總淨值計算: 持倉市值={total_position_value}, 現金={cash}, 未交割款項={settlements}, 總淨值={total_balance}"
-                )
-
-                return total_balance
-
-            except Exception as e:
-                logging.warning(f"get_total_balance: 處理持倉資訊時發生錯誤: {e}")
-                return cash + settlements
-
-        except Exception as e:
-            logging.warning(f"get_total_balance: 獲取總資產失敗: {e}")
-            return 0
+        total_balance = total_position_value + credit_value + cash + settlements
+        logging.info(
+            f"總淨值計算: 持倉市值={total_position_value}, 融資融券調整={credit_value}, 現金={cash}, 未交割款項={settlements}, 總淨值={total_balance}"
+        )
+        return total_balance
 
     def create_order(
         self,
@@ -1292,7 +1239,26 @@ class FubonAccount(Account, RealtimeProvider):
         # 確定價格類型
         price_type = PriceType.Limit
         if market_type == MarketType.Fixing:
-            # 盤後定價只接受參考價（定盤價）委託
+            # 盤後定價只接受參考價（定盤價）委託，以收盤價成交；
+            # 掛芭樂價或限價比收盤價差的單原本就不想以收盤價成交，不送
+            if best_price_limit:
+                logging.error(
+                    f"create_order: 定盤時段不送 best_price_limit 委託 {stock_id}"
+                )
+                return None
+            if price is not None and not market_order:
+                stock = self.get_stocks([stock_id]).get(stock_id)
+                close = stock.close if stock else 0
+                worse = (
+                    float(price) < close
+                    if action == Action.BUY
+                    else float(price) > close
+                )
+                if not close or worse:
+                    logging.error(
+                        f"create_order: 定盤時段以收盤價 {close} 成交，不送限價 {price} 的委託 {stock_id}"
+                    )
+                    return None
             price = None
             price_type = PriceType.Reference
         elif best_price_limit:
@@ -1314,7 +1280,13 @@ class FubonAccount(Account, RealtimeProvider):
             order_type = OrderType.Margin
         elif order_cond == OrderCondition.SHORT_SELLING:
             order_type = OrderType.Short
-        elif order_cond == OrderCondition.DAY_TRADING_SHORT:
+        elif order_cond == OrderCondition.DAY_TRADING_SHORT and action == Action.SELL:
+            # 現沖先賣只有盤中整股賣出送 DayTrade，回補買進送現股
+            if market_type != MarketType.Common:
+                logging.error(
+                    f"create_order: 現沖先賣只能盤中整股賣出，不送 {stock_id} {quantity} 的 {market_type} 委託"
+                )
+                return None
             order_type = OrderType.DayTrade
 
         # 設定委託時效
@@ -1400,6 +1372,7 @@ class FubonAccount(Account, RealtimeProvider):
             price (float, optional): 新價格
             quantity (float, optional): 新數量
         """
+        reorder_failed = False
         try:
             # 獲取委託單
             order = self.get_orders()[order_id]
@@ -1419,9 +1392,10 @@ class FubonAccount(Account, RealtimeProvider):
                     # 零股模式需要特別處理：取消原委託單並重新創建
                     action = order.action
                     stock_id = order.stock_id
-                    filled_qty = getattr(order_record, "filled_qty", 0)
-                    org_qty = getattr(order_record, "quantity", 0)
-                    qty = float(org_qty) - float(filled_qty)
+                    # 依有效委託量（減過量的委託不是原始委託量）扣掉已成交，換回股數
+                    qty = round(
+                        (order.quantity - order.filled_quantity) * STOCK_LOT_SIZE
+                    )
 
                     modify_qty_obj = self.sdk.stock.make_modify_quantity_obj(
                         order_record, 0
@@ -1440,16 +1414,20 @@ class FubonAccount(Account, RealtimeProvider):
 
                     # 創建新委託單
                     if qty > 0:
-                        self.create_order(
-                            action=action,
-                            stock_id=stock_id,
-                            quantity=qty,
-                            price=price,
-                            odd_lot=True,
+                        reorder_failed = (
+                            self.create_order(
+                                action=action,
+                                stock_id=stock_id,
+                                quantity=qty,
+                                price=price,
+                                odd_lot=True,
+                            )
+                            is None
                         )
-                        logging.info(
-                            f"已以新價格 {price} 重新創建零股委託單 {stock_id}"
-                        )
+                        if not reorder_failed:
+                            logging.info(
+                                f"已以新價格 {price} 重新創建零股委託單 {stock_id}"
+                            )
                 else:
                     # 整股模式使用 make_modify_price_obj 及 modify_price
                     try:
@@ -1515,41 +1493,45 @@ class FubonAccount(Account, RealtimeProvider):
         except Exception as e:
             logging.warning(f"update_order: 更新委託單 {order_id} 時發生錯誤: {e}")
 
+        if reorder_failed:
+            # 原委託已刪除，不能只記 log 讓人以為改價成功
+            raise ValueError(
+                f"update_order: 零股委託單 {order_id} 已刪除，以新價格 {price} 重下失敗"
+            )
+
     def cancel_order(self, order_id: str) -> None:
         """
         取消委託單
 
         Args:
             order_id (str): 委託單編號
+
+        Raises:
+            ValueError: 查詢委託或刪單失敗時，避免 executor 在舊單還有效時再下新單
         """
-        try:
-            # 獲取所有委託單
-            orders = self.get_orders()
-            if not orders or order_id not in orders:
-                logging.warning(f"cancel_order: 找不到委託單 {order_id}")
-                return
+        # 獲取所有委託單
+        orders = self.get_orders()
+        if order_id not in orders:
+            logging.warning(f"cancel_order: 找不到委託單 {order_id}")
+            return
 
-            order = orders[order_id]
-            org_order = order.org_order
+        order = orders[order_id]
+        org_order = order.org_order
 
-            logging.debug(f"#cancel_order order({order_id}): {order}")
+        logging.debug(f"#cancel_order order({order_id}): {order}")
 
-            # 檢查是否可以取消
-            can_cancel = getattr(org_order, "can_cancel", True)  # 預設可取消
+        # 檢查是否可以取消
+        can_cancel = getattr(org_order, "can_cancel", True)  # 預設可取消
 
-            if can_cancel:
-                result = self.sdk.stock.cancel_order(self.target_account, org_order)
-                if not result or not result.is_success:
-                    logging.warning(
-                        f"cancel_order: 無法取消委託單 {order_id}: {result.message if result else '未知錯誤'}"
-                    )
-                else:
-                    logging.info(f"已取消委託單 {order_id}")
-            else:
-                logging.warning(f"cancel_order: 委託單 {order_id} 不可取消")
-
-        except Exception as e:
-            logging.warning(f"cancel_order: 取消委託單 {order_id} 時發生錯誤: {e}")
+        if can_cancel:
+            result = self.sdk.stock.cancel_order(self.target_account, org_order)
+            if not result or not result.is_success:
+                raise ValueError(
+                    f"cancel_order: 無法取消委託單 {order_id}: {result.message if result else '未知錯誤'}"
+                )
+            logging.info(f"已取消委託單 {order_id}")
+        else:
+            logging.warning(f"cancel_order: 委託單 {order_id} 不可取消")
 
     def _get_order_timestamp(self, order: Any) -> datetime.datetime:
         """

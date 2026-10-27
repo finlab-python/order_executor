@@ -60,6 +60,7 @@ class FubonSDKMock:
         account_mock = Mock()
         account_mock.account = "26"
         account_mock.branch_no = "6460"
+        account_mock.account_type = "stock"
 
         login_result = Mock()
         login_result.data = [account_mock]
@@ -230,7 +231,7 @@ class FubonAccountMockHelper:
                 "FUBON_ACCOUNT_PASS": "test_password",
                 "FUBON_CERT_PATH": "/test/path/cert.pfx",
                 "FUBON_CERT_PASS": "cert_password",
-                "FUBON_ACCOUNT": "test_account",
+                "FUBON_ACCOUNT": "26",
             },
         )
 
