@@ -1,4 +1,4 @@
-"""嘉信：改價時取消失敗不重下、委託只查本帳戶（order_executor#37）"""
+"""嘉信：改價時取消失敗不重下、委託只查本帳戶（order_executor#37）；查詢失敗報錯、略過 OCO（#54）"""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import importlib
 import sys
 import types
 from typing import Any
+
+import pytest
 
 ORDER = {
     "status": "WORKING",
@@ -28,9 +30,17 @@ class _FakeClient:
     def __init__(self, cancel_status: int) -> None:
         self.cancel_status = cancel_status
         self.placed: list[dict[str, Any]] = []
+        self.accounts = _response(200, [{"securitiesAccount": {}}])
+        self.orders = _response(200, [{**ORDER, "orderId": 1}])
+        self.Account = types.SimpleNamespace(
+            Fields=types.SimpleNamespace(POSITIONS="positions")
+        )
+
+    def get_accounts(self, fields: Any = None) -> Any:
+        return self.accounts
 
     def get_orders_for_account(self, account_hash: str) -> Any:
-        return _response(200, [{**ORDER, "orderId": 1}])
+        return self.orders
 
     def get_orders_for_all_linked_accounts(self) -> Any:
         return _response(200, [{**ORDER, "orderId": 1}, {**ORDER, "orderId": 2}])
@@ -75,3 +85,31 @@ def test_update_order_keeps_original_when_cancel_fails(monkeypatch: Any) -> None
 
 def test_get_orders_only_this_account(monkeypatch: Any) -> None:
     assert list(_account(monkeypatch).get_orders()) == [1]
+
+
+def test_get_position_without_holdings_is_empty(monkeypatch: Any) -> None:
+    assert _account(monkeypatch).get_position().position == []
+
+
+def test_query_failure_raises_instead_of_empty(monkeypatch: Any) -> None:
+    from finlab.online.core.executor import OrderExecutor
+    from finlab.online.core.position import Position
+
+    account = _account(monkeypatch)
+    account.client.accounts = _response(429)
+    account.client.orders = _response(500)
+    with pytest.raises(ValueError):
+        account.get_position()
+    with pytest.raises(ValueError):
+        account.get_orders()
+    with pytest.raises(ValueError):
+        OrderExecutor(Position({"AAPL": 10}), account).create_orders()
+    assert account.client.placed == []
+
+
+def test_get_orders_skips_oco_keeps_others(monkeypatch: Any) -> None:
+    account = _account(monkeypatch)
+    oco = {"orderId": 7, "status": "WORKING", "orderStrategyType": "OCO",
+           "childOrderStrategies": [{**ORDER, "orderId": 8}]}  # fmt: skip
+    account.client.orders = _response(200, [{**ORDER, "orderId": 1}, oco])
+    assert list(account.get_orders()) == [1]

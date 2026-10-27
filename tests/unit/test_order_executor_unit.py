@@ -216,6 +216,23 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         orders = OrderExecutor(target, self.mock_account).generate_orders()
         self.assertEqual(orders[0]["order_condition"], OrderCondition.DAY_TRADING_LONG)
 
+    def test_generate_orders_cash_short_held_as_short_selling(self) -> None:
+        """空單目標是現股、券商回報成融券時，同步不再一賣一買"""
+        short = Position({"AAPL": -26}, short_selling=True)
+        # (現有部位, 目標部位, 預期委託)；沒有融券部位時照舊送現股賣出
+        for present, target, expected in [
+            (short, Position({"AAPL": -26}), []),
+            (short, Position({"AAPL": -26}, short_selling=True), []),
+            (short, Position({"AAPL": -30}), [(-4, OrderCondition.SHORT_SELLING)]),
+            (Position({}), Position({"AAPL": -26}), [(-26, OrderCondition.CASH)]),
+        ]:
+            with self.subTest(present=present, target=target):
+                self.mock_account.get_position.return_value = present
+                orders = OrderExecutor(target, self.mock_account).generate_orders()
+                self.assertEqual(
+                    [(o["quantity"], o["order_condition"]) for o in orders], expected
+                )
+
     def test_cancel_orders(self) -> None:
         """測試取消委託單"""
         # 設置現有委託單

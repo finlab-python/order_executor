@@ -287,64 +287,66 @@ class SchwabAccount(Account):
 
         Returns:
             Position: 當前持倉資訊
+
+        Raises:
+            ValueError: 查詢失敗（例如限流、5xx）時，不回傳空部位，避免整份目標再買一次
         """
-        try:
-            position_response = self.client.get_accounts(
-                fields=self.client.Account.Fields.POSITIONS
+        position_response = self.client.get_accounts(
+            fields=self.client.Account.Fields.POSITIONS
+        )
+        if position_response.status_code != 200:
+            raise ValueError(
+                f"API: 獲取持倉失敗: {position_response.status_code}: {position_response.text}"
             )
-            if position_response.status_code != 200:
-                logger.error(
-                    f"API: 獲取持倉失敗: {position_response.status_code}: {position_response.text}"
-                )
-                return Position.from_list([])
 
-            position = position_response.json()[0]["securitiesAccount"]["positions"]
+        # 沒有持股時回應裡沒有 positions
+        position = position_response.json()[0]["securitiesAccount"].get("positions", [])
 
-            # TODO: 確認是否需要處理其他類型的資產
-            return Position.from_list(
-                # 計算 quantity，需要考慮 longQuantity 和 shortQuantity
-                [
-                    {
-                        "stock_id": p["instrument"]["symbol"],
-                        "quantity": (
-                            float(p["longQuantity"]) - float(p["shortQuantity"])
-                        ),
-                        "order_condition": OrderCondition.SHORT_SELLING
-                        if p["shortQuantity"] > 0
-                        else OrderCondition.CASH,
-                    }
-                    for p in position
-                ]
-            )
-        except Exception as e:
-            logger.error(f"API: 獲取持倉時發生錯誤: {e}")
-            return Position.from_list([])
+        # TODO: 確認是否需要處理其他類型的資產
+        return Position.from_list(
+            # 計算 quantity，需要考慮 longQuantity 和 shortQuantity
+            [
+                {
+                    "stock_id": p["instrument"]["symbol"],
+                    "quantity": float(p["longQuantity"]) - float(p["shortQuantity"]),
+                    "order_condition": OrderCondition.SHORT_SELLING
+                    if p["shortQuantity"] > 0
+                    else OrderCondition.CASH,
+                }
+                for p in position
+            ]
+        )
 
     def get_orders(self) -> dict[int, Order]:
         """獲取所有未完成的訂單
 
         Returns:
             Dict[int, Order]: 訂單ID到訂單對象的映射
+
+        Raises:
+            ValueError: 查詢失敗時，不回傳空委託，避免舊單沒被取消
         """
-        try:
-            orders_response = self.client.get_orders_for_account(self.account_hash)
-            if orders_response.status_code != 200:
-                logger.error(
-                    f"API: 獲取訂單失敗: {orders_response.status_code}: {orders_response.text}"
+        orders_response = self.client.get_orders_for_account(self.account_hash)
+        if orders_response.status_code != 200:
+            raise ValueError(
+                f"API: 獲取訂單失敗: {orders_response.status_code}: {orders_response.text}"
+            )
+
+        orders = orders_response.json()
+
+        active_statuses = [OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED]
+        ret = {}
+        for t in orders:
+            if map_trade_status(t["status"]) not in active_statuses:
+                continue
+            # OCO 等組合委託的各腳在 childOrderStrategies 裡，不解析也不動它，其他委託照常回傳
+            if "orderLegCollection" not in t:
+                logger.warning(
+                    f"API: 略過組合委託 {t['orderId']}（{t.get('orderStrategyType')}），請自行管理"
                 )
-                return {}
-
-            orders = orders_response.json()
-
-            active_statuses = [OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED]
-            return {
-                t["orderId"]: trade_to_order(t)
-                for t in orders
-                if map_trade_status(t["status"]) in active_statuses
-            }
-        except Exception as e:
-            logger.error(f"API: 獲取訂單時發生錯誤: {e}")
-            return {}
+                continue
+            ret[t["orderId"]] = trade_to_order(t)
+        return ret
 
     def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
         """獲取股票資訊
