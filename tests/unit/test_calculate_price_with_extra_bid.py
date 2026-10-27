@@ -123,3 +123,9 @@ def test_calculate_price_with_extra_bid_us_market() -> None:
 
 def test_calculate_price_with_extra_bid_decimal_price() -> None:
     assert calculate_price_with_extra_bid(Decimal("100"), 0.001) == Decimal("100.1")
+
+
+def test_calculate_price_with_extra_bid_tw_etf() -> None:
+    assert calculate_price_with_extra_bid(120.15, 0.002, symbol="006208") == 120.35
+    assert calculate_price_with_extra_bid(52.35, 0.0005, symbol="0050") == 52.35
+    assert calculate_price_with_extra_bid(21.33, -0.001, symbol="00878") == 21.31
