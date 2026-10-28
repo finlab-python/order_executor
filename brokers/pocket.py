@@ -8,7 +8,7 @@ import time
 from decimal import Decimal
 from typing import Any
 
-import pocket as pk
+import pocketx as pk
 
 from finlab import data
 from finlab.markets.tw import TWMarket
@@ -19,6 +19,14 @@ from finlab.online.core.realtime_normalizers import to_optional_float
 from finlab.online.core.utils import estimate_stock_price
 
 class PocketAccount(Account):
+    """口袋證券帳戶，使用官方 ``pocketx`` SDK（不是 PyPI 的 ``pocket``）。
+
+    安裝：``pip install pocketx``。搭配 FinLab 建議使用 Python 3.12；此時
+    pocketx 0.0.4 由原始碼編譯，需 C 編譯器（官方預編譯 wheel 僅供 Python 3.9）。
+    SDK 使用 audioop，不支援 Python 3.13 以上。正式下單的憑證簽章僅支援 Windows。
+    官方安裝說明：https://felixchih.github.io/PocketxDocs/zh/prepare/
+    """
+
     def __init__(
         self,
         api_key: str | None = None,

@@ -33,6 +33,13 @@ __all__ = [
     "typesafe_op",
 ]
 
+
+def __getattr__(name: str) -> type:
+    if name == "PocketAccount":
+        return getattr(importlib.import_module("finlab.online.brokers.pocket"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # Legacy import paths (e.g. finlab.online.sinopac_account) redirected to
 # their real locations.  Broker modules load lazily — heavy deps like
 # shioaji are only pulled in when actually used.
