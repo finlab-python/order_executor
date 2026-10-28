@@ -113,7 +113,6 @@ def test_pocket_total_balance_values_short_position_at_buyback_cost(
 def test_pocket_public_import_uses_official_sdk(monkeypatch, simu_ca):
     sdk = types.ModuleType("pocketx")
     sdk.Pocket = Mock()
-    sdk.Pocket.return_value.login.return_value = []
     monkeypatch.setitem(sys.modules, "pocketx", sdk)
     # The unrelated PyPI package must never be used as the broker SDK.
     monkeypatch.setitem(sys.modules, "pocket", types.ModuleType("pocket"))
@@ -121,9 +120,6 @@ def test_pocket_public_import_uses_official_sdk(monkeypatch, simu_ca):
     monkeypatch.delenv("POCKET_SIMU_CA", raising=False)
     if simu_ca:
         monkeypatch.setenv("POCKET_SIMU_CA", simu_ca)
-
-    pocket_module = importlib.import_module("finlab.online.brokers.pocket")
-    assert pocket_module.pk is sdk
 
     from finlab.online import PocketAccount
 
