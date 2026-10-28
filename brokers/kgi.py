@@ -19,6 +19,8 @@ from finlab.online.core.realtime_normalizers import calculate_tick_pct_change
 
 logger = logging.getLogger(__name__)
 
+_FROM_KGI_ACTION = {kgi.Action.Buy: Action.BUY, kgi.Action.Sell: Action.SELL}
+
 _TO_KGI_COND = {
     OrderCondition.CASH: kgi.OrderCond.CASH,
     OrderCondition.MARGIN_TRADING: kgi.OrderCond.MARGIN,
@@ -114,10 +116,10 @@ class KGIAccount(Account):
             stock_id,
             int(quantity),
             price,
-            odd_lot,
-            market_order,
-            best_price_limit,
             _TO_KGI_COND[order_cond],
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
         )
 
     def _place(
@@ -126,10 +128,11 @@ class KGIAccount(Account):
         stock_id: str,
         qty: int,
         price: Any,
-        odd_lot: bool,
-        market_order: bool,
-        best_price_limit: bool,
         cond: Any,
+        *,
+        odd_lot: bool = False,
+        market_order: bool = False,
+        best_price_limit: bool = False,
     ) -> str | None:
         is_buy = action == Action.BUY
         # 盤別依台北時間判斷，不用 SDK 以分鐘比對的自動判斷（14:00 整會送成整股盤中）
@@ -262,14 +265,12 @@ class KGIAccount(Account):
             return None
         order = trade.order
         new_order_id = self._place(
-            Action.BUY if order.action == kgi.Action.Buy else Action.SELL,
+            _FROM_KGI_ACTION[order.action],
             order.symbol,
             qty,
             price,
-            order.odd_lot in _ODD_LOTS,
-            False,
-            False,
             order.order_cond,
+            odd_lot=order.odd_lot in _ODD_LOTS,
         )
         if not new_order_id:
             raise RuntimeError(
@@ -292,14 +293,15 @@ class KGIAccount(Account):
 
     def get_orders(self) -> dict[str, Order]:
         trades = self.api.Order.get_trades(True)
+        today = datetime.datetime.now(TWMarket.tzinfo()).date()
         # 委託回報在背景執行緒更新，先複製一份；「無效單」是失敗委託的清單
         return {
-            order_id: self._to_order(order_id, trade)
+            order_id: self._to_order(order_id, trade, today)
             for order_id, trade in list(trades.items())
             if order_id != "無效單"
         }
 
-    def _to_order(self, order_id: str, trade: Any) -> Order:
+    def _to_order(self, order_id: str, trade: Any, today: datetime.date) -> Order:
         order, order_status = trade.order, trade.order_status
         divisor = 1000 if order.odd_lot in _ODD_LOTS else 1
         filled = Decimal(self._filled(trade)) / divisor
@@ -320,11 +322,10 @@ class KGIAccount(Account):
             price = order.price
         digits = "".join(c for c in str(trade.operations[0].op_time) if c.isdigit())
         op_time = digits[:6].ljust(6, "0")
-        today = datetime.datetime.now(TWMarket.tzinfo()).date()
         return Order(
             order_id=order_id,
             stock_id=order.symbol,
-            action=Action.BUY if order.action == kgi.Action.Buy else Action.SELL,
+            action=_FROM_KGI_ACTION[order.action],
             price=price,
             quantity=filled + remaining,
             filled_quantity=filled,
