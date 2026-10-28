@@ -14,7 +14,6 @@ Multi-broker order execution framework for automated portfolio rebalancing. Part
 | Binance | `brokers.binance` | No |
 | Pocket | `brokers.pocket` | No |
 | E.SUN | `brokers.esun` | Yes (via Fugle) |
-| Yuanta | `brokers.yuanta` | No |
 
 ## Package Structure
 

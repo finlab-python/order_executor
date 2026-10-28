@@ -539,7 +539,7 @@ class YuantaAccount(Account):
                 bid_volume=q.BidQty,
                 ask_price=book(q.SellPrice),
                 ask_volume=q.AskQty,
-                pct_change=calculate_tick_pct_change(q.DealPrice, q.YstPrice),
+                pct_change=calculate_tick_pct_change(self._last_price(q), q.YstPrice),
             )
             for sid, q in self._quotes(stock_ids).items()
         }

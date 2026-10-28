@@ -288,7 +288,8 @@ def test_quotes_fall_back_to_otc(make_account):
 def test_quote_before_the_first_trade_uses_reference_price(make_account):
     acc, _ = make_account()
     acc.api.deal_price = 0.0
-    assert acc.get_stocks(["2330"])["2330"].close == 560.0
+    stock = acc.get_stocks(["2330"])["2330"]
+    assert (stock.close, stock.pct_change) == (560.0, 0.0)  # 不是 -100%
     acc.create_order(Action.SELL, "2330", 1)
     assert acc.api.sent[-1].Price == 560.0
 
