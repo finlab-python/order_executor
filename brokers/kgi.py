@@ -11,6 +11,7 @@ from typing import Any
 import kgisuperpy as kgi
 
 from finlab import data
+from finlab.compat import resolve_id_column
 from finlab.markets.tw import TWMarket
 from finlab.online.core.account import Account, Order, Stock
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
@@ -60,7 +61,6 @@ class KGIAccount(Account):
     ) -> None:
         person_id = person_id or os.environ.get("KGI_PERSON_ID")
         password = password or os.environ.get("KGI_PASSWORD")
-        account = account or os.environ.get("KGI_ACCOUNT")
         if not person_id or not password:
             raise ValueError(
                 "請設定凱基身分證字號與登入密碼：KGI_PERSON_ID、KGI_PASSWORD"
@@ -77,9 +77,8 @@ class KGIAccount(Account):
         ]
         if not accounts:
             raise ValueError("這個身分證字號下沒有凱基證券帳號")
-        if account is None:
-            account = accounts[0]
-        elif account not in accounts:
+        account = account or os.environ.get("KGI_ACCOUNT") or accounts[0]
+        if account not in accounts:
             raise ValueError(f"找不到凱基證券帳號 {account}，可用的帳號：{accounts}")
         self.api.set_Account(account)
         # SDK 預設把每則委託回報 print 出來
@@ -116,7 +115,7 @@ class KGIAccount(Account):
         if action == Action.SELL and order_cond == OrderCondition.DAY_TRADING_SHORT:
             cond = kgi.OrderCond.CASH_SELLING
         return self._place(
-            action,
+            kgi.Action.Buy if action == Action.BUY else kgi.Action.Sell,
             stock_id,
             int(quantity),
             price,
@@ -128,7 +127,7 @@ class KGIAccount(Account):
 
     def _place(
         self,
-        action: Action,
+        side: Any,
         stock_id: str,
         qty: int,
         price: Any,
@@ -138,7 +137,7 @@ class KGIAccount(Account):
         market_order: bool = False,
         best_price_limit: bool = False,
     ) -> str | None:
-        is_buy = action == Action.BUY
+        is_buy = side == kgi.Action.Buy
         # 盤別依台北時間判斷，不用 SDK 以分鐘比對的自動判斷（14:00 整會送成整股盤中）
         now = datetime.datetime.now(TWMarket.tzinfo()).time()
         if odd_lot:
@@ -150,43 +149,37 @@ class KGIAccount(Account):
             lot = kgi.OddLot.Common
 
         # 一律送數字限價，漲跌停價與成交價從快照取，不用 SDK 的漲跌停旗標
-        snapshot = None
-        if (
-            lot == kgi.OddLot.Fixing
-            or market_order
-            or best_price_limit
-            or price is None
-        ):
+        fixing = lot == kgi.OddLot.Fixing
+        if price is not None and not (fixing or market_order or best_price_limit):
+            order_price = price
+        else:
             snapshot = self._snapshots([stock_id]).get(stock_id)
             if snapshot is None:
                 logger.warning(f"create_order: 查不到 {stock_id} 的報價，不送單")
                 return None
-
-        if lot == kgi.OddLot.Fixing:
-            # 盤後定價只以收盤價成交：芭樂價或比收盤價差的限價不送、不中斷，
-            # 呼叫端可能已先撤單，後面的單要照常下
-            close = float(self._last_price(snapshot))
-            if best_price_limit or (
-                not market_order
-                and price is not None
-                and (float(price) < close if is_buy else float(price) > close)
-            ):
-                logger.warning(
-                    f"create_order: 盤後定價只以收盤價成交，{stock_id} 的芭樂價或比收盤價差的限價不送單"
-                )
-                return None
-            order_price = close
-        elif market_order:
-            order_price = snapshot.limit_up if is_buy else snapshot.limit_down
-        elif best_price_limit:
-            order_price = snapshot.limit_down if is_buy else snapshot.limit_up
-        elif price is None:
-            order_price = self._last_price(snapshot)
-        else:
-            order_price = price
+            if fixing:
+                # 盤後定價只以收盤價成交：芭樂價或比收盤價差的限價不送、不中斷，
+                # 呼叫端可能已先撤單，後面的單要照常下
+                close = float(self._last_price(snapshot))
+                if best_price_limit or (
+                    not market_order
+                    and price is not None
+                    and (float(price) < close if is_buy else float(price) > close)
+                ):
+                    logger.warning(
+                        f"create_order: 盤後定價只以收盤價成交，{stock_id} 的芭樂價或比收盤價差的限價不送單"
+                    )
+                    return None
+                order_price = close
+            elif market_order:
+                order_price = snapshot.limit_up if is_buy else snapshot.limit_down
+            elif best_price_limit:
+                order_price = snapshot.limit_down if is_buy else snapshot.limit_up
+            else:
+                order_price = self._last_price(snapshot)
 
         trade = self.api.Order.create_order(
-            action=kgi.Action.Buy if is_buy else kgi.Action.Sell,
+            action=side,
             symbol=stock_id,
             qty=qty,
             price=float(order_price),
@@ -232,7 +225,7 @@ class KGIAccount(Account):
         # 以刪單回報確認的刪除量為準，刪單前一刻成交的量不重下
         qty = self._cancelled_qty(order_id)
         new_order_id = self._place(
-            Action.BUY if trade.order.action == kgi.Action.Buy else Action.SELL,
+            trade.order.action,
             trade.order.symbol,
             qty,
             price,
@@ -369,19 +362,23 @@ class KGIAccount(Account):
         inventory = self.api.Account.InventorySum("B")
         if inventory is None:
             raise RuntimeError("get_position: 凱基庫存查詢失敗")
-        columns = (
-            (OrderCondition.CASH, ("NETQTY0", "NETQTY9"), 1),
-            (OrderCondition.MARGIN_TRADING, ("NETQTY3",), 1),
-            (OrderCondition.SHORT_SELLING, ("NETQTY4",), -1),
-        )
+
+        def netqty(row: dict[str, Any], *names: str) -> int:
+            return sum(int(float(row.get(name) or 0)) for name in names)
+
         position = []
         for row in inventory.to_dict("records"):
-            for cond, names, sign in columns:
-                shares = sign * sum(int(float(row.get(name) or 0)) for name in names)
+            cash = netqty(row, "NETQTY0", "NETQTY9")
+            # 現股當沖先賣還沒買回時，現股餘額是負的，跟下單時一樣標成當沖賣
+            cash_cond = (
+                OrderCondition.DAY_TRADING_SHORT if cash < 0 else OrderCondition.CASH
+            )
+            for cond, shares in (
+                (cash_cond, cash),
+                (OrderCondition.MARGIN_TRADING, netqty(row, "NETQTY3")),
+                (OrderCondition.SHORT_SELLING, -netqty(row, "NETQTY4")),
+            ):
                 if shares:
-                    # 現股當沖先賣還沒買回時，現股餘額是負的，跟下單時一樣標成當沖賣
-                    if cond == OrderCondition.CASH and shares < 0:
-                        cond = OrderCondition.DAY_TRADING_SHORT
                     position.append(
                         {
                             "stock_id": row["Symbol"],
@@ -421,7 +418,7 @@ class KGIAccount(Account):
 
     def get_price_info(self) -> dict[str, dict[str, Any]]:
         ref = data.get("reference_price")
-        return ref.set_index("stock_id").to_dict(orient="index")
+        return ref.set_index(resolve_id_column(ref)).to_dict(orient="index")
 
     def get_market(self) -> TWMarket:
         return TWMarket()

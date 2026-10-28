@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import time
 from decimal import Decimal
 from enum import Enum
 from types import SimpleNamespace as NS
@@ -18,7 +19,6 @@ from ..utils.mock_helpers import patch_utc_host_clock
 SDK = NS(
     Action=Enum("Action", {"Buy": "B", "Sell": "S"}),
     TimeInForce=Enum("TimeInForce", {"ROD": 0}),
-    PriceType=Enum("PriceType", {"LMT": 0, "MKT": "1"}),
     OddLot=Enum("OddLot", {"Common": 0, "Odd_AfterMarket": 1, "Fixing": 2, "Odd": 4}),
     OrderCond=Enum("OrderCond", {"CASH": 0, "MARGIN": 3, "SHORT_SELLING": 4, "Lend_SELLING": 6,
                                  "MARGIN_DayTrade": 7, "SHORT_DayTrade": 8, "CASH_SELLING": 9}),
@@ -82,6 +82,10 @@ def make(monkeypatch):
         sys.modules.pop("finlab.online.brokers.kgi", None)
         module = importlib.import_module("finlab.online.brokers.kgi")
         patch_utc_host_clock(monkeypatch, module, utc_time)
+        # 假 SDK 同步回報，_ack 不必真的等
+        monkeypatch.setattr(
+            module, "time", NS(sleep=lambda _: None, monotonic=time.monotonic)
+        )
         acc = module.KGIAccount.__new__(module.KGIAccount)
         order = _Order()
         columns = ["OrderNo", "OrderFunc", "ErrCode", "BeforeQty", "AfterQty"]
@@ -105,9 +109,12 @@ def test_login_selects_stock_account_in_production(make, monkeypatch):
     ]
     api = NS(show_account=lambda: accounts, Order=NS(set_event=print), selected=[])
     api.set_Account = api.selected.append
-    monkeypatch.setattr(
-        SDK, "login", lambda *args: api.__dict__.update(args=args) or api, raising=False
-    )
+
+    def login(*args):
+        api.args = args
+        return api
+
+    monkeypatch.setattr(SDK, "login", login, raising=False)
     monkeypatch.setenv("KGI_PERSON_ID", "A123456789")
     monkeypatch.setenv("KGI_PASSWORD", "pw")
     from finlab.online.kgi_account import KGIAccount
