@@ -117,7 +117,7 @@ class Account(ABC):
     module_version: str = ""
 
     """股票帳戶的 abstract class
-    可以繼承此 Account，來實做券商的帳戶買賣動作，目前已經實做 SinopacAccount (永豐證券) 以及 FugleAccount (玉山富果)，來進行交易。可以用以下方式建構物件並用來交易：
+    可以繼承此 Account，來實做券商的帳戶買賣動作，目前已經實做 SinopacAccount (永豐證券) 以及 EsunAccount (玉山證券)，來進行交易。可以用以下方式建構物件並用來交易：
 
     永豐證券
     ```py
@@ -142,14 +142,14 @@ class Account(ABC):
 
     acc = SinopacAccount()
     ```
-    玉山富果:
+    玉山證券:
     ```py
-    from finlab.online.fugle_account import FugleAccount
+    from finlab.online.esun_account import EsunAccount
     import os
-    os.environ['FUGLE_CONFIG_PATH'] = '玉山富果交易設定檔(config.ini.example)路徑'
-    os.environ['FUGLE_MARKET_API_KEY'] = '玉山富果的行情API Token'
+    os.environ['ESUN_CONFIG_PATH'] = '玉山證券交易設定檔(config.ini.example)路徑'
+    os.environ['ESUN_MARKET_API_KEY'] = '玉山證券的行情API Token'
 
-    acc = FugleAccount()
+    acc = EsunAccount()
     ```
 
     """
