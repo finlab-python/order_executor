@@ -9,7 +9,6 @@ Multi-broker order execution framework for automated portfolio rebalancing. Part
 | Fugle | `brokers.fugle` | Yes |
 | Sinopac (Shioaji) | `brokers.sinopac` | Yes |
 | Fubon | `brokers.fubon` | Yes |
-| KGI | `brokers.kgi` | No |
 | Taishin (formerly Masterlink) | `brokers.taishin` (alias of `brokers.masterlink`) | Yes |
 | Schwab | `brokers.schwab` | No |
 | Binance | `brokers.binance` | No |

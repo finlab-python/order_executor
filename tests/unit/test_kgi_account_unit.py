@@ -178,8 +178,9 @@ def test_orders_reprice_and_cancel(make):
 def test_position_settlement_quotes(make):
     acc = make((3, 0, 0))
     acc.api.Account.InventorySum = lambda ftype: pd.DataFrame(
-        {"Symbol": ["2330", "2317", "2603"], "NETQTY0": ["2000", "-1000", "0"],
-         "NETQTY9": ["300", "0", "0"], "NETQTY3": ["1000", "0", "0"], "NETQTY4": ["0", "0", "2000"]}
+        {"Symbol": ["2330", "2317", "2603", "2882"], "NETQTY0": ["2000", "-1000", "0", "-1000"],
+         "NETQTY9": ["300", "0", "0", "300"], "NETQTY3": ["1000", "0", "0", "0"],
+         "NETQTY4": ["0", "0", "2000", "0"]}
     )  # fmt: skip
     acc.api.Account.SettleAmt = lambda ftype: pd.DataFrame(
         [{"CDate1": "20261021", "CSRPAMT1": "-100", "CDate2": "20261022",
@@ -194,8 +195,14 @@ def test_position_settlement_quotes(make):
         ("2330", OrderCondition.MARGIN_TRADING): 1,
         ("2317", OrderCondition.DAY_TRADING_SHORT): -1,  # 現股當沖先賣、還沒買回
         ("2603", OrderCondition.SHORT_SELLING): -2,
+        ("2882", OrderCondition.DAY_TRADING_SHORT): -1,
+        ("2882", OrderCondition.CASH): Decimal("0.3"),  # 零股不能當沖，留在現股
     }
     assert acc.get_settlement() == -150
     assert acc.get_stocks(["2330"])["2330"].pct_change == pytest.approx(3.5714, abs=1e-3)
+    # 開盤前還沒有成交價：收盤價用參考價，漲跌幅是 0，不是 -100%
+    acc.api.Data.get_snapshots = lambda ids: {i: NS(**{**vars(SNAP), "price": 0.0}) for i in ids}
+    stock = acc.get_stocks(["2330"])["2330"]
+    assert (stock.close, stock.pct_change) == (560.0, 0.0)
     with pytest.raises(NotImplementedError):
         acc.get_cash()

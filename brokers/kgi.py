@@ -352,7 +352,9 @@ class KGIAccount(Account):
                 bid_volume=s.bid_volume,
                 ask_price=s.ask_price,
                 ask_volume=s.ask_volume,
-                pct_change=calculate_tick_pct_change(s.price, s.reference_price),
+                pct_change=calculate_tick_pct_change(
+                    self._last_price(s), s.reference_price
+                ),
             )
             for sid, s in self._snapshots(stock_ids).items()
         }
@@ -368,13 +370,13 @@ class KGIAccount(Account):
 
         position = []
         for row in inventory.to_dict("records"):
-            cash = netqty(row, "NETQTY0", "NETQTY9")
-            # 現股當沖先賣還沒買回時，現股餘額是負的，跟下單時一樣標成當沖賣
-            cash_cond = (
-                OrderCondition.DAY_TRADING_SHORT if cash < 0 else OrderCondition.CASH
-            )
+            lots = netqty(row, "NETQTY0")
+            # 現股當沖先賣還沒買回時，整股餘額是負的，跟下單時一樣標成當沖賣；
+            # 零股不能當沖，一律留在現股
+            short = min(lots, 0)
             for cond, shares in (
-                (cash_cond, cash),
+                (OrderCondition.DAY_TRADING_SHORT, short),
+                (OrderCondition.CASH, lots - short + netqty(row, "NETQTY9")),
                 (OrderCondition.MARGIN_TRADING, netqty(row, "NETQTY3")),
                 (OrderCondition.SHORT_SELLING, -netqty(row, "NETQTY4")),
             ):
