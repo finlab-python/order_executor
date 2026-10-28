@@ -569,6 +569,10 @@ class YuantaAccount(Account):
         balances = self._call("GetBankBalance", self.account).BankBalanceList
         if not balances.Count:
             raise RuntimeError("get_cash: 元大銀行餘額查詢沒有資料")
+        # 銀行端查詢失敗也會回一列，錯誤寫在 Message、可用餘額是 0
+        errors = [m for b in balances if (m := (b.Message or "").strip())]
+        if errors:
+            raise RuntimeError(f"get_cash: 元大銀行餘額查詢失敗：{'；'.join(errors)}")
         return sum(int(b.AvailableBalance) for b in balances)
 
     def get_settlement(self) -> int:

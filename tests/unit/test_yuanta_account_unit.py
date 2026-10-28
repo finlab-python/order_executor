@@ -150,7 +150,7 @@ class _FakeSpark:
     def GetBankBalance(self, account):
         return self._reply(
             "GetBankBalance",
-            NS(BankBalanceList=_List([NS(AvailableBalance=1_000_000.0)])),
+            NS(BankBalanceList=_List([NS(AvailableBalance=1_000_000.0, Message="")])),
         )
 
     def GetStkTransactionOutlay(self, account):
@@ -303,6 +303,16 @@ def test_day_trading_short_sells_first_and_covers_with_cash_buy(
         action, "2330", 1, price=580, order_cond=OrderCondition.DAY_TRADING_SHORT
     )
     assert acc.api.sent[-1].OrderType == order_type
+
+
+def test_bank_error_row_is_not_zero_cash(make_account):
+    acc, _ = make_account()
+    rows = _List([NS(AvailableBalance=0.0, Message="銀行端查詢異常")])
+    acc.api.GetBankBalance = lambda account: acc.api._reply(
+        "GetBankBalance", NS(BankBalanceList=rows)
+    )
+    with pytest.raises(RuntimeError, match="銀行端查詢異常"):
+        acc.get_cash()
 
 
 def test_late_response_after_timeout_is_never_used(make_account, monkeypatch):
