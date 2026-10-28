@@ -280,6 +280,17 @@ def test_update_order_replaces_odd_lot_and_market_orders(make_account, odd_lot):
     assert (sent["qty"], sent["price"]) == ((400, 585.0) if odd_lot else (1, 585.0))
 
 
+def test_cancel_order_raises_when_cancel_is_rejected(make_account):
+    acc, sdk = make_account()
+    acc.create_order(Action.BUY, "2330", 1, price=580)
+    trade = acc.api.Order.trades["Y0000"]
+    trade.operations.append(NS(status=sdk.Status.Failed))
+    acc.api.Order.cancel_order = lambda order_id: trade
+
+    with pytest.raises(RuntimeError, match="仍在市場上"):
+        acc.cancel_order("Y0000")
+
+
 def test_cancel_order_skips_orders_no_longer_open(make_account):
     acc, sdk = make_account()
     acc.create_order(Action.BUY, "2330", 1, price=580)

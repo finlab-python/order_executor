@@ -221,7 +221,7 @@ class KGIAccount(Account):
             logger.warning(f"update_order: 委託單 {order_id} 已不在市場上")
             return None
         odd_lot = trade.order.odd_lot in _ODD_LOTS
-        remaining = trade.order_status.modified_quantity
+        filled, remaining = self._progress(trade)
         # quantity 是新的待成交張數，只能減量，0 表刪單；先檢查再送任何委託異動
         new_qty = remaining
         if quantity is not None:
@@ -234,7 +234,7 @@ class KGIAccount(Account):
         if price is not None and (
             odd_lot or trade.order.price_type != kgi.PriceType.LMT
         ):
-            return self._replace_order(order_id, trade, new_qty, price)
+            return self._replace_order(order_id, trade, new_qty, price, filled)
         if new_qty == 0:
             self.cancel_order(order_id)
             return None
@@ -249,19 +249,12 @@ class KGIAccount(Account):
         return None
 
     def _replace_order(
-        self, order_id: str, trade: Any, new_qty: int, price: float
+        self, order_id: str, trade: Any, new_qty: int, price: float, filled: int
     ) -> str | None:
         """刪單後以新價格重下；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
-        filled_before = self._filled(trade)
-        if self.api.Order.cancel_order(order_id) is None or not self._wait(
-            lambda: trade.order_status.status in _DONE, trade.operations[-1]
-        ):
-            raise RuntimeError(
-                f"update_order: 已送出委託單 {order_id} 的刪單，但無法確認刪除，未重下，"
-                "請確認委託狀態後手動補單"
-            )
-        # 刪單前一刻成交的量算在新數量裡，不重下
-        qty = new_qty - (self._filled(trade) - filled_before)
+        self._cancel(order_id)
+        # 讀剩餘量之後到刪單完成之間成交的量算在新數量裡，不重下
+        qty = new_qty - (self._filled(trade) - filled)
         if qty <= 0:
             return None
         order = trade.order
@@ -285,12 +278,35 @@ class KGIAccount(Account):
         if order_id not in self.api.Order.get_trades():
             logger.warning(f"cancel_order: 委託單 {order_id} 已不在市場上，不需取消")
             return
-        if self.api.Order.cancel_order(order_id) is None:
-            raise RuntimeError(f"cancel_order: 凱基刪單 {order_id} 送出失敗")
+        self._cancel(order_id)
+
+    def _cancel(self, order_id: str) -> None:
+        # 等到委託確定離開市場（已刪或剛好全部成交），否則呼叫端接著下的新單會重複
+        trade = self.api.Order.cancel_order(order_id)
+        if trade is None or not self._wait(
+            lambda: trade.order_status.status in _DONE, trade.operations[-1]
+        ):
+            raise RuntimeError(
+                f"cancel_order: 凱基刪單 {order_id} 失敗或未確認，委託可能仍在市場上，"
+                "請確認委託狀態"
+            )
 
     @staticmethod
     def _filled(trade: Any) -> int:
         return sum(d.quantity for d in trade.order_status.deals)
+
+    def _progress(self, trade: Any) -> tuple[int, int]:
+        """（成交量, 剩餘量）。成交回報在背景執行緒先加成交、再扣剩餘量，連讀兩次相同才算數"""
+        current = (self._filled(trade), trade.order_status.modified_quantity)
+        for _ in range(20):
+            time.sleep(0.01)
+            previous, current = (
+                current,
+                (self._filled(trade), trade.order_status.modified_quantity),
+            )
+            if current == previous:
+                break
+        return current
 
     def get_orders(self) -> dict[str, Order]:
         trades = self.api.Order.get_trades(True)
