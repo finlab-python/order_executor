@@ -49,6 +49,14 @@ _STORE_CONDITION = {
 }
 
 
+def _tw_now() -> datetime.datetime:
+    return datetime.datetime.now(TWMarket.tzinfo())
+
+
+def _is_odd(record: Any) -> bool:
+    return int(record.APCode) in _ODD_AP_CODES
+
+
 def _load_sdk(api_dir: str) -> tuple[Any, Any]:
     """用 pythonnet 載入元大 SPARK API（.NET 8）的 YuantaSparkAPI.dll"""
     import pythonnet
@@ -195,9 +203,7 @@ class YuantaAccount(Account):
         order.OrderQty = int(qty)
         order.BuySell = buy_sell
         order.OrderNo = order_no
-        order.TradeDate = trade_date or datetime.datetime.now(
-            TWMarket.tzinfo()
-        ).strftime("%Y/%m/%d")
+        order.TradeDate = trade_date or _tw_now().strftime("%Y/%m/%d")
         order.BasketNo = ""
         order.Time_in_force = "0"
         orders = self._List[self._sdk.StockOrder]()
@@ -230,9 +236,9 @@ class YuantaAccount(Account):
             int(quantity),
             price,
             odd_lot,
+            _ORDER_TYPE[order_cond],
             market_order,
             best_price_limit,
-            _ORDER_TYPE[order_cond],
         )
 
     def _place(
@@ -242,13 +248,13 @@ class YuantaAccount(Account):
         qty: int,
         price: Any,
         odd_lot: bool,
-        market_order: bool,
-        best_price_limit: bool,
         order_type: str,
+        market_order: bool = False,
+        best_price_limit: bool = False,
     ) -> str | None:
         is_buy = action == Action.BUY
         # 盤別依台北時間判斷
-        now = datetime.datetime.now(TWMarket.tzinfo()).time()
+        now = _tw_now().time()
         if odd_lot:
             after_hours = datetime.time(13, 40) <= now < datetime.time(14, 30)
             ap_code = _ODD_AFTER_HOURS if after_hours else _ODD
@@ -293,7 +299,7 @@ class YuantaAccount(Account):
             stock_id,
             "B" if is_buy else "S",
             qty,
-            float(order_price),
+            order_price,
             ap_code,
             order_type,
         )
@@ -301,15 +307,17 @@ class YuantaAccount(Account):
             logger.warning(f"create_order: 元大委託 {stock_id} 失敗：{error}")
         return order_no
 
-    def _modify(self, record: Any, trade_kind: int, qty: int, price: float) -> None:
-        """改量、取消、改價都要帶原委託的資訊與委託書號"""
+    def _modify(
+        self, record: Any, trade_kind: int, shares: int, price: Any = None
+    ) -> None:
+        """改量、取消、改價都要帶原委託的資訊與委託書號；shares 以股為單位，整股換算成張"""
         date = record.TradeDate
         _, error = self._send_order(
             trade_kind,
             record.CompanyNo,
             record.BS,
-            qty,
-            price,
+            shares if _is_odd(record) else shares // 1000,
+            record.Price if price is None else price,
             int(record.APCode),
             str(record.OrderType),
             {"1": "M", "2": " "}.get(record.PriceFlag, record.PriceFlag),
@@ -333,14 +341,12 @@ class YuantaAccount(Account):
         price: float | None = None,
         quantity: float | None = None,
     ) -> str | None:
-        self.get_orders()
+        self._refresh_records()
         record = self._order_records.get(order_id)
-        _, _, remaining = self._shares(record) if record else (0, 0, 0)
+        remaining = self._shares(record)[2] if record else 0
         if not remaining:
             logger.warning(f"update_order: 委託單 {order_id} 已不在市場上")
             return None
-        odd_lot = int(record.APCode) in _ODD_AP_CODES
-        unit = 1 if odd_lot else 1000
         # quantity 是新的待成交張數，只能減量，0 表刪單；先檢查再送任何委託異動
         new_shares = remaining
         if quantity is not None:
@@ -350,18 +356,16 @@ class YuantaAccount(Account):
                     f"update_order: 只能減量，委託單 {order_id} 剩 {remaining} 股，新數量 {quantity} 張"
                 )
         # 零股不能改價，市價委託也不能改成限價，都要刪單重下
-        if price is not None and (odd_lot or record.PriceFlag in ("1", "M")):
+        if price is not None and (_is_odd(record) or record.PriceFlag in ("1", "M")):
             return self._replace_order(order_id, record, new_shares, price)
         if new_shares == 0:
             self.cancel_order(order_id)
             return None
         if new_shares != remaining:
-            self._modify(
-                record, _REDUCE, (remaining - new_shares) // unit, float(record.Price)
-            )
+            self._modify(record, _REDUCE, remaining - new_shares)
         if price is not None:
             try:
-                self._modify(record, _REPRICE, new_shares // unit, float(price))
+                self._modify(record, _REPRICE, new_shares, price)
             except RuntimeError as e:
                 logger.warning(f"update_order: 無法更新委託單 {order_id} 的價格: {e}")
         return None
@@ -371,22 +375,18 @@ class YuantaAccount(Account):
     ) -> str | None:
         """刪單後以新價格重下；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
         _, filled_before, remaining = self._shares(record)
-        odd_lot = int(record.APCode) in _ODD_AP_CODES
-        self._modify(
-            record,
-            _CANCEL,
-            remaining if odd_lot else remaining // 1000,
-            float(record.Price),
-        )
+        self._modify(record, _CANCEL, remaining)
         filled_after = None
         for attempt in range(3):
             if attempt:
                 time.sleep(1)
-            self.get_orders()
+            self._refresh_records()
             current = self._order_records.get(order_id)
-            if current is not None and self._shares(current)[2] == 0:
-                filled_after = self._shares(current)[1]
-                break
+            if current is not None:
+                _, filled, left = self._shares(current)
+                if left == 0:
+                    filled_after = filled
+                    break
         if filled_after is None:
             raise RuntimeError(
                 f"update_order: 已送出委託單 {order_id} 的刪單，但無法確認刪除，未重下，"
@@ -396,14 +396,13 @@ class YuantaAccount(Account):
         shares = new_shares - (filled_after - filled_before)
         if shares <= 0:
             return None
+        odd_lot = _is_odd(record)
         new_order_id = self._place(
             Action.BUY if record.BS == "B" else Action.SELL,
             record.CompanyNo,
             shares if odd_lot else shares // 1000,
             price,
             odd_lot,
-            False,
-            False,
             str(record.OrderType),
         )
         if not new_order_id:
@@ -417,7 +416,7 @@ class YuantaAccount(Account):
         record = self._order_records.get(order_id)
         if record is None or not self._shares(record)[2]:
             # 快取沒有或已不在市場上，重查一次
-            self.get_orders()
+            self._refresh_records()
             record = self._order_records.get(order_id)
         if record is None:
             raise KeyError(f"cancel_order: 找不到委託單 {order_id}")
@@ -425,18 +424,14 @@ class YuantaAccount(Account):
         if not remaining:
             logger.warning(f"cancel_order: 委託單 {order_id} 已不在市場上，不需取消")
             return
-        odd_lot = int(record.APCode) in _ODD_AP_CODES
-        self._modify(
-            record,
-            _CANCEL,
-            remaining if odd_lot else remaining // 1000,
-            float(record.Price),
-        )
+        self._modify(record, _CANCEL, remaining)
+
+    def _refresh_records(self) -> None:
+        records = self._call("GetOrderTradeReport", False, self.account).StkOrderList
+        self._order_records = {str(r.OrderNo).strip(): r for r in records}
 
     def get_orders(self) -> dict[str, Order]:
-        result = self._call("GetOrderTradeReport", False, self.account)
-        records = [result.StkOrderList[i] for i in range(result.StkOrderList.Count)]
-        self._order_records = {str(r.OrderNo).strip(): r for r in records}
+        self._refresh_records()
         return {oid: self._to_order(oid, r) for oid, r in self._order_records.items()}
 
     def _to_order(self, order_id: str, record: Any) -> Order:
@@ -477,6 +472,7 @@ class YuantaAccount(Account):
             batch = [
                 s for s in pending if self._markets.get(s, market_type) == market_type
             ]
+            wanted = set(batch)
             for i in range(0, len(batch), 600):  # 單次查詢上限 600 檔
                 quotes = self._List[self._sdk.Quote]()
                 for sid in batch[i : i + 600]:
@@ -485,11 +481,11 @@ class YuantaAccount(Account):
                     quote.StockCode = sid
                     quotes.Add(quote)
                 result = self._call("GetWatchListAll", self.account, quotes)
-                rows = result.QueryWatchList
-                for row in (rows[j] for j in range(rows.Count)):
-                    if row.StkCode in batch and row.YstPrice:
-                        found[row.StkCode] = row
-                        self._markets[row.StkCode] = market_type
+                for row in result.QueryWatchList:
+                    code = row.StkCode
+                    if code in wanted and row.YstPrice:
+                        found[code] = row
+                        self._markets[code] = market_type
             pending = [s for s in pending if s not in found]
         return found
 
@@ -515,8 +511,7 @@ class YuantaAccount(Account):
         }
 
     def _store(self) -> list[Any]:
-        stores = self._call("GetStoreSummary", self.account).StkStoreList
-        return [stores[i] for i in range(stores.Count)]
+        return list(self._call("GetStoreSummary", self.account).StkStoreList)
 
     def get_position(self) -> Position:
         position = []
@@ -536,19 +531,16 @@ class YuantaAccount(Account):
         balances = self._call("GetBankBalance", self.account).BankBalanceList
         if not balances.Count:
             raise RuntimeError("get_cash: 元大銀行餘額查詢沒有資料")
-        return sum(int(balances[i].AvailableBalance) for i in range(balances.Count))
+        return sum(int(b.AvailableBalance) for b in balances)
 
     def get_settlement(self) -> int:
         """近三交割日的交割款中還沒交割的部分"""
         result = self._call("GetStkTransactionOutlay", self.account)
-        outlays = result.TransactionOutlayList
-        tw_now = datetime.datetime.now(TWMarket.tzinfo()).replace(tzinfo=None)
+        tw_now = _tw_now().replace(tzinfo=None)
         return sum(
-            int(outlays[i].SettlementAmt)
-            for i in range(outlays.Count)
-            if datetime.datetime.strptime(
-                f"{outlays[i].SettlementDay} 10:00", "%Y/%m/%d %H:%M"
-            )
+            int(o.SettlementAmt)
+            for o in result.TransactionOutlayList
+            if datetime.datetime.strptime(f"{o.SettlementDay} 10:00", "%Y/%m/%d %H:%M")
             > tw_now
         )
 
