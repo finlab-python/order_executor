@@ -65,6 +65,7 @@ class _FakeOrderAPI:
         self.sdk = sdk
         self.trades: dict = {}
         self.calls: list = []
+        self.reports: list = []
         self.reject = False
 
     def create_order(self, **kwargs):
@@ -118,6 +119,16 @@ class _FakeOrderAPI:
         self.calls.append(("cancel", order_id))
         trade = self.trades[order_id]
         trade.operations.append(NS(status=self.sdk.Status.Pending))
+        before = trade.order_status.modified_quantity
+        self.reports.append(
+            {
+                "OrderNo": order_id,
+                "OrderFunc": "D",
+                "ErrCode": "0",
+                "BeforeQty": str(before),
+                "AfterQty": "0",
+            }
+        )
         trade.order_status.modified_quantity = 0
         trade.order_status.status = self.sdk.Status.Cancelled
         return trade
@@ -145,9 +156,21 @@ def make_account(monkeypatch: pytest.MonkeyPatch):
             limit_up=616.0,
             limit_down=504.0,
         )
+        order_api = _FakeOrderAPI(sdk)
         acc.api = NS(
-            Order=_FakeOrderAPI(sdk),
-            Account=NS(),
+            Order=order_api,
+            Account=NS(
+                OrderReport=lambda: pd.DataFrame(
+                    order_api.reports,
+                    columns=[
+                        "OrderNo",
+                        "OrderFunc",
+                        "ErrCode",
+                        "BeforeQty",
+                        "AfterQty",
+                    ],
+                )
+            ),
             Data=NS(get_snapshots=lambda ids: {i: snapshot for i in ids}),
         )
         return acc, sdk
@@ -258,26 +281,40 @@ def test_update_order_price_and_quantity(make_account):
 
 
 @pytest.mark.parametrize("odd_lot", [True, False])
-def test_update_order_replaces_odd_lot_and_market_orders(make_account, odd_lot):
+def test_update_order_replaces_only_what_the_cancel_removed(make_account, odd_lot):
     acc, sdk = make_account()
-    acc.create_order(
-        Action.BUY, "2330", 500 if odd_lot else 2, price=580, odd_lot=odd_lot
-    )
+    qty, fill = (500, 100) if odd_lot else (3, 1)
+    acc.create_order(Action.BUY, "2330", qty, price=580, odd_lot=odd_lot)
+    trade = acc.api.Order.trades["Y0000"]
     if not odd_lot:  # 在 App 下的市價單
-        acc.api.Order.trades["Y0000"].order.price_type = sdk.PriceType.MKT
+        trade.order.price_type = sdk.PriceType.MKT
+    # 成交回報處理到一半：已加成交、還沒扣剩餘量
+    trade.order_status.deals = [NS(quantity=fill)]
     real_cancel = acc.api.Order.cancel_order
 
     def cancel(order_id):
-        # 刪單前一刻成交 100 股或 1 張，只重下剩下的
-        acc.api.Order.trades[order_id].order_status.deals = [
-            NS(quantity=100 if odd_lot else 1)
-        ]
+        trade.order_status.modified_quantity -= fill
         return real_cancel(order_id)
 
     acc.api.Order.cancel_order = cancel
     assert acc.update_order("Y0000", price=585) == "Y0001"
     sent = acc.api.Order.calls[-1][1]
-    assert (sent["qty"], sent["price"]) == ((400, 585.0) if odd_lot else (1, 585.0))
+    assert (sent["qty"], sent["price"]) == (qty - fill, 585.0)
+
+
+def test_update_order_tolerates_a_fill_racing_the_cancel(make_account):
+    acc, sdk = make_account()
+    acc.create_order(Action.BUY, "2330", 300, price=580, odd_lot=True)
+    status = acc.api.Order.trades["Y0000"].order_status
+
+    def cancel(order_id):  # 送刪單前剛好全部成交
+        status.deals, status.modified_quantity = [NS(quantity=300)], 0
+        status.status = sdk.Status.Filled
+        raise ValueError("查無此order_id，或已失效")
+
+    acc.api.Order.cancel_order = cancel
+    assert acc.update_order("Y0000", price=585) is None
+    assert len(acc.api.Order.calls) == 1
 
 
 def test_cancel_order_raises_when_cancel_is_rejected(make_account):
@@ -311,6 +348,13 @@ def test_position_settlement_quotes_and_cash(make_account):
                 "NETQTY4": "0",
             },
             {
+                "Symbol": "2317",
+                "NETQTY0": "-1000",
+                "NETQTY9": "0",
+                "NETQTY3": "0",
+                "NETQTY4": "0",
+            },
+            {
                 "Symbol": "2603",
                 "NETQTY0": "0",
                 "NETQTY9": "0",
@@ -340,10 +384,16 @@ def test_position_settlement_quotes_and_cash(make_account):
         ("2330", OrderCondition.CASH): Decimal("2.3"),
         ("2330", OrderCondition.MARGIN_TRADING): 1,
         ("2603", OrderCondition.SHORT_SELLING): -2,
+        # 現股當沖先賣、還沒買回
+        ("2317", OrderCondition.DAY_TRADING_SHORT): -1,
     }
     assert acc.get_settlement() == -150
     assert acc.get_stocks(["2330"])["2330"].pct_change == pytest.approx(
         3.5714, abs=1e-3
     )
+    # 開盤前還沒有成交價，用參考價
+    snapshot = acc.api.Data.get_snapshots(["2330"])["2330"]
+    snapshot.price = 0.0
+    assert acc.get_stocks(["2330"])["2330"].close == 560.0
     with pytest.raises(NotImplementedError):
         acc.get_cash()

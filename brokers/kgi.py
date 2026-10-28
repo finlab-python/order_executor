@@ -162,7 +162,7 @@ class KGIAccount(Account):
         if lot == kgi.OddLot.Fixing:
             # 盤後定價只以收盤價成交：芭樂價或比收盤價差的限價不送、不中斷，
             # 呼叫端可能已先撤單，後面的單要照常下
-            close = float(snapshot.price)
+            close = float(snapshot.price or snapshot.reference_price)
             if best_price_limit or (
                 not market_order
                 and price is not None
@@ -178,7 +178,7 @@ class KGIAccount(Account):
         elif best_price_limit:
             order_price = snapshot.limit_down if is_buy else snapshot.limit_up
         elif price is None:
-            order_price = snapshot.price
+            order_price = snapshot.price or snapshot.reference_price
         else:
             order_price = price
 
@@ -221,7 +221,10 @@ class KGIAccount(Account):
             logger.warning(f"update_order: 委託單 {order_id} 已不在市場上")
             return None
         odd_lot = trade.order.odd_lot in _ODD_LOTS
-        filled, remaining = self._progress(trade)
+        remaining = trade.order_status.modified_quantity
+        if not remaining:
+            logger.warning(f"update_order: 委託單 {order_id} 已全部成交")
+            return None
         # quantity 是新的待成交張數，只能減量，0 表刪單；先檢查再送任何委託異動
         new_qty = remaining
         if quantity is not None:
@@ -234,7 +237,7 @@ class KGIAccount(Account):
         if price is not None and (
             odd_lot or trade.order.price_type != kgi.PriceType.LMT
         ):
-            return self._replace_order(order_id, trade, new_qty, price, filled)
+            return self._replace_order(order_id, trade, remaining, new_qty, price)
         if new_qty == 0:
             self.cancel_order(order_id)
             return None
@@ -249,12 +252,14 @@ class KGIAccount(Account):
         return None
 
     def _replace_order(
-        self, order_id: str, trade: Any, new_qty: int, price: float, filled: int
+        self, order_id: str, trade: Any, remaining: int, new_qty: int, price: float
     ) -> str | None:
-        """刪單後以新價格重下；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
-        self._cancel(order_id)
-        # 讀剩餘量之後到刪單完成之間成交的量算在新數量裡，不重下
-        qty = new_qty - (self._filled(trade) - filled)
+        """刪單後以新價格重下刪掉的量（扣掉要減的量）；刪單或重下失敗都要報錯，
+        否則委託會停在舊價或消失。"""
+        self._cancel(order_id, trade)
+        # 以交易所刪單回報的刪除量為準，讀剩餘量之後才成交的不會重下；
+        # 成交回報在背景先加成交、後扣剩餘量，讀到的剩餘量只會偏多，重下量只會偏少
+        qty = self._cancelled_qty(order_id, trade) - (remaining - new_qty)
         if qty <= 0:
             return None
         order = trade.order
@@ -274,16 +279,20 @@ class KGIAccount(Account):
         return new_order_id
 
     def cancel_order(self, order_id: str) -> None:
-        # 讀委託後才成交或失效的單，SDK 會 raise「查無此order_id」
-        if order_id not in self.api.Order.get_trades():
+        trade = self.api.Order.get_trades().get(order_id)
+        if trade is None:
             logger.warning(f"cancel_order: 委託單 {order_id} 已不在市場上，不需取消")
             return
-        self._cancel(order_id)
+        self._cancel(order_id, trade)
 
-    def _cancel(self, order_id: str) -> None:
+    def _cancel(self, order_id: str, trade: Any) -> None:
         # 等到委託確定離開市場（已刪或剛好全部成交），否則呼叫端接著下的新單會重複
-        trade = self.api.Order.cancel_order(order_id)
-        if trade is None or not self._wait(
+        try:
+            sent = self.api.Order.cancel_order(order_id)
+        except ValueError:
+            # 讀委託後才全部成交或失效，SDK 報「查無此order_id」；下面確認狀態
+            sent = trade
+        if sent is None or not self._wait(
             lambda: trade.order_status.status in _DONE, trade.operations[-1]
         ):
             raise RuntimeError(
@@ -291,22 +300,32 @@ class KGIAccount(Account):
                 "請確認委託狀態"
             )
 
+    def _cancelled_qty(self, order_id: str, trade: Any) -> int:
+        """刪單回報（4010 OrderFunc D）的刪除量；刪單前已全部成交則為 0"""
+        if trade.order_status.status == kgi.Status.Filled:
+            return 0
+        reports = self.api.Account.OrderReport()
+        cancels = reports[
+            (reports["OrderNo"] == order_id)
+            & (reports["OrderFunc"] == "D")
+            & (reports["ErrCode"] == "0")
+        ]
+        qty = (
+            int(float(cancels.iloc[-1]["BeforeQty"]))
+            - int(float(cancels.iloc[-1]["AfterQty"]))
+            if len(cancels)
+            else 0
+        )
+        if qty <= 0:
+            raise RuntimeError(
+                f"update_order: 委託單 {order_id} 已刪單，但查不到刪單回報的刪除量，未重下，"
+                "請確認委託狀態後手動補單"
+            )
+        return qty
+
     @staticmethod
     def _filled(trade: Any) -> int:
         return sum(d.quantity for d in trade.order_status.deals)
-
-    def _progress(self, trade: Any) -> tuple[int, int]:
-        """（成交量, 剩餘量）。成交回報在背景執行緒先加成交、再扣剩餘量，連讀兩次相同才算數"""
-        current = (self._filled(trade), trade.order_status.modified_quantity)
-        for _ in range(20):
-            time.sleep(0.01)
-            previous, current = (
-                current,
-                (self._filled(trade), trade.order_status.modified_quantity),
-            )
-            if current == previous:
-                break
-        return current
 
     def get_orders(self) -> dict[str, Order]:
         trades = self.api.Order.get_trades(True)
@@ -368,7 +387,8 @@ class KGIAccount(Account):
                 open=s.open_price,
                 high=s.high_price,
                 low=s.low_price,
-                close=s.price,
+                # 開盤前還沒有成交價，用參考價
+                close=s.price or s.reference_price,
                 bid_price=s.bid_price,
                 bid_volume=s.bid_volume,
                 ask_price=s.ask_price,
@@ -391,12 +411,15 @@ class KGIAccount(Account):
         position = []
         for row in inventory.to_dict("records"):
             for cond, names, sign in columns:
-                shares = sum(int(float(row.get(name) or 0)) for name in names)
+                shares = sign * sum(int(float(row.get(name) or 0)) for name in names)
                 if shares:
+                    # 現股當沖先賣還沒買回時，現股餘額是負的，跟下單時一樣標成當沖賣
+                    if cond == OrderCondition.CASH and shares < 0:
+                        cond = OrderCondition.DAY_TRADING_SHORT
                     position.append(
                         {
                             "stock_id": row["Symbol"],
-                            "quantity": sign * Decimal(shares) / 1000,
+                            "quantity": Decimal(shares) / 1000,
                             "order_condition": cond,
                         }
                     )
