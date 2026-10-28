@@ -11,6 +11,7 @@ from typing import Any
 
 import kgisuperpy as kgi
 
+from finlab import data
 from finlab.markets.tw import TWMarket
 from finlab.online.core.account import Account, Order, Stock
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
@@ -412,6 +413,10 @@ class KGIAccount(Account):
                 ):
                     total += int(float(row[f"CSRPAMT{i}"]))
         return total
+
+    def get_price_info(self) -> dict[str, dict[str, Any]]:
+        ref = data.get("reference_price")
+        return ref.set_index("stock_id").to_dict(orient="index")
 
     def get_market(self) -> TWMarket:
         return TWMarket()
