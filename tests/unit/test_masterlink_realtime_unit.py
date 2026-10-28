@@ -751,18 +751,16 @@ class _FakeTaishinSDK:
         self.realtime_account = account
 
 
-@pytest.mark.parametrize("prefix", ["TAISHIN", "MASTERLINK"])
-def test_taishin_login_reads_taishin_env_then_masterlink(
-    monkeypatch: Any, prefix: str
-) -> None:
+def test_taishin_login_reads_taishin_env_then_masterlink(monkeypatch: Any) -> None:
     module = _import_masterlink_module_with_fake_sdk(monkeypatch)
     monkeypatch.setattr(module, "TaishinSDK", _FakeTaishinSDK)
-    env = {"NATIONAL_ID": "A123456789", "ACCOUNT_PASS": "pw", "CERT_PATH": "c.pfx",
-           "CERT_PASS": "cpw", "ACCOUNT": "592a2"}
+    env = {"NATIONAL_ID": "A123456789", "ACCOUNT_PASS": "old-pw", "CERT_PATH": "c.pfx",
+           "CERT_PASS": "cpw", "ACCOUNT": "592a1"}
     for key, value in env.items():
-        monkeypatch.setenv(f"{prefix}_{key}", value)
-    if prefix == "TAISHIN":
-        monkeypatch.setenv("MASTERLINK_ACCOUNT", "592a1")  # 舊變數不蓋過新的
+        monkeypatch.setenv(f"MASTERLINK_{key}", value)
+    # 有設 TAISHIN_* 的用新的，沒設的退回舊的 MASTERLINK_*
+    monkeypatch.setenv("TAISHIN_ACCOUNT_PASS", "pw")
+    monkeypatch.setenv("TAISHIN_ACCOUNT", "592a2")
 
     account = module.MasterlinkAccount()
     assert account.sdk.login_args == ("A123456789", "pw", "c.pfx", "cpw")
