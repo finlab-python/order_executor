@@ -41,6 +41,7 @@ class _FakeSpark:
         self.sent: list = []
         self.records: dict = {}
         self.otc = {"6488"}
+        self.deal_price = 580.0
         self.reject = False
 
     def _reply(self, name, value):
@@ -100,7 +101,8 @@ class _FakeSpark:
             NS(
                 StkCode=q.StockCode,
                 YstPrice=560.0,
-                DealPrice=580.0,
+                OpenRefPrice=560.0,
+                DealPrice=self.deal_price,
                 OpenPrice=575.0,
                 HighPrice=585.0,
                 LowPrice=570.0,
@@ -140,6 +142,8 @@ class _FakeSpark:
                 ReturnAmt=-5_000,
             ),
             NS(TradeKind=6, StkCode="2603", StockQty=1000, Cost=0, ReturnAmt=0),
+            # 現股當沖先賣、還沒買回
+            NS(TradeKind=0, StkCode="2317", StockQty=-1000, Cost=0, ReturnAmt=0),
         ]
         return self._reply("GetStoreSummary", NS(StkStoreList=_List(stores)))
 
@@ -281,6 +285,63 @@ def test_quotes_fall_back_to_otc(make_account):
     )
 
 
+def test_quote_before_the_first_trade_uses_reference_price(make_account):
+    acc, _ = make_account()
+    acc.api.deal_price = 0.0
+    assert acc.get_stocks(["2330"])["2330"].close == 560.0
+    acc.create_order(Action.SELL, "2330", 1)
+    assert acc.api.sent[-1].Price == 560.0
+
+
+def test_day_trading_short_sells_use_order_type_9(make_account):
+    acc, _ = make_account()
+    acc.create_order(
+        Action.SELL, "2330", 1, price=580, order_cond=OrderCondition.DAY_TRADING_SHORT
+    )
+    assert acc.api.sent[-1].OrderType == "9"
+
+
+def test_late_response_after_timeout_is_never_used(make_account, monkeypatch):
+    acc, module = make_account()
+    monkeypatch.setattr(module, "_RESPONSE_TIMEOUT", 0.01)
+    acc.api.GetBankBalance = lambda account: True  # 沒有回應
+    with pytest.raises(TimeoutError):
+        acc.get_cash()
+    with pytest.raises(RuntimeError, match="重新建立"):
+        acc.get_orders()
+
+
+def test_modify_uses_request_codes_and_limit_price(make_account):
+    acc, _ = make_account()
+    acc.create_order(Action.BUY, "2330", 500, price=580, odd_lot=True)
+    acc.create_order(Action.BUY, "2330", 2, price=580)
+    # 回報的盤中零股是 99；在 App 下的漲停價委託
+    acc.api.records["H0000"].APCode = 99
+    acc.api.records["H0001"].PriceFlag = "H"
+    acc.cancel_order("H0000")
+    acc.update_order("H0001", price=585)
+    cancel, reprice = acc.api.sent[2:]
+    assert (cancel.TradeKind, cancel.APCode, cancel.OrderQty) == (4, 4, 500)
+    assert (reprice.TradeKind, reprice.PriceFlag, reprice.Price) == (7, " ", 585.0)
+
+
+def test_update_order_tolerates_a_fill_racing_the_cancel(make_account):
+    acc, _ = make_account()
+    acc.create_order(Action.BUY, "2330", 300, price=580, odd_lot=True)
+    record = acc.api.records["H0000"]
+    real_send = acc.api.SendStockOrder
+
+    def send(account, orders):  # 送刪單前剛好全部成交，券商拒絕刪單
+        if orders[0].TradeKind == 4:
+            record.OkQty = 300
+            acc.api.reject = True
+        return real_send(account, orders)
+
+    acc.api.SendStockOrder = send
+    assert acc.update_order("H0000", price=585) is None
+    assert len(acc.api.sent) == 2
+
+
 def test_get_orders_and_modify(make_account):
     acc, _ = make_account()
     acc.create_order(Action.BUY, "2330", 500, price=580, odd_lot=True)
@@ -360,6 +421,7 @@ def test_position_cash_settlement_and_balance(make_account):
         ("2330", OrderCondition.CASH): Decimal("2.3"),
         ("2330", OrderCondition.MARGIN_TRADING): 1,
         ("2603", OrderCondition.SHORT_SELLING): -2,
+        ("2317", OrderCondition.DAY_TRADING_SHORT): -1,
     }
     assert acc.get_cash() == 1_000_000
     assert acc.get_settlement() == -150

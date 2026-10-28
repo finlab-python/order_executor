@@ -29,18 +29,24 @@ _ODD_AP_CODES = (_ODD_AFTER_HOURS, _ODD, 99)
 _DONE = (10, 24, 25, 30)
 # OnResponse 查詢回應的錯誤狀態（尚未登入、帳號錯誤、權限不足、加簽失敗、使用限制、停權等）
 _ERRORS = (3, 4, 5, 7, 9, 10, 11, 13, 14)
+_RESPONSE_TIMEOUT = 10
 _ORDER_TYPE = {
     OrderCondition.CASH: "0",
     OrderCondition.MARGIN_TRADING: "3",
     OrderCondition.SHORT_SELLING: "4",
     OrderCondition.DAY_TRADING_LONG: "0",
-    OrderCondition.DAY_TRADING_SHORT: "0",
+    # 現股當沖先賣要用委託種類 9（現股當沖委託控管）
+    OrderCondition.DAY_TRADING_SHORT: "9",
 }
 _ORDER_CONDITION = {
     0: OrderCondition.CASH,
     3: OrderCondition.MARGIN_TRADING,
     4: OrderCondition.SHORT_SELLING,
+    9: OrderCondition.DAY_TRADING_SHORT,
 }
+# 委託回報才有的代碼換成下單用的：盤中零股 99→4、資沖 7→融資 3、券沖 8→融券 4
+_SEND_AP_CODE = {99: _ODD}
+_SEND_ORDER_TYPE = {7: "3", 8: "4"}
 # 庫存 TradeKind：現股、資買、券賣（借券不是部位）
 _STORE_CONDITION = {
     0: (OrderCondition.CASH, 1),
@@ -131,6 +137,7 @@ class YuantaAccount(Account):
         self._last_call: dict[str, float] = {}
         self._markets: dict[str, Any] = {}
         self._order_records: dict[str, Any] = {}
+        self._timed_out = False
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
@@ -152,6 +159,11 @@ class YuantaAccount(Account):
     def _call(self, name: str, *args: Any) -> Any:
         """送出請求並等 OnResponse 的回應；每個功能每秒最多查詢 3 次、交易 10 次"""
         with self._lock:
+            # 逾時的請求之後才回來的回應，會被下一個同名請求當成自己的
+            if self._timed_out:
+                raise RuntimeError(
+                    "元大 API 先前有請求沒有回應，請重新建立 YuantaAccount"
+                )
             interval = 0.11 if name.startswith("Send") else 0.34
             wait = self._last_call.get(name, 0) + interval - time.monotonic()
             if wait > 0:
@@ -162,13 +174,14 @@ class YuantaAccount(Account):
             self._last_call[name] = time.monotonic()
             if ok is False:
                 raise RuntimeError(f"元大 API {name} 執行異常")
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + _RESPONSE_TIMEOUT
             while True:
                 try:
                     index_name, index, value = self._responses.get(
                         timeout=max(0, deadline - time.monotonic())
                     )
                 except queue.Empty:
+                    self._timed_out = True
                     raise TimeoutError(f"元大 API {name} 沒有回應") from None
                 # 名稱是空字串表示請求有誤，value 是錯誤訊息
                 if index_name not in (name, ""):
@@ -274,7 +287,7 @@ class YuantaAccount(Account):
         if ap_code == _FIXING:
             # 盤後定價只以收盤價成交：芭樂價或比收盤價差的限價不送、不中斷，
             # 呼叫端可能已先撤單，後面的單要照常下
-            close = float(quote.DealPrice)
+            close = float(self._last_price(quote))
             if best_price_limit or (
                 not market_order
                 and price is not None
@@ -290,7 +303,7 @@ class YuantaAccount(Account):
         elif best_price_limit:
             order_price = quote.DownStopPrice if is_buy else quote.UpStopPrice
         elif price is None:
-            order_price = quote.DealPrice
+            order_price = self._last_price(quote)
         else:
             order_price = price
 
@@ -310,22 +323,31 @@ class YuantaAccount(Account):
     def _modify(
         self, record: Any, trade_kind: int, shares: int, price: Any = None
     ) -> None:
-        """改量、取消、改價都要帶原委託的資訊與委託書號；shares 以股為單位，整股換算成張"""
+        """改量、取消、改價都要帶原委託的資訊與委託書號；shares 以股為單位，整股換算成張。
+        改價一律改成限價（價格種類空白），其餘沿用原委託的價格種類。"""
         date = record.TradeDate
+        ap_code = int(record.APCode)
         _, error = self._send_order(
             trade_kind,
             record.CompanyNo,
             record.BS,
             shares if _is_odd(record) else shares // 1000,
             record.Price if price is None else price,
-            int(record.APCode),
-            str(record.OrderType),
-            {"1": "M", "2": " "}.get(record.PriceFlag, record.PriceFlag),
+            _SEND_AP_CODE.get(ap_code, ap_code),
+            self._send_order_type(record),
+            " "
+            if trade_kind == _REPRICE
+            else {"1": "M", "2": " "}.get(record.PriceFlag, record.PriceFlag),
             record.OrderNo,
             f"{date.ushtYear:04d}/{date.bytMon:02d}/{date.bytDay:02d}",
         )
         if error:
             raise RuntimeError(f"元大委託 {record.OrderNo} 異動失敗：{error}")
+
+    @staticmethod
+    def _send_order_type(record: Any) -> str:
+        order_type = int(record.OrderType)
+        return _SEND_ORDER_TYPE.get(order_type, str(order_type))
 
     @staticmethod
     def _shares(record: Any) -> tuple[int, int, int]:
@@ -386,7 +408,7 @@ class YuantaAccount(Account):
             shares if odd_lot else shares // 1000,
             price,
             odd_lot,
-            str(record.OrderType),
+            self._send_order_type(record),
         )
         if not new_order_id:
             raise RuntimeError(
@@ -412,7 +434,12 @@ class YuantaAccount(Account):
     def _cancel(self, order_id: str, record: Any) -> int:
         """刪單並重查到委託確定離開市場（已刪或剛好全部成交），回傳最終成交股數。
         沒確認就報錯，否則呼叫端接著下的新單會重複。"""
-        self._modify(record, _CANCEL, self._shares(record)[2])
+        error = None
+        try:
+            self._modify(record, _CANCEL, self._shares(record)[2])
+        except RuntimeError as e:
+            # 讀委託後才全部成交或失效，刪單會被拒；下面重查確認
+            error = e
         for attempt in range(3):
             if attempt:
                 time.sleep(1)
@@ -421,8 +448,8 @@ class YuantaAccount(Account):
             if current is not None and not self._shares(current)[2]:
                 return self._shares(current)[1]
         raise RuntimeError(
-            f"cancel_order: 已送出元大委託單 {order_id} 的刪單，但無法確認刪除，"
-            "委託可能仍在市場上，請確認委託狀態"
+            f"cancel_order: 元大委託單 {order_id} 刪單失敗或無法確認刪除，"
+            f"委託可能仍在市場上，請確認委託狀態（{error or '已送出刪單'}）"
         )
 
     def _refresh_records(self) -> None:
@@ -488,6 +515,11 @@ class YuantaAccount(Account):
             pending = [s for s in pending if s not in found]
         return found
 
+    @staticmethod
+    def _last_price(quote: Any) -> float:
+        # 開盤前還沒有成交價，用開盤參考價
+        return quote.DealPrice or quote.OpenRefPrice
+
     def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
         def book(price: float) -> float:
             # 市價買賣以 ±999999999 表示
@@ -499,7 +531,7 @@ class YuantaAccount(Account):
                 open=q.OpenPrice,
                 high=q.HighPrice,
                 low=q.LowPrice,
-                close=q.DealPrice,
+                close=self._last_price(q),
                 bid_price=book(q.BuyPrice),
                 bid_volume=q.BidQty,
                 ask_price=book(q.SellPrice),
@@ -516,11 +548,15 @@ class YuantaAccount(Account):
         position = []
         for store in self._store():
             cond, sign = _STORE_CONDITION.get(int(store.TradeKind), (None, 0))
-            if cond is not None and int(store.StockQty):
+            shares = sign * int(store.StockQty)
+            if cond is not None and shares:
+                # 現股當沖先賣還沒買回時，現股股數是負的，跟下單時一樣標成當沖賣
+                if cond == OrderCondition.CASH and shares < 0:
+                    cond = OrderCondition.DAY_TRADING_SHORT
                 position.append(
                     {
                         "stock_id": store.StkCode,
-                        "quantity": sign * Decimal(int(store.StockQty)) / 1000,
+                        "quantity": Decimal(shares) / 1000,
                         "order_condition": cond,
                     }
                 )
