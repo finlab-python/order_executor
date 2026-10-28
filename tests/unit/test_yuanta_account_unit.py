@@ -293,12 +293,15 @@ def test_quote_before_the_first_trade_uses_reference_price(make_account):
     assert acc.api.sent[-1].Price == 560.0
 
 
-def test_day_trading_short_sells_use_order_type_9(make_account):
+@pytest.mark.parametrize("action, order_type", [(Action.SELL, "9"), (Action.BUY, "0")])
+def test_day_trading_short_sells_first_and_covers_with_cash_buy(
+    make_account, action, order_type
+):
     acc, _ = make_account()
     acc.create_order(
-        Action.SELL, "2330", 1, price=580, order_cond=OrderCondition.DAY_TRADING_SHORT
+        action, "2330", 1, price=580, order_cond=OrderCondition.DAY_TRADING_SHORT
     )
-    assert acc.api.sent[-1].OrderType == "9"
+    assert acc.api.sent[-1].OrderType == order_type
 
 
 def test_late_response_after_timeout_is_never_used(make_account, monkeypatch):

@@ -249,7 +249,10 @@ class YuantaAccount(Account):
             int(quantity),
             price,
             odd_lot,
-            _ORDER_TYPE[order_cond],
+            # 回補當沖先賣的買單是一般現股買進
+            "0"
+            if action == Action.BUY and order_cond == OrderCondition.DAY_TRADING_SHORT
+            else _ORDER_TYPE[order_cond],
             market_order,
             best_price_limit,
         )
