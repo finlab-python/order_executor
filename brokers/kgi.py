@@ -117,7 +117,10 @@ class KGIAccount(Account):
             stock_id,
             int(quantity),
             price,
-            _TO_KGI_COND[order_cond],
+            # 回補當沖先賣的買單是一般現股買進；SDK 不接受買進用現股先賣
+            kgi.OrderCond.CASH
+            if action == Action.BUY and order_cond == OrderCondition.DAY_TRADING_SHORT
+            else _TO_KGI_COND[order_cond],
             odd_lot=odd_lot,
             market_order=market_order,
             best_price_limit=best_price_limit,
@@ -191,9 +194,10 @@ class KGIAccount(Account):
             order_cond=cond,
             odd_lot=lot,
         )
-        # 委託書號由交易所回報後才填上
+        # 委託書號由交易所回報後才填上；被拒的委託也有書號，但不會列在委託清單
         if trade is None or not self._wait(
-            lambda: trade.order.order_id is not None, trade.operations[0]
+            lambda: trade.order.order_id in self.api.Order.get_trades(True),
+            trade.operations[0],
         ):
             logger.warning(f"create_order: 凱基委託 {stock_id} 失敗或未收到回報")
             return None
@@ -241,10 +245,14 @@ class KGIAccount(Account):
         if new_qty == 0:
             self.cancel_order(order_id)
             return None
-        if new_qty != remaining and (
-            self.api.Order.update_order(order_id, qty=remaining - new_qty) is None
-        ):
-            raise RuntimeError(f"update_order: 凱基減量 {order_id} 送出失敗")
+        if new_qty != remaining:
+            # 等交易所確認減量；被拒時原數量還在，不能接著改價
+            sent = self.api.Order.update_order(order_id, qty=remaining - new_qty)
+            if sent is None or not self._wait(
+                lambda: trade.order_status.modified_quantity <= new_qty,
+                trade.operations[-1],
+            ):
+                raise RuntimeError(f"update_order: 凱基減量 {order_id} 失敗或未確認")
         if price is not None and (
             self.api.Order.update_order(order_id, price=float(price)) is None
         ):

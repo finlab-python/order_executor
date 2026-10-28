@@ -90,10 +90,12 @@ class _FakeOrderAPI:
             ),
             operations=[op],
         )
+        # 被拒的委託也會拿到書號，但只放進「無效單」
+        trade.order.order_id = f"Y{len(self.trades):04d}"
         if self.reject:
             op.status = self.sdk.Status.Failed
         else:
-            trade.order.order_id = f"Y{len(self.trades):04d}"
+            op.status = self.sdk.Status.Success
             self.trades[trade.order.order_id] = trade
         return trade
 
@@ -113,7 +115,14 @@ class _FakeOrderAPI:
 
     def update_order(self, order_id, price=None, qty=None):
         self.calls.append(("update", order_id, price, qty))
-        return self.trades[order_id]
+        trade = self.trades[order_id]
+        ok = not self.reject
+        trade.operations.append(
+            NS(status=self.sdk.Status.Success if ok else self.sdk.Status.Failed)
+        )
+        if qty and ok:
+            trade.order_status.modified_quantity -= qty
+        return trade
 
     def cancel_order(self, order_id):
         self.calls.append(("cancel", order_id))
@@ -242,6 +251,28 @@ def test_rejected_order_returns_none(make_account):
     acc, _ = make_account()
     acc.api.Order.reject = True
     assert acc.create_order(Action.SELL, "2330", 1, price=580) is None
+
+
+@pytest.mark.parametrize(
+    "action, cond", [(Action.SELL, "CASH_SELLING"), (Action.BUY, "CASH")]
+)
+def test_day_trading_short_sells_first_and_covers_with_cash_buy(
+    make_account, action, cond
+):
+    acc, sdk = make_account()
+    acc.create_order(
+        action, "2330", 1, price=580, order_cond=OrderCondition.DAY_TRADING_SHORT
+    )
+    assert acc.api.Order.calls[-1][1]["order_cond"] == sdk.OrderCond[cond]
+
+
+def test_rejected_reduction_raises_and_keeps_the_price(make_account):
+    acc, _ = make_account()
+    acc.create_order(Action.BUY, "2330", 3, price=580)
+    acc.api.Order.reject = True
+    with pytest.raises(RuntimeError, match="減量"):
+        acc.update_order("Y0000", price=585, quantity=1)
+    assert [c[0] for c in acc.api.Order.calls] == ["create", "update"]
 
 
 def test_get_orders_converts_units_and_status(make_account):
