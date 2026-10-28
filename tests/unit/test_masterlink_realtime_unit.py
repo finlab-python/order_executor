@@ -123,8 +123,8 @@ class _FakeStockTradeApi:
 
 
 def _import_masterlink_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
-    fake_sdk_module = types.ModuleType("masterlink_sdk")
-    fake_sdk_module.MasterlinkSDK = object
+    fake_sdk_module = types.ModuleType("taishin_sdk")
+    fake_sdk_module.TaishinSDK = object
     fake_sdk_module.Order = types.SimpleNamespace
     fake_sdk_module.Account = object
     fake_sdk_module.BSAction = types.SimpleNamespace(Buy="B", Sell="S")
@@ -141,7 +141,7 @@ def _import_masterlink_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleTyp
     fake_sdk_module.TimeInForce = types.SimpleNamespace(ROD="ROD")
     fake_sdk_module.OrderType = types.SimpleNamespace(Stock="Stock")
 
-    monkeypatch.setitem(sys.modules, "masterlink_sdk", fake_sdk_module)
+    monkeypatch.setitem(sys.modules, "taishin_sdk", fake_sdk_module)
     sys.modules.pop("finlab.online.brokers.masterlink", None)
 
     module = importlib.import_module("finlab.online.brokers.masterlink")
@@ -737,3 +737,49 @@ def test_masterlink_settlement_on_monday_includes_friday_trades(monkeypatch: Any
         today_settlement=lambda _: types.SimpleNamespace(net_amount="-300000.00"),
     ))
     assert account.get_settlement() == -1_300_000
+
+
+class _FakeTaishinSDK:
+    def __init__(self, api_url: Any = None) -> None:
+        self.stock = types.SimpleNamespace(get_order_results=lambda _: [_record()])
+
+    def login(self, *args: Any) -> list[Any]:
+        self.login_args = args
+        return [types.SimpleNamespace(account=a) for a in ("592a1", "592a2")]
+
+    def init_realtime(self, account: Any) -> None:
+        self.realtime_account = account
+
+
+def test_taishin_login_reads_taishin_env_then_masterlink(monkeypatch: Any) -> None:
+    module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    monkeypatch.setattr(module, "TaishinSDK", _FakeTaishinSDK)
+    env = {"NATIONAL_ID": "A123456789", "ACCOUNT_PASS": "old-pw", "CERT_PATH": "c.pfx",
+           "CERT_PASS": "cpw", "ACCOUNT": "592a1"}
+    for key, value in env.items():
+        monkeypatch.setenv(f"MASTERLINK_{key}", value)
+    # 有設 TAISHIN_* 的用新的，沒設的退回舊的 MASTERLINK_*
+    monkeypatch.setenv("TAISHIN_ACCOUNT_PASS", "pw")
+    monkeypatch.setenv("TAISHIN_ACCOUNT", "592a2")
+
+    account = module.MasterlinkAccount()
+    assert account.sdk.login_args == ("A123456789", "pw", "c.pfx", "cpw")
+    assert account.target_account.account == "592a2"
+    assert account.sdk.realtime_account is account.target_account
+    assert list(account.get_orders()) == ["o-1"]
+
+
+def test_taishin_account_is_masterlink_account(monkeypatch: Any) -> None:
+    module = _import_masterlink_module_with_fake_sdk(monkeypatch)
+    for name in ("finlab.online.brokers.taishin", "finlab.online.taishin_account"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    from finlab.online.taishin_account import TaishinAccount
+
+    assert TaishinAccount is module.MasterlinkAccount
+
+
+def test_missing_taishin_sdk_says_where_to_download(monkeypatch: Any) -> None:
+    monkeypatch.setitem(sys.modules, "taishin_sdk", None)
+    monkeypatch.delitem(sys.modules, "finlab.online.brokers.masterlink")
+    with pytest.raises(ModuleNotFoundError, match="taishin_sdk.*download-sdk"):
+        importlib.import_module("finlab.online.brokers.masterlink")

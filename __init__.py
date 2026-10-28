@@ -47,6 +47,7 @@ _MODULE_ALIASES: dict[str, str] = {
     "finlab.online.esun_account": "finlab.online.brokers.esun",
     "finlab.online.fubon_account": "finlab.online.brokers.fubon",
     "finlab.online.masterlink_account": "finlab.online.brokers.masterlink",
+    "finlab.online.taishin_account": "finlab.online.brokers.taishin",
     "finlab.online.binance_account": "finlab.online.brokers.binance",
     "finlab.online.pocket_account": "finlab.online.brokers.pocket",
     "finlab.online.schwab_account": "finlab.online.brokers.schwab",

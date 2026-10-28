@@ -11,6 +11,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "PocketAccount": ("finlab.online.brokers.pocket", "PocketAccount"),
     "SchwabAccount": ("finlab.online.brokers.schwab", "SchwabAccount"),
     "SinopacAccount": ("finlab.online.brokers.sinopac", "SinopacAccount"),
+    "TaishinAccount": ("finlab.online.brokers.taishin", "TaishinAccount"),
 }
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "PocketAccount",
     "SchwabAccount",
     "SinopacAccount",
+    "TaishinAccount",
 ]
 
 

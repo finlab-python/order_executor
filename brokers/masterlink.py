@@ -1,7 +1,7 @@
 """
 MasterlinkAccount 模組
 
-實現與元富證券 API 交互的 Account 類
+實現與台新證券（原元富證券）API 交互的 Account 類；TaishinAccount 是同一個類別
 """
 
 from __future__ import annotations
@@ -14,15 +14,26 @@ import time
 from decimal import Decimal
 from typing import Any
 
-from masterlink_sdk import (
-    BSAction,
-    MarketType,
-    MasterlinkSDK,
-    OrderType,
-    PriceType,
-    TimeInForce,
-)
-from masterlink_sdk import Order as MLOrder
+try:
+    from taishin_sdk import (
+        BSAction,
+        MarketType,
+        OrderType,
+        PriceType,
+        TaishinSDK,
+        TimeInForce,
+    )
+    from taishin_sdk import Order as MLOrder
+except ModuleNotFoundError as e:
+    if e.name != "taishin_sdk":
+        raise
+    # 元富 2026-04 併入台新，SDK 由 masterlink_sdk 改為不在 PyPI 上的 taishin_sdk
+    raise ModuleNotFoundError(
+        "元富證券已併入台新證券，請改裝 taishin_sdk（官方支援 Python 3.8～3.12）："
+        "到 https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/download/download-sdk "
+        "下載 whl 後用 pip install 安裝",
+        name=e.name,
+    ) from e
 
 from finlab import data
 from finlab.markets.tw import TWMarket
@@ -51,12 +62,12 @@ from finlab.online.core.realtime_provider import RealtimeProvider
 
 class MasterlinkAccount(Account, RealtimeProvider):
     """
-    元富證券賬戶類
-    實現與元富證券 API 的交互
+    台新證券（原元富證券）賬戶類
+    實現與台新證券 API 的交互
     """
 
-    required_module = "masterlink_sdk"  # 需要的 Python 包名稱
-    module_version = "1.0.0"  # 需要的版本號
+    required_module = "taishin_sdk"  # 需要的 Python 包名稱
+    module_version = "1.0.2"  # 需要的版本號
 
     def __init__(
         self,
@@ -68,7 +79,9 @@ class MasterlinkAccount(Account, RealtimeProvider):
         cert_pass: str | None = None,
     ) -> None:
         """
-        初始化元富證券賬戶
+        初始化台新證券賬戶
+
+        環境變數優先讀 TAISHIN_*，沒有設定時讀舊的 MASTERLINK_*。
 
         Args:
             national_id (str, optional): 身分證字號。預設從環境變數獲取。
@@ -78,16 +91,21 @@ class MasterlinkAccount(Account, RealtimeProvider):
             cert_pass (str, optional): 憑證密碼。預設從環境變數獲取。
         """
         # 從參數或環境變數獲取登錄信息
-        self.base_url = base_url or os.environ.get("MASTERLINK_BASE_URL")
-        self.national_id = national_id or os.environ.get("MASTERLINK_NATIONAL_ID")
-        self.account = account or os.environ.get("MASTERLINK_ACCOUNT")
-        self.account_pass = account_pass or os.environ.get("MASTERLINK_ACCOUNT_PASS")
-        self.cert_path = cert_path or os.environ.get("MASTERLINK_CERT_PATH")
-        self.cert_pass = cert_pass or os.environ.get("MASTERLINK_CERT_PASS")
+        def env(name: str) -> str | None:
+            return os.environ.get(f"TAISHIN_{name}") or os.environ.get(
+                f"MASTERLINK_{name}"
+            )
+
+        self.base_url = base_url or env("BASE_URL")
+        self.national_id = national_id or env("NATIONAL_ID")
+        self.account = account or env("ACCOUNT")
+        self.account_pass = account_pass or env("ACCOUNT_PASS")
+        self.cert_path = cert_path or env("CERT_PATH")
+        self.cert_pass = cert_pass or env("CERT_PASS")
 
         if not all([self.national_id, self.account_pass, self.cert_path]):
             raise ValueError(
-                "缺少必要的登錄信息。請確保設置了 MASTERLINK_NATIONAL_ID, MASTERLINK_ACCOUNT_PASS, MASTERLINK_CERT_PATH 環境變數或直接提供參數"
+                "缺少必要的登錄信息。請確保設置了 TAISHIN_NATIONAL_ID, TAISHIN_ACCOUNT_PASS, TAISHIN_CERT_PATH 環境變數或直接提供參數"
             )
 
         # 初始化市場和時間戳
@@ -96,8 +114,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
         self._tick_pct_change_cache = {}
 
         # 初始化 SDK 和帳戶
-        logging.info("初始化元富 SDK...")
-        self.sdk = MasterlinkSDK(self.base_url)
+        logging.info("初始化台新 SDK...")
+        self.sdk = TaishinSDK(self.base_url)
 
         # 登入
         try:
@@ -112,7 +130,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 )
         except Exception as e:
             logging.exception(f"登入失敗: {e}")
-            raise Exception(f"無法登入元富證券: {e}") from e
+            raise Exception(f"無法登入台新證券: {e}") from e
 
         # 選擇帳戶
         if self.account:
@@ -126,7 +144,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
             self.target_account = self.accounts[0] if self.accounts else None
 
         if not self.target_account:
-            raise ValueError("無法獲取有效的元富證券帳戶")
+            raise ValueError("無法獲取有效的台新證券帳戶")
 
         logging.info(f"成功登入帳號: {self.target_account.account}")
 
