@@ -374,26 +374,9 @@ class YuantaAccount(Account):
         self, order_id: str, record: Any, new_shares: int, price: float
     ) -> str | None:
         """刪單後以新價格重下；刪單或重下失敗都要報錯，否則委託會停在舊價或消失。"""
-        _, filled_before, remaining = self._shares(record)
-        self._modify(record, _CANCEL, remaining)
-        filled_after = None
-        for attempt in range(3):
-            if attempt:
-                time.sleep(1)
-            self._refresh_records()
-            current = self._order_records.get(order_id)
-            if current is not None:
-                _, filled, left = self._shares(current)
-                if left == 0:
-                    filled_after = filled
-                    break
-        if filled_after is None:
-            raise RuntimeError(
-                f"update_order: 已送出委託單 {order_id} 的刪單，但無法確認刪除，未重下，"
-                "請確認委託狀態後手動補單"
-            )
+        filled_before = self._shares(record)[1]
         # 刪單前一刻成交的股數算在新數量裡，不重下
-        shares = new_shares - (filled_after - filled_before)
+        shares = new_shares - (self._cancel(order_id, record) - filled_before)
         if shares <= 0:
             return None
         odd_lot = _is_odd(record)
@@ -424,7 +407,23 @@ class YuantaAccount(Account):
         if not remaining:
             logger.warning(f"cancel_order: 委託單 {order_id} 已不在市場上，不需取消")
             return
-        self._modify(record, _CANCEL, remaining)
+        self._cancel(order_id, record)
+
+    def _cancel(self, order_id: str, record: Any) -> int:
+        """刪單並重查到委託確定離開市場（已刪或剛好全部成交），回傳最終成交股數。
+        沒確認就報錯，否則呼叫端接著下的新單會重複。"""
+        self._modify(record, _CANCEL, self._shares(record)[2])
+        for attempt in range(3):
+            if attempt:
+                time.sleep(1)
+            self._refresh_records()
+            current = self._order_records.get(order_id)
+            if current is not None and not self._shares(current)[2]:
+                return self._shares(current)[1]
+        raise RuntimeError(
+            f"cancel_order: 已送出元大委託單 {order_id} 的刪單，但無法確認刪除，"
+            "委託可能仍在市場上，請確認委託狀態"
+        )
 
     def _refresh_records(self) -> None:
         records = self._call("GetOrderTradeReport", False, self.account).StkOrderList

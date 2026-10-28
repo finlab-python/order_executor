@@ -315,6 +315,23 @@ def test_get_orders_and_modify(make_account):
     assert len(acc.api.sent) == n
 
 
+def test_cancel_order_raises_when_not_confirmed(make_account):
+    acc, _ = make_account()
+    acc.create_order(Action.BUY, "2330", 1, price=580)
+    acc.get_orders()
+    record = acc.api.records["H0000"]
+    real_send = acc.api.SendStockOrder
+
+    def send(account, orders):  # 券商收下刪單，委託卻一直沒刪掉
+        result = real_send(account, orders)
+        record.CancelQty, record.OrderStatus = 0, 20
+        return result
+
+    acc.api.SendStockOrder = send
+    with pytest.raises(RuntimeError, match="仍在市場上"):
+        acc.cancel_order("H0000")
+
+
 def test_odd_lot_reprice_cancels_and_replaces_the_rest(make_account):
     acc, _ = make_account()
     acc.create_order(Action.BUY, "2330", 500, price=580, odd_lot=True)
