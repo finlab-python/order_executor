@@ -6,9 +6,6 @@ import types
 from typing import Any
 
 
-
-
-
 def _import_fugle_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     sdk_module = types.ModuleType("esun_trade.sdk")
     sdk_module.SDK = object

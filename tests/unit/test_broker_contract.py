@@ -1,6 +1,7 @@
 """所有券商 adapter 都要通過的共同契約（order_executor#75）
 
-新增券商就在 BROKERS 加一個 builder，契約本身不為個別券商放寬。只用 mock，不登入、不送單。
+新增券商就在 REAL_BROKERS 加 builder，並補上 QUERIES 與改價案例表；契約本身不為個別券商放寬。
+只用 mock，不登入、不送單。
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import importlib
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from types import SimpleNamespace as NS
 from typing import Any
 
@@ -30,7 +32,11 @@ from finlab.online.core.position import Position
 
 from ..utils.mock_helpers import patch_utc_host_clock
 from .test_binance_order_safety_unit import _account as _binance_account
-from .test_fubon_order_safety_unit import _balance_account, _capture_orders
+from .test_fubon_order_safety_unit import (
+    RATE_LIMITED,
+    _balance_account,
+    _capture_orders,
+)
 from .test_fugle_order_safety_unit import _account as _fugle_account
 from .test_fugle_order_safety_unit import _import_fugle, _row
 from .test_kgi_account_unit import SDK as KGI_SDK
@@ -53,15 +59,18 @@ from .test_yuanta_account_unit import ACCOUNT, _fake_sdk, _FakeSpark, _List
 
 CLOSE, LIMIT_UP, LIMIT_DOWN = 580.0, 616.0, 504.0
 REFERENCE = "reference"
+COMMON, INTRADAY_ODD, AFTER_HOURS_ODD, FIXING = range(4)  # Broker.lots 的索引
+FIXING_TIME = (14, 10, 0)
 
 
 @dataclass
 class Broker:
     account: Any
     placed: Callable[[], list[Any]]
-    lot_of: Callable[[Any], Any]
-    price_of: Callable[[Any], Any]
-    lots: tuple[Any, Any, Any, Any]  # SDK 時段參數：整股、盤中零股、盤後零股、定盤
+    # lot_of、price_of、lots 只有台股契約用得到
+    lot_of: Callable[[Any], Any] = lambda _: None
+    price_of: Callable[[Any], Any] = lambda _: None
+    lots: tuple[Any, Any, Any, Any] = (None,) * 4  # 整股、盤中零股、盤後零股、定盤
     is_market: Callable[[Any], bool] = lambda _: False
     failure: Any = None  # SDK 查詢失敗但不拋例外時的回傳值
     reprice: dict[str, Callable[[], Any]] = field(default_factory=dict)
@@ -89,17 +98,12 @@ def _fubon(monkeypatch: Any) -> Broker:
     placed = _capture_orders(account)
     stock = account.sdk.stock
 
-    def arm(market_type: str, **sdk: Any) -> Callable[[], str]:
-        def armed() -> str:
-            account.get_orders = lambda: {"o-1": _order(NS(market_type=market_type))}
-            stock.make_modify_price_obj = stock.make_modify_quantity_obj = lambda *_: (
-                "req"
-            )
-            for name, fn in sdk.items():
-                setattr(stock, name, fn)
-            return "o-1"
-
-        return armed
+    def arm(market_type: str, **sdk: Any) -> str:
+        account.get_orders = lambda: {"o-1": _order(NS(market_type=market_type))}
+        stock.make_modify_price_obj = stock.make_modify_quantity_obj = lambda *_: "req"
+        for name, fn in sdk.items():
+            setattr(stock, name, fn)
+        return "o-1"
 
     return Broker(
         account, lambda: placed,
@@ -107,11 +111,11 @@ def _fubon(monkeypatch: Any) -> Broker:
         lambda o: REFERENCE if o["price_type"] == "Reference" else float(o["price"]),
         ("Common", "IntradayOdd", "Odd", "Fixing"),
         is_market=lambda o: o["price_type"] == "Market",
-        failure=NS(is_success=False, message="rate limit", data=None),
+        failure=RATE_LIMITED,
         reprice={
-            "board_lot": arm("Common", modify_price=_raise),
-            "odd_lot": arm(
-                "IntradayOdd",
+            "board_lot": partial(arm, "Common", modify_price=_raise),
+            "odd_lot": partial(
+                arm, "IntradayOdd",
                 modify_quantity=lambda *_: NS(is_success=False, message="rejected"),
             ),
         },
@@ -138,15 +142,12 @@ def _taishin(monkeypatch: Any) -> Broker:
         ),
     )  # fmt: skip
 
-    def arm(market_type: str, **sdk: Any) -> Callable[[], str]:
-        def armed() -> str:
-            record = _record(market_type=market_type, org_qty=2000)
-            account.get_orders = lambda: {"o-1": account._create_finlab_order(record)}
-            for name, fn in sdk.items():
-                setattr(stock, name, fn)
-            return "o-1"
-
-        return armed
+    def arm(market_type: str, **sdk: Any) -> str:
+        record = _record(market_type=market_type, org_qty=2000)
+        account.get_orders = lambda: {"o-1": account._create_finlab_order(record)}
+        for name, fn in sdk.items():
+            setattr(stock, name, fn)
+        return "o-1"
 
     return Broker(
         account, lambda: stock.placed_orders,
@@ -155,8 +156,8 @@ def _taishin(monkeypatch: Any) -> Broker:
         ("Common", "IntradayOdd", "Odd", "Fixing"),
         is_market=lambda o: o.price_type == "Market",
         reprice={
-            "board_lot": arm("Common", modify_price=_raise),
-            "odd_lot": arm("IntradayOdd", modify_volume=_raise),
+            "board_lot": partial(arm, "Common", modify_price=_raise),
+            "odd_lot": partial(arm, "IntradayOdd", modify_volume=_raise),
         },
     )  # fmt: skip
 
@@ -182,15 +183,12 @@ def _fugle(monkeypatch: Any) -> Broker:
     }  # fmt: skip
     monkeypatch.setattr(module.requests, "get", lambda *_, **__: NS(json=lambda: quote))
 
-    def arm(row: dict[str, Any], **calls: Any) -> Callable[[], str]:
-        def armed() -> str:
-            results[0] = row
-            account.get_orders()
-            for name, fn in calls.items():
-                setattr(sdk, name, fn)
-            return "B1"
-
-        return armed
+    def arm(row: dict[str, Any], **calls: Any) -> str:
+        results[0] = row
+        account.get_orders()
+        for name, fn in calls.items():
+            setattr(sdk, name, fn)
+        return "B1"
 
     return Broker(
         account, lambda: placed,
@@ -198,8 +196,8 @@ def _fugle(monkeypatch: Any) -> Broker:
         lambda o: float(o["price"]),
         ("1", "5", "3", "2"),
         reprice={
-            "board_lot": arm(_row(ap_code="1"), modify_price=_reject),
-            "odd_lot": arm(_row(), cancel_order=_raise),
+            "board_lot": partial(arm, _row(ap_code="1"), modify_price=_reject),
+            "odd_lot": partial(arm, _row(), cancel_order=_raise),
         },
     )  # fmt: skip
 
@@ -296,17 +294,14 @@ def _kgi(monkeypatch: Any) -> Broker:
         ),
     )
 
-    def arm(quantity: int, odd_lot: bool, **calls: Any) -> Callable[[], str]:
-        def armed() -> str:
-            order_id = account.create_order(
-                Action.BUY, "2330", quantity, price=500, odd_lot=odd_lot
-            )
-            order.calls.clear()
-            for name, fn in calls.items():
-                setattr(order, name, fn)
-            return order_id
-
-        return armed
+    def arm(quantity: int, odd_lot: bool, **calls: Any) -> str:
+        order_id = account.create_order(
+            Action.BUY, "2330", quantity, price=500, odd_lot=odd_lot
+        )
+        order.calls.clear()
+        for name, fn in calls.items():
+            setattr(order, name, fn)
+        return order_id
 
     return Broker(
         account, lambda: order.calls,
@@ -314,8 +309,8 @@ def _kgi(monkeypatch: Any) -> Broker:
         lambda o: float(o["price"]),
         ("Common", "Odd", "Odd_AfterMarket", "Fixing"),
         reprice={
-            "board_lot": arm(2, False, update_order=_reject),
-            "odd_lot": arm(300, True, cancel_order=lambda *_: None),
+            "board_lot": partial(arm, 2, False, update_order=_reject),
+            "odd_lot": partial(arm, 300, True, cancel_order=lambda *_: None),
         },
     )  # fmt: skip
 
@@ -329,16 +324,13 @@ def _yuanta(monkeypatch: Any) -> Broker:
     account._sdk, account._List = _fake_sdk(None), _List
     api = account.api = _FakeSpark(account)
 
-    def arm(quantity: int, odd_lot: bool) -> Callable[[], str]:
-        def armed() -> str:
-            order_id = account.create_order(
-                Action.BUY, "2330", quantity, price=500, odd_lot=odd_lot
-            )
-            api.sent.clear()
-            api.reject = True
-            return order_id
-
-        return armed
+    def arm(quantity: int, odd_lot: bool) -> str:
+        order_id = account.create_order(
+            Action.BUY, "2330", quantity, price=500, odd_lot=odd_lot
+        )
+        api.sent.clear()
+        api.reject = True
+        return order_id
 
     return Broker(
         account, lambda: [o for o in api.sent if o.TradeKind == 0],
@@ -347,7 +339,7 @@ def _yuanta(monkeypatch: Any) -> Broker:
         (0, 4, 2, 7),
         is_market=lambda o: o.PriceFlag == "M",
         failure=False,
-        reprice={"board_lot": arm(2, False), "odd_lot": arm(300, True)},
+        reprice={"board_lot": partial(arm, 2, False), "odd_lot": partial(arm, 300, True)},
     )  # fmt: skip
 
 
@@ -366,7 +358,7 @@ def _binance(monkeypatch: Any) -> Broker:
         return "BTCUSDT|7"
 
     return Broker(
-        account, lambda: client.created, lambda o: None, lambda o: None, (None,) * 4,
+        account, lambda: client.created,
         reprice={"cancel": cancel_raises}, target={"BTCUSDT": 0.1},
     )  # fmt: skip
 
@@ -374,7 +366,7 @@ def _binance(monkeypatch: Any) -> Broker:
 def _schwab(monkeypatch: Any) -> Broker:
     account = _schwab_account(monkeypatch, cancel_status=400)
     return Broker(
-        account, lambda: account.client.placed, lambda o: None, lambda o: None, (None,) * 4,
+        account, lambda: account.client.placed,
         failure=_response(500), reprice={"cancel": lambda: 1}, target={"AAPL": 1},
     )  # fmt: skip
 
@@ -399,7 +391,7 @@ class _SdkOnlyAccount(TWStockAccount):
         )  # fmt: skip
         if plan is None:
             return None
-        self.sent.append({"lot": plan.session_param, "price": plan.price})
+        self.sent.append({"lot": plan.session_param, "price": plan.fixing_price})
         return "sdk-order"
 
     def get_stocks(self, stock_ids: list[str]) -> dict[str, Stock]:
@@ -426,22 +418,12 @@ def _sdk_only(monkeypatch: Any) -> Broker:
     )  # fmt: skip
 
 
-BROKERS: dict[str, Callable[[Any], Broker]] = {
+REAL_BROKERS: dict[str, Callable[[Any], Broker]] = {
     "fubon": _fubon, "taishin": _taishin, "fugle": _fugle, "sinopac": _sinopac,
     "pocket": _pocket, "kgi": _kgi, "yuanta": _yuanta, "binance": _binance, "schwab": _schwab,
 }  # fmt: skip
-TW_BROKERS = [
-    "fubon",
-    "taishin",
-    "fugle",
-    "sinopac",
-    "pocket",
-    "kgi",
-    "yuanta",
-    "sdk_only",
-]
-BROKERS["sdk_only"] = _sdk_only
-REAL_BROKERS = [name for name in BROKERS if name != "sdk_only"]
+BROKERS = {**REAL_BROKERS, "sdk_only": _sdk_only}
+TW_BROKERS = [name for name in BROKERS if name not in ("binance", "schwab")]
 
 _FUGLE_Q = {"position": "sdk.get_inventories", "orders": "sdk.get_order_results",
             "cash": "sdk.get_balance", "settlement": "sdk.get_settlements"}  # fmt: skip
@@ -533,6 +515,17 @@ def _freeze(monkeypatch: Any, broker: Broker, taipei: tuple[int, int, int]) -> N
     patch_utc_host_clock(monkeypatch, module, (hour - 8, minute, second))
 
 
+@pytest.fixture(params=TW_BROKERS)
+def tw_broker(request: Any, monkeypatch: Any) -> Broker:
+    return BROKERS[request.param](monkeypatch)
+
+
+@pytest.fixture
+def fixing_broker(monkeypatch: Any, tw_broker: Broker) -> Broker:
+    _freeze(monkeypatch, tw_broker, FIXING_TIME)
+    return tw_broker
+
+
 def _set_path(root: Any, path: str, value: Any) -> None:
     *parents, attr = path.split(".")
     for name in parents:
@@ -562,35 +555,33 @@ def test_balance_query_reporting_error_raises(monkeypatch: Any, name: str) -> No
         broker.account.get_cash()
 
 
-@pytest.mark.parametrize("name", TW_BROKERS)
 @pytest.mark.parametrize(
     "taipei, odd_lot, lot",
     [
-        ((13, 39, 59), True, 1),
-        ((13, 40, 0), True, 2),
-        ((14, 29, 59), True, 2),
-        ((14, 30, 0), True, 1),
-        ((10, 0, 0), True, 1),
-        ((13, 59, 59), False, 0),
-        ((14, 0, 0), False, 3),
-        ((14, 29, 59), False, 3),
-        ((14, 30, 0), False, 0),
-        ((10, 0, 0), False, 0),
+        ((13, 39, 59), True, INTRADAY_ODD),
+        ((13, 40, 0), True, AFTER_HOURS_ODD),
+        ((14, 29, 59), True, AFTER_HOURS_ODD),
+        ((14, 30, 0), True, INTRADAY_ODD),
+        ((10, 0, 0), True, INTRADAY_ODD),
+        ((13, 59, 59), False, COMMON),
+        ((14, 0, 0), False, FIXING),
+        ((14, 29, 59), False, FIXING),
+        ((14, 30, 0), False, COMMON),
+        ((10, 0, 0), False, COMMON),
     ],
 )
 def test_session_boundaries(
-    monkeypatch: Any, name: str, taipei: tuple[int, int, int], odd_lot: bool, lot: int
+    monkeypatch: Any,
+    tw_broker: Broker,
+    taipei: tuple[int, int, int],
+    odd_lot: bool,
+    lot: int,
 ) -> None:
-    broker = BROKERS[name](monkeypatch)
-    _freeze(monkeypatch, broker, taipei)
-    broker.account.create_order(Action.BUY, "2330", 1, price=CLOSE, odd_lot=odd_lot)
-    assert [broker.lot_of(o) for o in broker.placed()] == [broker.lots[lot]]
+    _freeze(monkeypatch, tw_broker, taipei)
+    tw_broker.account.create_order(Action.BUY, "2330", 1, price=CLOSE, odd_lot=odd_lot)
+    assert [tw_broker.lot_of(o) for o in tw_broker.placed()] == [tw_broker.lots[lot]]
 
 
-FIXING_TIME = (14, 10, 0)
-
-
-@pytest.mark.parametrize("name", TW_BROKERS)
 @pytest.mark.parametrize(
     "action, kwargs",
     [
@@ -601,15 +592,12 @@ FIXING_TIME = (14, 10, 0)
     ],
 )
 def test_fixing_skips_orders_not_filled_at_close(
-    monkeypatch: Any, name: str, action: Action, kwargs: dict[str, Any]
+    fixing_broker: Broker, action: Action, kwargs: dict[str, Any]
 ) -> None:
-    broker = BROKERS[name](monkeypatch)
-    _freeze(monkeypatch, broker, FIXING_TIME)
-    assert not broker.account.create_order(action, "2330", 1, **kwargs)
-    assert broker.placed() == []
+    assert not fixing_broker.account.create_order(action, "2330", 1, **kwargs)
+    assert fixing_broker.placed() == []
 
 
-@pytest.mark.parametrize("name", TW_BROKERS)
 @pytest.mark.parametrize(
     "action, kwargs",
     [
@@ -621,39 +609,32 @@ def test_fixing_skips_orders_not_filled_at_close(
     ],
 )
 def test_fixing_sends_at_close_and_never_market(
-    monkeypatch: Any, name: str, action: Action, kwargs: dict[str, Any]
+    fixing_broker: Broker, action: Action, kwargs: dict[str, Any]
 ) -> None:
-    broker = BROKERS[name](monkeypatch)
-    _freeze(monkeypatch, broker, FIXING_TIME)
-    broker.account.create_order(action, "2330", 1, **kwargs)
-    [order] = broker.placed()
-    assert broker.lot_of(order) == broker.lots[3]
-    assert broker.price_of(order) in (CLOSE, REFERENCE)
-    assert not broker.is_market(order)
+    fixing_broker.account.create_order(action, "2330", 1, **kwargs)
+    [order] = fixing_broker.placed()
+    assert fixing_broker.lot_of(order) == fixing_broker.lots[FIXING]
+    assert fixing_broker.price_of(order) in (CLOSE, REFERENCE)
+    assert not fixing_broker.is_market(order)
 
 
-@pytest.mark.parametrize("name", TW_BROKERS)
-def test_fixing_without_close_price_does_not_send(monkeypatch: Any, name: str) -> None:
-    broker = BROKERS[name](monkeypatch)
-    _freeze(monkeypatch, broker, FIXING_TIME)
-    broker.account.get_stocks = lambda stock_ids: {}
-    assert not broker.account.create_order(Action.BUY, "2330", 1, price=CLOSE)
-    assert broker.placed() == []
+def test_fixing_without_close_price_does_not_send(fixing_broker: Broker) -> None:
+    fixing_broker.account.get_stocks = lambda stock_ids: {}
+    assert not fixing_broker.account.create_order(Action.BUY, "2330", 1, price=CLOSE)
+    assert fixing_broker.placed() == []
 
 
-@pytest.mark.parametrize("name", TW_BROKERS)
 @pytest.mark.parametrize("kwargs", [{"market_order": True}, {"best_price_limit": True}])
 def test_after_hours_odd_lot_is_never_a_market_order(
-    monkeypatch: Any, name: str, kwargs: dict[str, Any]
+    monkeypatch: Any, tw_broker: Broker, kwargs: dict[str, Any]
 ) -> None:
-    broker = BROKERS[name](monkeypatch)
-    _freeze(monkeypatch, broker, (13, 50, 0))
-    broker.account.create_order(
+    _freeze(monkeypatch, tw_broker, (13, 50, 0))
+    tw_broker.account.create_order(
         Action.BUY, "2330", 1, price=CLOSE, odd_lot=True, **kwargs
     )
-    [order] = broker.placed()
-    assert broker.lot_of(order) == broker.lots[2]
-    assert not broker.is_market(order)
+    [order] = tw_broker.placed()
+    assert tw_broker.lot_of(order) == tw_broker.lots[AFTER_HOURS_ODD]
+    assert not tw_broker.is_market(order)
 
 
 @pytest.mark.parametrize("name", REAL_BROKERS)

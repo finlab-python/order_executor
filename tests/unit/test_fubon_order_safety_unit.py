@@ -46,11 +46,6 @@ def _capture_orders(account: Any) -> list[dict[str, Any]]:
     return placed
 
 
-def _freeze_utc_host(monkeypatch: Any, module: Any, hour: int, minute: int) -> None:
-    """模擬主機時區為 UTC，UTC hour:minute:30 的那一刻"""
-    patch_utc_host_clock(monkeypatch, module, (hour, minute, 30))
-
-
 def _timeout(acc: Any) -> Any:
     raise TimeoutError("timeout")
 
@@ -104,7 +99,7 @@ def test_fixing_order_uses_reference_price(
     price: str | None,
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, *utc)
+    patch_utc_host_clock(monkeypatch, module, (*utc, 30))
     account.quotes["2330"] = {"symbol": "2330", "closePrice": 580.0}
     placed = _capture_orders(account)
 
@@ -232,7 +227,7 @@ def test_day_trading_short_order_type(
     monkeypatch: Any, action: Action, odd_lot: bool, sent: list[tuple[str, str]]
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, 2, 0)
+    patch_utc_host_clock(monkeypatch, module, (2, 0, 30))
     placed = _capture_orders(account)
     account.create_order(
         action,
@@ -260,7 +255,7 @@ def test_fixing_skips_orders_not_meant_to_fill_at_close(
     monkeypatch: Any, action: Action, kwargs: dict[str, Any], sent: bool
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, 6, 15)  # 台北 14:15
+    patch_utc_host_clock(monkeypatch, module, (6, 15, 30))  # 台北 14:15
     account.quotes["2330"] = {"symbol": "2330", "closePrice": 1000.0}
     placed = _capture_orders(account)
     account.create_order(action, "2330", 1, **kwargs)
@@ -272,7 +267,7 @@ def test_odd_lot_reprice_uses_remaining_quantity(
     monkeypatch: Any, reorder_ok: bool
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, 2, 0)
+    patch_utc_host_clock(monkeypatch, module, (2, 0, 30))
     # 原委託 500 股，減量到 300 股，成交 100 股
     order = _order_result(
         market_type="IntradayOdd", quantity=500, after_qty=300, filled_qty=100

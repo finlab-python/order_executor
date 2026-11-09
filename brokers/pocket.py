@@ -121,11 +121,8 @@ class PocketAccount(TWStockAccount):
         if plan is None:
             return None
 
-        if price is None:
-            price = self.api.snapshots([contract])[0].close
-
         if plan.session is TWSession.FIXING:
-            price = plan.price
+            price = plan.fixing_price
         elif market_order:
             if action == Action.BUY:
                 price = limitup
@@ -137,6 +134,9 @@ class PocketAccount(TWStockAccount):
                 price = limitdn
             elif action == Action.SELL:
                 price = limitup
+
+        elif price is None:
+            price = self.api.snapshots([contract])[0].close
 
         action = "Buy" if action == Action.BUY else "Sell"
 

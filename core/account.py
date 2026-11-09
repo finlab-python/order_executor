@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime
 import importlib.util
 import logging
-import math
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from decimal import Decimal
@@ -12,14 +11,14 @@ from typing import Any
 
 from finlab.config import get_default_market
 from finlab.market import Market
+from finlab.markets.tw import TWMarket
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
+from finlab.online.core.realtime_normalizers import to_optional_float
 
 logger = logging.getLogger(__name__)
 
 Number = int | float | Decimal
-
-_TAIPEI = datetime.timezone(datetime.timedelta(hours=8), "Asia/Taipei")
 
 
 class TWSession(_Enum):
@@ -35,7 +34,7 @@ def tw_session(odd_lot: bool, now: datetime.datetime) -> TWSession:
     """依台北時間判斷委託時段；時段從開始那一分鐘起算，now 必須帶時區"""
     if now.tzinfo is None:
         raise ValueError("tw_session 需要帶時區的時間，避免用到主機時區")
-    current = now.astimezone(_TAIPEI).time()
+    current = now.astimezone(TWMarket.tzinfo()).time()
     if odd_lot:
         after_hours = datetime.time(13, 40) <= current < datetime.time(14, 30)
         return TWSession.AFTER_HOURS_ODD if after_hours else TWSession.INTRADAY_ODD
@@ -340,12 +339,12 @@ class TWOrderPlan:
     Attributes:
         session (TWSession): 委託時段
         session_param (Any): adapter 宣告的該時段 SDK 參數
-        price (Number | None): 定盤時是要送出的收盤價（用參考價旗標的券商是 None）；其他時段是呼叫端給的價格
+        fixing_price (float | None): 定盤要送出的收盤價；其他時段、或用參考價旗標的券商是 None
     """
 
     session: TWSession
     session_param: Any
-    price: Number | None
+    fixing_price: float | None = None
 
 
 class TWStockAccount(Account):
@@ -364,45 +363,46 @@ class TWStockAccount(Account):
 
     def _close_price(self, stock_id: str) -> float | None:
         """今日收盤價，查不到回傳 None"""
-        close = getattr(self.get_stocks([stock_id]).get(stock_id), "close", None)
-        if close is None or math.isnan(float(close)) or float(close) == 0:
-            return None
-        return float(close)
+        stock = self.get_stocks([stock_id]).get(stock_id)
+        return to_optional_float(getattr(stock, "close", None)) or None
 
     def _plan_order(
         self,
         action: Action,
         stock_id: str,
         price: Number | None,
-        odd_lot: bool = False,
-        market_order: bool = False,
-        best_price_limit: bool = False,
+        *,
+        odd_lot: bool,
+        market_order: bool,
+        best_price_limit: bool,
     ) -> TWOrderPlan | None:
         """決定委託時段與定盤價；回傳 None 表示這筆不送、也不報錯
 
         定盤只以收盤價成交：芭樂價、比收盤價差的限價不會照原意成交，不送也不中斷，
         呼叫端可能已先撤單，後面的單要照常下。
         """
-        session = tw_session(odd_lot, datetime.datetime.now(_TAIPEI))
-        if session is TWSession.FIXING:
-            if best_price_limit:
-                logger.warning(f"create_order: 定盤時段不送 {stock_id} 的芭樂價委託")
-                return None
-            compare = price is not None and not market_order
-            close = None
-            if compare or not self.fixing_uses_reference_price:
-                close = self._close_price(stock_id)
-                if close is None:
-                    logger.warning(
-                        f"create_order: 查不到 {stock_id} 的收盤價，定盤時段不送單"
-                    )
-                    return None
-            if compare and (
-                float(price) < close if action == Action.BUY else float(price) > close
-            ):
+        session = tw_session(odd_lot, datetime.datetime.now(TWMarket.tzinfo()))
+        session_param = self.session_params()[session]
+        if session is not TWSession.FIXING:
+            return TWOrderPlan(session, session_param)
+        if best_price_limit:
+            logger.warning(f"create_order: 定盤時段不送 {stock_id} 的芭樂價委託")
+            return None
+        compare = price is not None and not market_order
+        close = None
+        if compare or not self.fixing_uses_reference_price:
+            close = self._close_price(stock_id)
+            if close is None:
                 logger.warning(
-                    f"create_order: 定盤以收盤價 {close} 成交，{stock_id} 比收盤價差的限價 {price} 不送單"
+                    f"create_order: 查不到 {stock_id} 的收盤價，定盤時段不送單"
                 )
                 return None
-            price = close
-        return TWOrderPlan(session, self.session_params()[session], price)
+        if compare and (
+            float(price) < close if action == Action.BUY else float(price) > close
+        ):
+            logger.warning(
+                f"create_order: 定盤以收盤價 {close} 成交，{stock_id} 比收盤價差的限價 {price} 不送單"
+            )
+            return None
+        fixing_price = None if self.fixing_uses_reference_price else close
+        return TWOrderPlan(session, session_param, fixing_price)

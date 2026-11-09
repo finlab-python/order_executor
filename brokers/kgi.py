@@ -161,7 +161,7 @@ class KGIAccount(TWStockAccount):
 
         # 一律送數字限價，漲跌停價與成交價從快照取，不用 SDK 的漲跌停旗標
         if plan.session is TWSession.FIXING:
-            order_price = plan.price
+            order_price = plan.fixing_price
         elif price is not None and not (market_order or best_price_limit):
             order_price = price
         else:

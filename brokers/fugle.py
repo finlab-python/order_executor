@@ -401,7 +401,7 @@ class FugleAccount(TWStockAccount, RealtimeProvider):
         price_flag = PriceFlag.Limit if price else PriceFlag.Flat
 
         if plan.session is TWSession.FIXING:
-            price = plan.price
+            price = plan.fixing_price
             price_flag = PriceFlag.Limit
 
         elif market_order:

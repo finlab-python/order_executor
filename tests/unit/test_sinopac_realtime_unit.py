@@ -10,7 +10,6 @@ from finlab.online.core.enums import Action, OrderStatus
 from finlab.online.core.realtime_models import ConnectionState
 
 
-
 class _FakeQuote:
     def __init__(self) -> None:
         self.event_cb = None

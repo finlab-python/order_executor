@@ -1456,8 +1456,8 @@ class MasterlinkAccount(TWStockAccount, RealtimeProvider):
         if hasattr(self.sdk.accounting, "skbank_balance"):
             try:
                 balance = self.sdk.accounting.skbank_balance(self.target_account)
-                answered = answered or balance is not None
                 if balance is not None:
+                    answered = True
                     available_balance = getattr(balance, "available_balance", 0)
                     # 確保 available_balance 不為 None
                     if available_balance is not None:

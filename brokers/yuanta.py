@@ -290,25 +290,21 @@ class YuantaAccount(TWStockAccount):
         ap_code = plan.session_param
 
         # 一律送限價，漲跌停與收盤價從報價表取，不用漲跌停旗標
-        quote = None
-        if plan.session is not TWSession.FIXING and (
-            market_order or best_price_limit or price is None
-        ):
+        if plan.session is TWSession.FIXING:
+            order_price = plan.fixing_price
+        elif price is not None and not (market_order or best_price_limit):
+            order_price = price
+        else:
             quote = self._quotes([stock_id]).get(stock_id)
             if quote is None:
                 logger.warning(f"create_order: 查不到 {stock_id} 的報價，不送單")
                 return None
-
-        if plan.session is TWSession.FIXING:
-            order_price = plan.price
-        elif market_order:
-            order_price = quote.UpStopPrice if is_buy else quote.DownStopPrice
-        elif best_price_limit:
-            order_price = quote.DownStopPrice if is_buy else quote.UpStopPrice
-        elif price is None:
-            order_price = self._last_price(quote)
-        else:
-            order_price = price
+            if market_order:
+                order_price = quote.UpStopPrice if is_buy else quote.DownStopPrice
+            elif best_price_limit:
+                order_price = quote.DownStopPrice if is_buy else quote.UpStopPrice
+            else:
+                order_price = self._last_price(quote)
 
         order_no, error = self._send_order(
             _NEW,

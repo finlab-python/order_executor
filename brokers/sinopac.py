@@ -540,13 +540,10 @@ class SinopacAccount(TWStockAccount, RealtimeProvider):
         if plan is None:
             return ""
 
-        if price is None:
-            price = self.api.snapshots([contract])[0].close
-
         price_type = SJStockPriceType.LMT
 
         if plan.session is TWSession.FIXING:
-            price = plan.price
+            price = plan.fixing_price
         elif market_order:
             if action == Action.BUY:
                 price = limitup
@@ -558,6 +555,9 @@ class SinopacAccount(TWStockAccount, RealtimeProvider):
                 price = limitdn
             elif action == Action.SELL:
                 price = limitup
+
+        elif price is None:
+            price = self.api.snapshots([contract])[0].close
 
         if action == Action.BUY:
             action = SJAction.Buy
