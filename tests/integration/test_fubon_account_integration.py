@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import time
 import unittest
@@ -17,6 +18,8 @@ pytest.importorskip("fubon_neo")
 
 # 導入測試基礎設施
 # 導入被測試的模組
+from finlab.markets.tw import TWMarket
+from finlab.online.core.account import TWSession, tw_session
 from finlab.online.enums import Action, OrderStatus
 from finlab.online.order_executor import OrderExecutor, Position
 
@@ -25,11 +28,10 @@ from ..conftest import FUBON_ENV_VARS, has_fubon_credentials, skip_if_no_fubon_c
 from ..utils.test_base import AccountTestMixin, IntegrationTestCase
 
 
-def skip_during_fixing_session(test: unittest.TestCase, account: Any) -> None:
+def skip_during_fixing_session(test: unittest.TestCase) -> None:
     """盤後定價時段整股單一律以參考價送出，測試用的低價限價擋不住實際成交"""
-    from fubon_neo.constant import MarketType
-
-    if account._determine_market_type(odd_lot=False) == MarketType.Fixing:
+    now = datetime.datetime.now(TWMarket.tzinfo())
+    if tw_session(odd_lot=False, now=now) is TWSession.FIXING:
         test.skipTest("盤後定價時段（14:00-14:30）不跑實單測試，避免實際成交")
 
 
@@ -47,7 +49,7 @@ class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
         except Exception as e:
             logging.exception(f"設定 FubonAccount 時發生錯誤: {e}")
             raise
-        skip_during_fixing_session(self, self.fubon_account)
+        skip_during_fixing_session(self)
 
     def tearDown(self) -> None:
         """每個測試結束後執行的清理"""
@@ -399,7 +401,7 @@ class TestFubonAccountOrderExecutor(IntegrationTestCase):
         except Exception as e:
             logging.exception(f"設定 FubonAccount 時發生錯誤: {e}")
             raise
-        skip_during_fixing_session(self, self.fubon_account)
+        skip_during_fixing_session(self)
 
     def tearDown(self) -> None:
         """清理所有委託單"""
