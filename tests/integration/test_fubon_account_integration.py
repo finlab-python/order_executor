@@ -41,6 +41,7 @@ class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
 
     def setUp(self) -> None:
         super().setUp()
+        skip_during_fixing_session(self)
         try:
             from finlab.online.fubon_account import FubonAccount
 
@@ -49,7 +50,6 @@ class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
         except Exception as e:
             logging.exception(f"設定 FubonAccount 時發生錯誤: {e}")
             raise
-        skip_during_fixing_session(self)
 
     def tearDown(self) -> None:
         """每個測試結束後執行的清理"""
@@ -394,6 +394,7 @@ class TestFubonAccountOrderExecutor(IntegrationTestCase):
 
     def setUp(self) -> None:
         super().setUp()
+        skip_during_fixing_session(self)
         try:
             from finlab.online.fubon_account import FubonAccount
 
@@ -401,7 +402,6 @@ class TestFubonAccountOrderExecutor(IntegrationTestCase):
         except Exception as e:
             logging.exception(f"設定 FubonAccount 時發生錯誤: {e}")
             raise
-        skip_during_fixing_session(self)
 
     def tearDown(self) -> None:
         """清理所有委託單"""
