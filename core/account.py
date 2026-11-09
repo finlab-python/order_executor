@@ -3,9 +3,11 @@ from __future__ import annotations
 import datetime
 import importlib.util
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from decimal import Decimal
+from enum import Enum as _Enum
 from typing import Any
 
 from finlab.config import get_default_market
@@ -16,6 +18,29 @@ from finlab.online.core.position import Position
 logger = logging.getLogger(__name__)
 
 Number = int | float | Decimal
+
+_TAIPEI = datetime.timezone(datetime.timedelta(hours=8), "Asia/Taipei")
+
+
+class TWSession(_Enum):
+    """台股委託時段"""
+
+    COMMON = "common"  # 盤中整股
+    INTRADAY_ODD = "intraday_odd"  # 盤中零股
+    AFTER_HOURS_ODD = "after_hours_odd"  # 盤後零股，13:40～14:30
+    FIXING = "fixing"  # 盤後定價，14:00～14:30，只以收盤價成交
+
+
+def tw_session(odd_lot: bool, now: datetime.datetime) -> TWSession:
+    """依台北時間判斷委託時段；時段從開始那一分鐘起算，now 必須帶時區"""
+    if now.tzinfo is None:
+        raise ValueError("tw_session 需要帶時區的時間，避免用到主機時區")
+    current = now.astimezone(_TAIPEI).time()
+    if odd_lot:
+        after_hours = datetime.time(13, 40) <= current < datetime.time(14, 30)
+        return TWSession.AFTER_HOURS_ODD if after_hours else TWSession.INTRADAY_ODD
+    fixing = datetime.time(14, 0) <= current < datetime.time(14, 30)
+    return TWSession.FIXING if fixing else TWSession.COMMON
 
 
 def typesafe_op(a: Number, b: Number, op: str) -> Number:
@@ -306,3 +331,78 @@ class Account(ABC):
     def get_market(self) -> Market:
         """拿到當前帳戶的市場"""
         return get_default_market()
+
+
+@dataclass(frozen=True)
+class TWOrderPlan:
+    """通過共同檢查、可以送出的委託
+
+    Attributes:
+        session (TWSession): 委託時段
+        session_param (Any): adapter 宣告的該時段 SDK 參數
+        price (Number | None): 定盤時是要送出的收盤價（用參考價旗標的券商是 None）；其他時段是呼叫端給的價格
+    """
+
+    session: TWSession
+    session_param: Any
+    price: Number | None
+
+
+class TWStockAccount(Account):
+    """台股券商的共同下單規則
+
+    adapter 只要宣告 session_params()，並在下單前呼叫 _plan_order()；
+    時段判斷與定盤要不要送、送什麼價都在這裡，adapter 不自己判斷。
+    """
+
+    # SDK 定盤用參考價旗標、不必帶價格的券商設為 True：不需要比價時就不查報價
+    fixing_uses_reference_price: bool = False
+
+    @abstractmethod
+    def session_params(self) -> dict[TWSession, Any]:
+        """宣告各委託時段對應的 SDK 參數"""
+
+    def _close_price(self, stock_id: str) -> float | None:
+        """今日收盤價，查不到回傳 None"""
+        close = getattr(self.get_stocks([stock_id]).get(stock_id), "close", None)
+        if close is None or math.isnan(float(close)) or float(close) == 0:
+            return None
+        return float(close)
+
+    def _plan_order(
+        self,
+        action: Action,
+        stock_id: str,
+        price: Number | None,
+        odd_lot: bool = False,
+        market_order: bool = False,
+        best_price_limit: bool = False,
+    ) -> TWOrderPlan | None:
+        """決定委託時段與定盤價；回傳 None 表示這筆不送、也不報錯
+
+        定盤只以收盤價成交：芭樂價、比收盤價差的限價不會照原意成交，不送也不中斷，
+        呼叫端可能已先撤單，後面的單要照常下。
+        """
+        session = tw_session(odd_lot, datetime.datetime.now(_TAIPEI))
+        if session is TWSession.FIXING:
+            if best_price_limit:
+                logger.warning(f"create_order: 定盤時段不送 {stock_id} 的芭樂價委託")
+                return None
+            compare = price is not None and not market_order
+            close = None
+            if compare or not self.fixing_uses_reference_price:
+                close = self._close_price(stock_id)
+                if close is None:
+                    logger.warning(
+                        f"create_order: 查不到 {stock_id} 的收盤價，定盤時段不送單"
+                    )
+                    return None
+            if compare and (
+                float(price) < close if action == Action.BUY else float(price) > close
+            ):
+                logger.warning(
+                    f"create_order: 定盤以收盤價 {close} 成交，{stock_id} 比收盤價差的限價 {price} 不送單"
+                )
+                return None
+            price = close
+        return TWOrderPlan(session, self.session_params()[session], price)

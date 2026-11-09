@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 import types
 from typing import Any
 
@@ -11,6 +10,7 @@ import pytest
 from finlab.online.core.enums import Action, OrderCondition
 
 from ..fixtures.fubon_mocks import import_fubon_module_with_fake_sdk
+from ..utils.mock_helpers import patch_utc_host_clock
 
 OK = types.SimpleNamespace(is_success=True, message="", data=[])
 RATE_LIMITED = types.SimpleNamespace(is_success=False, message="rate limit", data=None)
@@ -48,17 +48,7 @@ def _capture_orders(account: Any) -> list[dict[str, Any]]:
 
 def _freeze_utc_host(monkeypatch: Any, module: Any, hour: int, minute: int) -> None:
     """模擬主機時區為 UTC，UTC hour:minute:30 的那一刻"""
-    instant = datetime.datetime(
-        2026, 10, 21, hour, minute, 30, tzinfo=datetime.timezone.utc
-    )
-
-    class Clock(datetime.datetime):
-        @classmethod
-        def now(cls, tz: Any = None) -> datetime.datetime:  # type: ignore[override]
-            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
-
-    fake = types.SimpleNamespace(datetime=Clock, time=datetime.time)
-    monkeypatch.setattr(module, "datetime", fake)
+    patch_utc_host_clock(monkeypatch, module, (hour, minute, 30))
 
 
 def _timeout(acc: Any) -> Any:
@@ -100,26 +90,6 @@ def test_close_falls_back_to_reference_price_before_first_trade(
     assert account._create_finlab_stock(no_trade, "2330").close == 580.0
     traded = {**no_trade, "closePrice": 585.0}
     assert account._create_finlab_stock(traded, "2330").close == 585.0
-
-
-@pytest.mark.parametrize(
-    ("utc", "odd_lot", "expected"),
-    [
-        ((5, 41), True, "Odd"),  # 台北 13:41，UTC 主機原本判成盤中零股
-        ((5, 40), True, "Odd"),  # 台北 13:40:30
-        ((6, 0), False, "Fixing"),  # 台北 14:00:30
-        ((6, 15), False, "Fixing"),
-        ((2, 0), True, "IntradayOdd"),  # 台北 10:00
-        ((2, 0), False, "Common"),
-        ((6, 30), False, "Common"),
-    ],
-)
-def test_market_type_uses_taipei_time(
-    monkeypatch: Any, utc: tuple[int, int], odd_lot: bool, expected: str
-) -> None:
-    module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, *utc)
-    assert account._determine_market_type(odd_lot) == expected
 
 
 @pytest.mark.parametrize(

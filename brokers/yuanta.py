@@ -13,7 +13,7 @@ from typing import Any
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.account import Order, Stock, TWSession, TWStockAccount
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_normalizers import calculate_tick_pct_change
@@ -82,7 +82,7 @@ def _load_sdk(api_dir: str) -> tuple[Any, Any]:
     return YuantaOneAPI, List
 
 
-class YuantaAccount(Account):
+class YuantaAccount(TWStockAccount):
     """元大證券帳戶，使用官方 SPARK API（.NET 8 元件，以 pythonnet 呼叫）。
 
     安裝：安裝 .NET 8 SDK、``pip install pythonnet``，再到元大 SPARK API 網站下載對應平台的
@@ -92,6 +92,14 @@ class YuantaAccount(Account):
     """
 
     required_module = "pythonnet"
+
+    def session_params(self) -> dict[TWSession, Any]:
+        return {
+            TWSession.COMMON: _COMMON,
+            TWSession.INTRADAY_ODD: _ODD,
+            TWSession.AFTER_HOURS_ODD: _ODD_AFTER_HOURS,
+            TWSession.FIXING: _FIXING,
+        }
 
     def __init__(
         self,
@@ -269,38 +277,30 @@ class YuantaAccount(Account):
         best_price_limit: bool = False,
     ) -> str | None:
         is_buy = action == Action.BUY
-        # 盤別依台北時間判斷
-        now = _tw_now().time()
-        if odd_lot:
-            after_hours = datetime.time(13, 40) <= now < datetime.time(14, 30)
-            ap_code = _ODD_AFTER_HOURS if after_hours else _ODD
-        elif datetime.time(14, 0) <= now < datetime.time(14, 30):
-            ap_code = _FIXING
-        else:
-            ap_code = _COMMON
+        plan = self._plan_order(
+            action,
+            stock_id,
+            price,
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
+        )
+        if plan is None:
+            return None
+        ap_code = plan.session_param
 
         # 一律送限價，漲跌停與收盤價從報價表取，不用漲跌停旗標
         quote = None
-        if ap_code == _FIXING or market_order or best_price_limit or price is None:
+        if plan.session is not TWSession.FIXING and (
+            market_order or best_price_limit or price is None
+        ):
             quote = self._quotes([stock_id]).get(stock_id)
             if quote is None:
                 logger.warning(f"create_order: 查不到 {stock_id} 的報價，不送單")
                 return None
 
-        if ap_code == _FIXING:
-            # 盤後定價只以收盤價成交：芭樂價或比收盤價差的限價不送、不中斷，
-            # 呼叫端可能已先撤單，後面的單要照常下
-            close = float(self._last_price(quote))
-            if best_price_limit or (
-                not market_order
-                and price is not None
-                and (float(price) < close if is_buy else float(price) > close)
-            ):
-                logger.warning(
-                    f"create_order: 盤後定價只以收盤價成交，{stock_id} 的芭樂價或比收盤價差的限價不送單"
-                )
-                return None
-            order_price = close
+        if plan.session is TWSession.FIXING:
+            order_price = plan.price
         elif market_order:
             order_price = quote.UpStopPrice if is_buy else quote.DownStopPrice
         elif best_price_limit:

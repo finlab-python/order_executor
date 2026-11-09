@@ -136,6 +136,31 @@ class OrderExecutor:
             )
 
     @staticmethod
+    def _validate_progress(progress: float, progress_precision: int | None) -> None:
+        if progress == 1:
+            return
+        if not (progress >= 0 and progress <= 1):
+            raise ValueError("progress should be in the range of 0 to 1")
+        if progress_precision is None:
+            raise ValueError("progress_precision should be set when progress is not 1")
+
+    def _account_target_position(self) -> Position:
+        """目標部位換成帳戶下單用的代號（幣安要去掉計價幣）"""
+        target_position = Position.from_list(copy.copy(self.target_position.position))
+        if hasattr(self.account, "base_currency"):
+            base_currency = self.account.base_currency
+            for pp in target_position.position:
+                sid = self._symbol(pp)
+                if sid[-len(base_currency) :] == base_currency:
+                    pp["symbol"] = sid[: -len(base_currency)]
+                    pp["stock_id"] = pp["symbol"]
+                else:
+                    raise ValueError(
+                        f"Stock ID {sid} does not end with {base_currency}"
+                    )
+        return target_position
+
+    @staticmethod
     def _convert_quantity_type(
         quantity: float | Decimal, quantity_type: str
     ) -> Decimal | float | str:
@@ -208,19 +233,8 @@ class OrderExecutor:
         if as_entries is None:
             as_entries = False
 
-        target_position = Position.from_list(copy.copy(self.target_position.position))
-
-        if hasattr(self.account, "base_currency"):
-            base_currency = self.account.base_currency
-            for pp in target_position.position:
-                sid = self._symbol(pp)
-                if sid[-len(base_currency) :] == base_currency:
-                    pp["symbol"] = sid[: -len(base_currency)]
-                    pp["stock_id"] = pp["symbol"]
-                else:
-                    raise ValueError(
-                        f"Stock ID {sid} does not end with {base_currency}"
-                    )
+        self._validate_progress(progress, progress_precision)
+        target_position = self._account_target_position()
 
         present_position = self.account.get_position()
         # 現沖先買成交後，多數券商把部位回報成現股；這時目標也用現股比對，避免盤中重跑同步一賣一買
@@ -251,12 +265,6 @@ class OrderExecutor:
 
         orders = target_position - present_position
         if progress != 1:
-            if not (progress >= 0 and progress <= 1):
-                raise ValueError("progress should be in the range of 0 to 1")
-            if progress_precision is None:
-                raise ValueError(
-                    "progress_precision should be set when progress is not 1"
-                )
 
             def scale(quantity: float) -> float:
                 scaled = round(quantity * progress, progress_precision)
@@ -479,6 +487,9 @@ class OrderExecutor:
         self._validate_execute_args(
             market_order, best_price_limit, extra_bid_pct, buy_only, sell_only
         )
+        # 參數或目標部位有錯要在撤單前報，不留下撤了舊單卻沒下新單的帳戶
+        self._validate_progress(progress, progress_precision)
+        self._account_target_position()
         if not view_only:
             self.cancel_orders()
 

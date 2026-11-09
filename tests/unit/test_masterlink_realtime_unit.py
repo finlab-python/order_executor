@@ -506,17 +506,7 @@ def test_masterlink_create_order_session_uses_taipei_time(
     price_type: str, price: Any,
 ) -> None:
     masterlink_module, account = _new_masterlink_account(monkeypatch)
-    instant = datetime.datetime(2026, 10, 21, *utc_time, tzinfo=datetime.timezone.utc)
-
-    class _UtcHostDatetime(datetime.datetime):
-        @classmethod
-        def now(cls, tz: Any = None) -> Any:
-            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
-
-    fake_datetime = types.SimpleNamespace(
-        datetime=_UtcHostDatetime, time=datetime.time
-    )
-    monkeypatch.setattr(masterlink_module, "datetime", fake_datetime)
+    patch_utc_host_clock(monkeypatch, masterlink_module, utc_time)
     stock_api = _FakeStockTradeApi()
     account.sdk = types.SimpleNamespace(stock=stock_api, marketdata=_FakeSdk().marketdata)
 
@@ -558,7 +548,7 @@ def test_masterlink_cancel_order_raises_instead_of_reordering(monkeypatch: Any) 
     account.cancel_order("o-1")
     assert stock_api.modified_volumes == [(None, account.order_records["o-1"], 0)]
 
-    account.get_orders = lambda: None
+    account.get_orders = _timeout
     with pytest.raises(RuntimeError):
         account.cancel_order("o-2")
 
@@ -684,7 +674,7 @@ def test_masterlink_reprice_by_replace_raises_on_failure(
     elif failure == "cancel":  # 原委託還在跌停，要報錯
         stock_api.modify_volume = _timeout
     else:  # 刪單後查不到委託，不知道刪了多少
-        stock_api.modify_volume = lambda *_: setattr(account, "get_orders", lambda: None)
+        stock_api.modify_volume = lambda *_: setattr(account, "get_orders", _timeout)
     with pytest.raises(RuntimeError):
         account.update_order("o-1", price=1005)
 

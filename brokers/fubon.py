@@ -19,7 +19,12 @@ from fubon_neo.sdk import Order as FBOrder
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.account import (
+    Order,
+    Stock,
+    TWSession,
+    TWStockAccount,
+)
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_helpers import (
@@ -46,7 +51,7 @@ STOCK_LOT_SIZE = 1000  # 一張股票的股數
 ODD_LOT_THRESHOLD = STOCK_LOT_SIZE  # 零股判斷閾值
 
 
-class FubonAccount(Account, RealtimeProvider):
+class FubonAccount(TWStockAccount, RealtimeProvider):
     """
     富邦證券賬戶類
     實現與富邦證券 API 的交互
@@ -54,6 +59,15 @@ class FubonAccount(Account, RealtimeProvider):
 
     required_module = "fubon_neo"  # 需要的 Python 包名稱
     module_version = "1.0.0"  # 需要的版本號
+    fixing_uses_reference_price = True
+
+    def session_params(self) -> dict[TWSession, Any]:
+        return {
+            TWSession.COMMON: MarketType.Common,
+            TWSession.INTRADAY_ODD: MarketType.IntradayOdd,
+            TWSession.AFTER_HOURS_ODD: MarketType.Odd,
+            TWSession.FIXING: MarketType.Fixing,
+        }
 
     def __init__(
         self,
@@ -1212,31 +1226,22 @@ class FubonAccount(Account, RealtimeProvider):
         # 將 finlab Action 轉換為富邦 BSAction
         buy_sell = BSAction.Buy if action == Action.BUY else BSAction.Sell
 
-        # 確定市場類型
-        market_type = self._determine_market_type(odd_lot)
+        plan = self._plan_order(
+            action,
+            stock_id,
+            price,
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
+        )
+        if plan is None:
+            return None
+        market_type = plan.session_param
 
         # 確定價格類型
         price_type = PriceType.Limit
-        if market_type == MarketType.Fixing:
-            # 盤後定價只接受參考價（定盤價）委託，以收盤價成交；
-            # 掛芭樂價或限價比收盤價差的單原本就不想以收盤價成交，不送
-            if best_price_limit:
-                logging.error(
-                    f"create_order: 定盤時段不送 best_price_limit 委託 {stock_id}"
-                )
-                return None
-            if price is not None and not market_order:
-                close = getattr(self.get_stocks([stock_id]).get(stock_id), "close", 0)
-                worse = (
-                    float(price) < close
-                    if action == Action.BUY
-                    else float(price) > close
-                )
-                if not close or worse:
-                    logging.error(
-                        f"create_order: 定盤時段以收盤價 {close} 成交，不送限價 {price} 的委託 {stock_id}"
-                    )
-                    return None
+        if plan.session is TWSession.FIXING:
+            # 盤後定價只接受參考價（定盤價）委託，以收盤價成交
             price = None
             price_type = PriceType.Reference
         elif best_price_limit:
@@ -1302,21 +1307,6 @@ class FubonAccount(Account, RealtimeProvider):
         except Exception as e:
             logging.warning(f"create_order: 無法創建委託單: {e}")
             return None
-
-    def _determine_market_type(self, odd_lot: bool) -> MarketType:
-        """確定市場類型"""
-        # 交易時段以台北時間為準，主機時區可能不是台灣（例如 Colab、雲端 VM）
-        current_time = datetime.datetime.now(TWMarket.tzinfo()).time()
-
-        if odd_lot:
-            # 盤後零股處理 (13:40-14:30)
-            if datetime.time(13, 40) <= current_time < datetime.time(14, 30):
-                return MarketType.Odd
-            return MarketType.IntradayOdd
-        # 定盤處理 (14:00-14:30)
-        if datetime.time(14, 0) <= current_time < datetime.time(14, 30):
-            return MarketType.Fixing
-        return MarketType.Common
 
     def _get_order_id(self, order: Any) -> str:
         """
