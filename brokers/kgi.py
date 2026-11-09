@@ -13,7 +13,7 @@ import kgisuperpy as kgi
 from finlab import data
 from finlab.compat import resolve_id_column
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.account import Order, Stock, TWSession, TWStockAccount
 from finlab.online.core.enums import Action, OrderCondition, OrderStatus
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_normalizers import calculate_tick_pct_change
@@ -40,7 +40,7 @@ _ODD_LOTS = (kgi.OddLot.Odd, kgi.OddLot.Odd_AfterMarket)
 _CANCELLED = (kgi.Status.Cancelled, kgi.Status.PartFilled_Cancelled, kgi.Status.Failed)
 
 
-class KGIAccount(Account):
+class KGIAccount(TWStockAccount):
     """凱基證券帳戶，使用官方 ``kgisuperpy`` SDK（``pip install kgisuperpy``）。
 
     下單與帳務只支援 Windows 與 Linux（SDK 沒有 macOS 的下單元件），Python 3.9～3.14。
@@ -51,6 +51,14 @@ class KGIAccount(Account):
     """
 
     required_module = "kgisuperpy"
+
+    def session_params(self) -> dict[TWSession, Any]:
+        return {
+            TWSession.COMMON: kgi.OddLot.Common,
+            TWSession.INTRADAY_ODD: kgi.OddLot.Odd,
+            TWSession.AFTER_HOURS_ODD: kgi.OddLot.Odd_AfterMarket,
+            TWSession.FIXING: kgi.OddLot.Fixing,
+        }
 
     def __init__(
         self,
@@ -138,40 +146,30 @@ class KGIAccount(Account):
         best_price_limit: bool = False,
     ) -> str | None:
         is_buy = side == kgi.Action.Buy
-        # 盤別依台北時間判斷，不用 SDK 以分鐘比對的自動判斷（14:00 整會送成整股盤中）
-        now = datetime.datetime.now(TWMarket.tzinfo()).time()
-        if odd_lot:
-            after_hours = datetime.time(13, 40) <= now < datetime.time(14, 30)
-            lot = kgi.OddLot.Odd_AfterMarket if after_hours else kgi.OddLot.Odd
-        elif datetime.time(14, 0) <= now < datetime.time(14, 30):
-            lot = kgi.OddLot.Fixing
-        else:
-            lot = kgi.OddLot.Common
+        # 盤別不用 SDK 以分鐘比對的自動判斷（14:00 整會送成整股盤中）
+        plan = self._plan_order(
+            Action.BUY if is_buy else Action.SELL,
+            stock_id,
+            price,
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
+        )
+        if plan is None:
+            return None
+        lot = plan.session_param
 
         # 一律送數字限價，漲跌停價與成交價從快照取，不用 SDK 的漲跌停旗標
-        fixing = lot == kgi.OddLot.Fixing
-        if price is not None and not (fixing or market_order or best_price_limit):
+        if plan.session is TWSession.FIXING:
+            order_price = plan.fixing_price
+        elif price is not None and not (market_order or best_price_limit):
             order_price = price
         else:
             snapshot = self._snapshots([stock_id]).get(stock_id)
             if snapshot is None:
                 logger.warning(f"create_order: 查不到 {stock_id} 的報價，不送單")
                 return None
-            if fixing:
-                # 盤後定價只以收盤價成交：芭樂價或比收盤價差的限價不送、不中斷，
-                # 呼叫端可能已先撤單，後面的單要照常下
-                close = float(self._last_price(snapshot))
-                if best_price_limit or (
-                    not market_order
-                    and price is not None
-                    and (float(price) < close if is_buy else float(price) > close)
-                ):
-                    logger.warning(
-                        f"create_order: 盤後定價只以收盤價成交，{stock_id} 的芭樂價或比收盤價差的限價不送單"
-                    )
-                    return None
-                order_price = close
-            elif market_order:
+            if market_order:
                 order_price = snapshot.limit_up if is_buy else snapshot.limit_down
             elif best_price_limit:
                 order_price = snapshot.limit_down if is_buy else snapshot.limit_up

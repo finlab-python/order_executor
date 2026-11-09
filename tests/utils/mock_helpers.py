@@ -169,3 +169,5 @@ def patch_utc_host_clock(
 
     fake = SimpleNamespace(datetime=_UtcHostDatetime, time=time, timedelta=timedelta)
     monkeypatch.setattr(module, "datetime", fake)
+    # 委託時段在 core.account 判斷
+    monkeypatch.setattr("finlab.online.core.account.datetime", fake)

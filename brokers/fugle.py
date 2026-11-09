@@ -21,7 +21,7 @@ from esun_trade.util import set_password, setup_keyring
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.account import Order, Stock, TWSession, TWStockAccount
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_helpers import (
@@ -46,7 +46,7 @@ threads: dict[str, Thread] = {}
 callbacks: dict[str, Any] = {}
 
 
-class FugleAccount(Account, RealtimeProvider):
+class FugleAccount(TWStockAccount, RealtimeProvider):
     required_module = "esun_trade"
 
     def __init__(
@@ -362,6 +362,14 @@ class FugleAccount(Account, RealtimeProvider):
 
     # ── End RealtimeProvider ──────────────────────────────────────
 
+    def session_params(self) -> dict[TWSession, Any]:
+        return {
+            TWSession.COMMON: APCode.Common,
+            TWSession.INTRADAY_ODD: APCode.IntradayOdd,
+            TWSession.AFTER_HOURS_ODD: APCode.Odd,
+            TWSession.FIXING: APCode.AfterMarket,
+        }
+
     def create_order(
         self,
         action: Action,
@@ -377,11 +385,26 @@ class FugleAccount(Account, RealtimeProvider):
         if quantity <= 0:
             raise ValueError("quantity should be larger than zero")
 
+        plan = self._plan_order(
+            action,
+            stock_id,
+            price,
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
+        )
+        if plan is None:
+            return None
+
         fugle_action = fugleAction.Buy if action == Action.BUY else fugleAction.Sell
 
         price_flag = PriceFlag.Limit if price else PriceFlag.Flat
 
-        if market_order:
+        if plan.session is TWSession.FIXING:
+            price = plan.fixing_price
+            price_flag = PriceFlag.Limit
+
+        elif market_order:
             price = None
             if action == Action.BUY:
                 price_flag = PriceFlag.LimitUp
@@ -404,19 +427,11 @@ class FugleAccount(Account, RealtimeProvider):
             OrderCondition.DAY_TRADING_SHORT: Trade.DayTradingSell,
         }[order_cond]
 
-        ap_code = APCode.IntradayOdd if odd_lot else APCode.Common
-        now = datetime.datetime.now(TWMarket.tzinfo()).time()
-        if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
-            ap_code = APCode.Odd
-        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
-            ap_code = APCode.AfterMarket
-            price_flag = PriceFlag.Limit
-
         params = {
             "buy_sell": fugle_action,
             "stock_no": stock_id,
             "quantity": quantity,
-            "ap_code": ap_code,
+            "ap_code": plan.session_param,
             "price_flag": price_flag,
             "trade": order_cond,
             "price": price,
@@ -465,7 +480,8 @@ class FugleAccount(Account, RealtimeProvider):
                     # 零股要用股數算：cel_qty 以張計，100 股會被 int() 算成 0
                     user_cancel_shares = float(fugle_order["cel_qty_share"])
 
-                    self.cancel_order(order_id)
+                    if not self._cancel(order_id):
+                        return
 
                     def callback(order: Order) -> bool:
                         if order.status == OrderStatus.CANCEL:
@@ -502,7 +518,10 @@ class FugleAccount(Account, RealtimeProvider):
                 )
 
     def cancel_order(self, order_id: str) -> None:
+        self._cancel(order_id)
 
+    def _cancel(self, order_id: str) -> bool:
+        """回傳券商是否接受刪單；沒成功就不能當成已刪，改價也不能掛重下的回呼"""
         global trades
         if (
             order_id not in trades[self.user_account]
@@ -514,6 +533,8 @@ class FugleAccount(Account, RealtimeProvider):
             self.sdk.cancel_order(trades[self.user_account][order_id].org_order)
         except Exception as e:
             logging.warning(f"cancel_order: Cannot cancel order {order_id}: {e}")
+            return False
+        return True
 
     def get_org_order_id(self, org_order: dict[str, Any]) -> str:
         order_id = org_order["ord_no"]

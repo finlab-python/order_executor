@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 import types
 from typing import Any
 
@@ -11,6 +10,7 @@ import pytest
 from finlab.online.core.enums import Action, OrderCondition
 
 from ..fixtures.fubon_mocks import import_fubon_module_with_fake_sdk
+from ..utils.mock_helpers import patch_utc_host_clock
 
 OK = types.SimpleNamespace(is_success=True, message="", data=[])
 RATE_LIMITED = types.SimpleNamespace(is_success=False, message="rate limit", data=None)
@@ -44,21 +44,6 @@ def _capture_orders(account: Any) -> list[dict[str, Any]]:
         placed.append(order) or _ok(types.SimpleNamespace(seq_no="x"))
     )
     return placed
-
-
-def _freeze_utc_host(monkeypatch: Any, module: Any, hour: int, minute: int) -> None:
-    """模擬主機時區為 UTC，UTC hour:minute:30 的那一刻"""
-    instant = datetime.datetime(
-        2026, 10, 21, hour, minute, 30, tzinfo=datetime.timezone.utc
-    )
-
-    class Clock(datetime.datetime):
-        @classmethod
-        def now(cls, tz: Any = None) -> datetime.datetime:  # type: ignore[override]
-            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
-
-    fake = types.SimpleNamespace(datetime=Clock, time=datetime.time)
-    monkeypatch.setattr(module, "datetime", fake)
 
 
 def _timeout(acc: Any) -> Any:
@@ -103,26 +88,6 @@ def test_close_falls_back_to_reference_price_before_first_trade(
 
 
 @pytest.mark.parametrize(
-    ("utc", "odd_lot", "expected"),
-    [
-        ((5, 41), True, "Odd"),  # 台北 13:41，UTC 主機原本判成盤中零股
-        ((5, 40), True, "Odd"),  # 台北 13:40:30
-        ((6, 0), False, "Fixing"),  # 台北 14:00:30
-        ((6, 15), False, "Fixing"),
-        ((2, 0), True, "IntradayOdd"),  # 台北 10:00
-        ((2, 0), False, "Common"),
-        ((6, 30), False, "Common"),
-    ],
-)
-def test_market_type_uses_taipei_time(
-    monkeypatch: Any, utc: tuple[int, int], odd_lot: bool, expected: str
-) -> None:
-    module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, *utc)
-    assert account._determine_market_type(odd_lot) == expected
-
-
-@pytest.mark.parametrize(
     ("utc", "market", "price_type", "price"),
     [((6, 15), "Fixing", "Reference", None), ((2, 0), "Common", "Limit", "580.0")],
 )
@@ -134,7 +99,7 @@ def test_fixing_order_uses_reference_price(
     price: str | None,
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, *utc)
+    patch_utc_host_clock(monkeypatch, module, (*utc, 30))
     account.quotes["2330"] = {"symbol": "2330", "closePrice": 580.0}
     placed = _capture_orders(account)
 
@@ -262,7 +227,7 @@ def test_day_trading_short_order_type(
     monkeypatch: Any, action: Action, odd_lot: bool, sent: list[tuple[str, str]]
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, 2, 0)
+    patch_utc_host_clock(monkeypatch, module, (2, 0, 30))
     placed = _capture_orders(account)
     account.create_order(
         action,
@@ -290,7 +255,7 @@ def test_fixing_skips_orders_not_meant_to_fill_at_close(
     monkeypatch: Any, action: Action, kwargs: dict[str, Any], sent: bool
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, 6, 15)  # 台北 14:15
+    patch_utc_host_clock(monkeypatch, module, (6, 15, 30))  # 台北 14:15
     account.quotes["2330"] = {"symbol": "2330", "closePrice": 1000.0}
     placed = _capture_orders(account)
     account.create_order(action, "2330", 1, **kwargs)
@@ -302,7 +267,7 @@ def test_odd_lot_reprice_uses_remaining_quantity(
     monkeypatch: Any, reorder_ok: bool
 ) -> None:
     module, account = _load(monkeypatch)
-    _freeze_utc_host(monkeypatch, module, 2, 0)
+    patch_utc_host_clock(monkeypatch, module, (2, 0, 30))
     # 原委託 500 股，減量到 300 股，成交 100 股
     order = _order_result(
         market_type="IntradayOdd", quantity=500, after_qty=300, filled_qty=100

@@ -37,7 +37,12 @@ except ModuleNotFoundError as e:
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.account import (
+    Order,
+    Stock,
+    TWSession,
+    TWStockAccount,
+)
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_helpers import (
@@ -60,7 +65,7 @@ from finlab.online.core.realtime_normalizers import (
 from finlab.online.core.realtime_provider import RealtimeProvider
 
 
-class MasterlinkAccount(Account, RealtimeProvider):
+class MasterlinkAccount(TWStockAccount, RealtimeProvider):
     """
     台新證券（原元富證券）賬戶類
     實現與台新證券 API 的交互
@@ -68,6 +73,15 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
     required_module = "taishin_sdk"  # 需要的 Python 包名稱
     module_version = "1.0.2"  # 需要的版本號
+    fixing_uses_reference_price = True
+
+    def session_params(self) -> dict[TWSession, Any]:
+        return {
+            TWSession.COMMON: MarketType.Common,
+            TWSession.INTRADAY_ODD: MarketType.IntradayOdd,
+            TWSession.AFTER_HOURS_ODD: MarketType.Odd,
+            TWSession.FIXING: MarketType.Fixing,
+        }
 
     def __init__(
         self,
@@ -771,14 +785,17 @@ class MasterlinkAccount(Account, RealtimeProvider):
         # 將 finlab Action 轉換為元富 BSAction
         buy_sell = BSAction.Buy if action == Action.BUY else BSAction.Sell
 
-        # 確定市場類型
-        market_type = MarketType.IntradayOdd if odd_lot else MarketType.Common
-        # 盤別依台北時間判斷，不受主機時區影響
-        now = datetime.datetime.now(TWMarket.tzinfo()).time()
-
-        # 盤後零股處理
-        if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
-            market_type = MarketType.Odd
+        plan = self._plan_order(
+            action,
+            stock_id,
+            price,
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
+        )
+        if plan is None:
+            return None
+        market_type = plan.session_param
 
         # 確定價格類型
         price_type = PriceType.Limit
@@ -797,23 +814,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 price_type = PriceType.LimitUp
 
         # 定盤處理：盤後定價只接受參考價，一律以收盤價成交
-        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
-            unfilled = best_price_limit
-            if price is not None:
-                stock = self.get_stocks([stock_id]).get(stock_id)
-                # 買價低於、賣價高於收盤價不會照限價成交；查不到收盤價也不送
-                unfilled = stock is None or (
-                    float(price) < stock.close
-                    if action == Action.BUY
-                    else float(price) > stock.close
-                )
-            if unfilled:
-                # 跟券商拒單一樣不送、不中斷：呼叫端可能已先撤單，後面的單要照常下
-                logging.warning(
-                    f"create_order: 盤後定價只以收盤價成交，{stock_id} 的芭樂價或比收盤價差的限價不送單"
-                )
-                return None
-            market_type = MarketType.Fixing
+        if plan.session is TWSession.FIXING:
             price = None
             price_type = PriceType.Reference
 
@@ -979,7 +980,11 @@ class MasterlinkAccount(Account, RealtimeProvider):
         for attempt in range(3):
             if attempt:
                 time.sleep(1)
-            orders = self.get_orders() or {}
+            try:
+                orders = self.get_orders()
+            except Exception as e:
+                logging.warning(f"update_order: 重查委託失敗: {e}")
+                continue
             record = getattr(orders.get(order_id), "org_order", None)
             if record is not None and self._remaining_shares(record) == 0:
                 return getattr(record, "cel_qty", 0)
@@ -999,8 +1004,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
         order_record = self.order_records.get(order_id)
         if not getattr(order_record, "can_cancel", False):
             # 快取沒有或還不可取消（可能在等交易所確認），重查一次
-            if self.get_orders() is None:
-                raise RuntimeError(f"cancel_order: 無法查詢委託單，委託單 {order_id} 未取消")
+            self.get_orders()
             order_record = self.order_records.get(order_id)
         if order_record is None:
             raise KeyError(f"cancel_order: 找不到委託單 {order_id}")
@@ -1013,24 +1017,21 @@ class MasterlinkAccount(Account, RealtimeProvider):
         else:
             logging.warning(f"cancel_order: 委託單 {order_id} 不可取消")
 
-    def get_orders(self) -> dict[str, Order] | None:
+    def get_orders(self) -> dict[str, Order]:
         """
         獲取所有委託單
 
         Returns:
             dict: 委託單字典，以委託單編號為鍵
+
+        Raises:
+            Exception: 查詢失敗時報錯，不回空委託，否則舊單沒被取消又會補下新單
         """
-        try:
-            # 獲取所有委託單
-            orders = self.sdk.stock.get_order_results(self.target_account)
-            self.order_records = {self._get_order_id(order): order for order in orders}
-            return {
-                name: self._create_finlab_order(t)
-                for name, t in self.order_records.items()
-            }
-        except Exception as e:
-            logging.warning(f"get_orders: 無法獲取委託單，等待重試: {e}")
-            return None
+        orders = self.sdk.stock.get_order_results(self.target_account)
+        self.order_records = {self._get_order_id(order): order for order in orders}
+        return {
+            name: self._create_finlab_order(t) for name, t in self.order_records.items()
+        }
 
     def _get_order_id_from_order(self, order: Any) -> str:
         """
@@ -1376,6 +1377,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
 
         # 獲取庫存資料；查不到要報錯，不回傳只剩現金的淨值：偏小的淨值會讓部位被算成全賣
         position_response = self.sdk.accounting.inventories(self.target_account)
+        if position_response is None:
+            raise RuntimeError("get_total_balance: 查詢庫存沒有回傳資料")
 
         # 從帳戶摘要獲取融資/融券相關資訊
         account_summary = getattr(position_response, "account_summary", None)
@@ -1453,8 +1456,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
         if hasattr(self.sdk.accounting, "skbank_balance"):
             try:
                 balance = self.sdk.accounting.skbank_balance(self.target_account)
-                answered = True
                 if balance is not None:
+                    answered = True
                     available_balance = getattr(balance, "available_balance", 0)
                     # 確保 available_balance 不為 None
                     if available_balance is not None:
@@ -1477,7 +1480,7 @@ class MasterlinkAccount(Account, RealtimeProvider):
         if hasattr(self.sdk.accounting, "bank_balance"):
             try:
                 balance = self.sdk.accounting.bank_balance(self.target_account)
-                answered = True
+                answered = answered or balance is not None
                 if balance and isinstance(balance, list) and len(balance) > 0:
                     available_balance = getattr(balance[0], "available_balance", 0)
                     # 確保 available_balance 不為 None
@@ -1497,8 +1500,10 @@ class MasterlinkAccount(Account, RealtimeProvider):
                 error = e
                 logging.warning(f"get_cash: 無法獲取 bank_balance: {e}")
 
-        if error is not None and not answered:
-            raise RuntimeError(f"get_cash: 查詢可用資金失敗: {error}") from error
+        if not answered:
+            raise RuntimeError(
+                f"get_cash: 查詢可用資金失敗: {error or 'SDK 沒有回傳資料'}"
+            ) from error
         logging.warning("get_cash: 無法從任何來源獲取可用資金")
         return 0
 
@@ -1549,6 +1554,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
         response = self.sdk.accounting.history_settlement(
             self.target_account, start_str, today_str
         )
+        if response is None:
+            raise RuntimeError("get_settlement: 歷史交割款查詢沒有回傳資料")
 
         # 加總交割日在今天之後的 net_amount（今天交割的由 today_settlement 計入）
         settlement_amount = 0
@@ -1575,6 +1582,8 @@ class MasterlinkAccount(Account, RealtimeProvider):
             float: 未交割款項
         """
         today_settlements = self.sdk.accounting.today_settlement(self.target_account)
+        if today_settlements is None:
+            raise RuntimeError("get_settlement: 今日交割款查詢沒有回傳資料")
         return getattr(today_settlements, "net_amount", 0)
 
     def support_day_trade_condition(self) -> bool:

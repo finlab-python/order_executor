@@ -34,7 +34,7 @@ from shioaji.position import StockPosition as SJStockPosition
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.account import Order, Stock, TWSession, TWStockAccount
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_models import (
@@ -66,7 +66,7 @@ class OddLotRepriceError(RuntimeError):
     """
 
 
-class SinopacAccount(Account, RealtimeProvider):
+class SinopacAccount(TWStockAccount, RealtimeProvider):
     required_module = "shioaji"
     module_version = "1.2.5"
 
@@ -492,6 +492,14 @@ class SinopacAccount(Account, RealtimeProvider):
         with contextlib.suppress(Exception):
             self.api.logout()
 
+    def session_params(self) -> dict[TWSession, Any]:
+        return {
+            TWSession.COMMON: SJStockOrderLot.Common,
+            TWSession.INTRADAY_ODD: SJStockOrderLot.IntradayOdd,
+            TWSession.AFTER_HOURS_ODD: SJStockOrderLot.Odd,
+            TWSession.FIXING: SJStockOrderLot.Fixing,
+        }
+
     def create_order(
         self,
         action: Action,
@@ -521,12 +529,22 @@ class SinopacAccount(Account, RealtimeProvider):
         if quantity <= 0:
             raise Exception(f"quantity must be positive, got {quantity}")
 
-        if price is None:
-            price = self.api.snapshots([contract])[0].close
+        plan = self._plan_order(
+            action,
+            stock_id,
+            price,
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
+        )
+        if plan is None:
+            return ""
 
         price_type = SJStockPriceType.LMT
 
-        if market_order:
+        if plan.session is TWSession.FIXING:
+            price = plan.fixing_price
+        elif market_order:
             if action == Action.BUY:
                 price = limitup
             elif action == Action.SELL:
@@ -537,6 +555,9 @@ class SinopacAccount(Account, RealtimeProvider):
                 price = limitdn
             elif action == Action.SELL:
                 price = limitup
+
+        elif price is None:
+            price = self.api.snapshots([contract])[0].close
 
         if action == Action.BUY:
             action = SJAction.Buy
@@ -554,13 +575,6 @@ class SinopacAccount(Account, RealtimeProvider):
             OrderCondition.DAY_TRADING_SHORT: "Cash",
         }[order_cond]
 
-        order_lot = SJStockOrderLot.IntradayOdd if odd_lot else SJStockOrderLot.Common
-        now = datetime.datetime.now(TWMarket.tzinfo()).time()
-        if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
-            order_lot = SJStockOrderLot.Odd
-        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
-            order_lot = SJStockOrderLot.Fixing
-
         order = self.api.Order(
             price=float(price),
             quantity=quantity,
@@ -570,7 +584,7 @@ class SinopacAccount(Account, RealtimeProvider):
             order_cond=order_cond,
             daytrade_short=daytrade_short,
             account=self.api.stock_account,
-            order_lot=order_lot,
+            order_lot=plan.session_param,
             custom_field="FiNlAB",
         )
         trade = self.api.place_order(contract, order)
@@ -618,7 +632,12 @@ class SinopacAccount(Account, RealtimeProvider):
                     - trade.status.deal_quantity
                     - (trade.status.cancel_quantity or 0)
                 )
-                self.cancel_order(order_id)
+                cancelled = self._cancel(order_id)
+                if _cancel_failed(cancelled):
+                    logging.warning(
+                        f"update_order: Cannot cancel order {order_id}: {cancelled.status.msg}"
+                    )
+                    return
                 self._replace_cancelled_odd_lot_order(order, shares, price)
             else:
                 if price is None and quantity is None:
@@ -665,8 +684,11 @@ class SinopacAccount(Account, RealtimeProvider):
             raise OddLotRepriceError(f"{context}: broker returned no order id")
 
     def cancel_order(self, order_id: str) -> None:
+        self._cancel(order_id)
+
+    def _cancel(self, order_id: str) -> Any:
         self.update_trades()
-        self.api.cancel_order(self.trades[order_id])
+        return self.api.cancel_order(self.trades[order_id])
 
     def get_position(self) -> Position:
 
@@ -754,7 +776,11 @@ class SinopacAccount(Account, RealtimeProvider):
         )
 
     def get_cash(self) -> int:
-        return int(self.api.account_balance().acc_balance)
+        balance = self.api.account_balance()
+        # 查詢失敗時 SDK 回傳 acc_balance=0 並把原因寫在 errmsg
+        if getattr(balance, "errmsg", ""):
+            raise RuntimeError(f"get_cash: 查詢銀行餘額失敗: {balance.errmsg}")
+        return int(balance.acc_balance)
 
     def get_settlement(self) -> int:
 
@@ -787,6 +813,12 @@ class SinopacAccount(Account, RealtimeProvider):
 
     def get_market(self) -> TWMarket:
         return TWMarket()
+
+
+def _cancel_failed(trade: Any) -> bool:
+    """shioaji 刪單被拒時不一定拋例外，而是回傳狀態為 Failed 的 Trade"""
+    status = getattr(trade, "status", None)
+    return getattr(status, "status", None) == "Failed"
 
 
 def map_trade_status(status: str) -> OrderStatus:

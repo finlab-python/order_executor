@@ -12,13 +12,13 @@ import pocketx as pk
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Account, Order, Stock
+from finlab.online.core.account import Order, Stock, TWSession, TWStockAccount
 from finlab.online.core.enums import *
 from finlab.online.core.position import Position
 from finlab.online.core.realtime_normalizers import to_optional_float
 from finlab.online.core.utils import estimate_stock_price
 
-class PocketAccount(Account):
+class PocketAccount(TWStockAccount):
     """口袋證券帳戶，使用官方 ``pocketx`` SDK（不是 PyPI 的 ``pocket``）。
 
     安裝：``pip install pocketx``。搭配 FinLab 建議使用 Python 3.12；此時
@@ -26,6 +26,14 @@ class PocketAccount(Account):
     SDK 使用 audioop，不支援 Python 3.13 以上。正式下單的憑證簽章僅支援 Windows。
     官方安裝說明：https://felixchih.github.io/PocketxDocs/zh/prepare/
     """
+
+    def session_params(self) -> dict[TWSession, Any]:
+        return {
+            TWSession.COMMON: "Common",
+            TWSession.INTRADAY_ODD: "IntradayOdd",
+            TWSession.AFTER_HOURS_ODD: "Odd",
+            TWSession.FIXING: "Fixing",
+        }
 
     def __init__(
         self,
@@ -102,10 +110,20 @@ class PocketAccount(Account):
         if quantity <= 0:
             raise Exception(f"quantity must be positive, got {quantity}")
 
-        if price is None:
-            price = self.api.snapshots([contract])[0].close
+        plan = self._plan_order(
+            action,
+            stock_id,
+            price,
+            odd_lot=odd_lot,
+            market_order=market_order,
+            best_price_limit=best_price_limit,
+        )
+        if plan is None:
+            return None
 
-        if market_order:
+        if plan.session is TWSession.FIXING:
+            price = plan.fixing_price
+        elif market_order:
             if action == Action.BUY:
                 price = limitup
             elif action == Action.SELL:
@@ -117,6 +135,9 @@ class PocketAccount(Account):
             elif action == Action.SELL:
                 price = limitup
 
+        elif price is None:
+            price = self.api.snapshots([contract])[0].close
+
         action = "Buy" if action == Action.BUY else "Sell"
 
         order_cond = {
@@ -127,25 +148,19 @@ class PocketAccount(Account):
             OrderCondition.DAY_TRADING_SHORT: "Cash",
         }[order_cond]
 
-        order_lot = "IntradayOdd" if odd_lot else "Common"
-
-        now = datetime.datetime.now(TWMarket.tzinfo()).time()
-        if datetime.time(13, 40) <= now < datetime.time(14, 30) and odd_lot:
-            order_lot = "Odd"
-        if datetime.time(14, 00) <= now < datetime.time(14, 30) and not odd_lot:
-            order_lot = "Fixing"
-
         order = self.api.Order(
             price=price,
             quantity=quantity,
             action=action,
             # Odd-lot and fixing sessions only take limit orders; market_order
             # already set the price to the limit-up / limit-down price.
-            price_type="MKT" if market_order and order_lot == "Common" else "LMT",
+            price_type=(
+                "MKT" if market_order and plan.session is TWSession.COMMON else "LMT"
+            ),
             order_type="ROD",
             order_cond=order_cond,
             account=self.api.stock_account,
-            order_lot=order_lot,
+            order_lot=plan.session_param,
             custom_field="FiNlAB",
         )
 
@@ -226,6 +241,8 @@ class PocketAccount(Account):
 
     def get_total_balance(self) -> int:
         positions = self.api.list_positions(self.api.stock_account)
+        if positions is None:
+            raise RuntimeError("get_total_balance: 查詢持倉沒有回傳資料")
 
         if not positions:
             return self.get_settlement() + self.get_cash()
@@ -248,7 +265,11 @@ class PocketAccount(Account):
         return position_value + self.get_settlement() + self.get_cash()
 
     def get_cash(self) -> int:
-        return self.api.account_balance().acc_balance
+        balance = self.api.account_balance()
+        # 查詢失敗時 SDK 回傳 acc_balance=0 並把原因寫在 errmsg
+        if getattr(balance, "errmsg", ""):
+            raise RuntimeError(f"get_cash: 查詢銀行餘額失敗: {balance.errmsg}")
+        return balance.acc_balance
 
     def get_settlement(self) -> int:
         settlements = self.api.settlements(self.api.stock_account)

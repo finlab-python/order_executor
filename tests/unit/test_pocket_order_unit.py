@@ -44,32 +44,11 @@ def _make_account(
 
 
 @pytest.mark.parametrize(
-    "utc_time, odd_lot, order_lot",
-    [
-        ((5, 40, 30), True, "Odd"),
-        ((6, 0, 10), False, "Fixing"),
-        ((6, 30, 0), True, "IntradayOdd"),
-        ((1, 0, 0), False, "Common"),
-        ((1, 0, 0), True, "IntradayOdd"),
-    ],
-)
-def test_pocket_create_order_session_starts_at_taipei_minute(
-    monkeypatch: pytest.MonkeyPatch, utc_time: tuple, odd_lot: bool, order_lot: str
-) -> None:
-    account = _make_account(monkeypatch, utc_time)
-
-    account.create_order(Action.BUY, "2330", 1, price=580, odd_lot=odd_lot)
-
-    assert account.api.placed_orders[0].order_lot == order_lot
-
-
-@pytest.mark.parametrize(
     "utc_time, odd_lot, price_type",
     [
         ((2, 0, 0), False, "MKT"),
         ((2, 0, 0), True, "LMT"),
         ((5, 50, 0), True, "LMT"),
-        ((6, 10, 0), False, "LMT"),
     ],
 )
 def test_pocket_market_order_is_limit_order_outside_common_session(

@@ -384,28 +384,23 @@ class SchwabAccount(Account):
             logger.error(f"API: 獲取股票資訊時發生錯誤: {e}")
             return {}
 
+    def _account_summary(self, label: str) -> dict:
+        """查詢帳戶摘要，HTTP 失敗時報錯"""
+        response = self.client.get_accounts()
+        if response.status_code != 200:
+            raise ValueError(
+                f"API: 獲取{label}失敗: {response.status_code}: {response.text}"
+            )
+        return response.json()[0]
+
     def get_total_balance(self) -> float:
         """獲取總資產餘額
 
         Returns:
             float: 總資產餘額
         """
-        try:
-            balance_response = self.client.get_accounts()
-            if balance_response.status_code != 200:
-                logger.error(
-                    f"API: 獲取總資產餘額失敗: {balance_response.status_code}: {balance_response.text}"
-                )
-                return 0
-
-            return float(
-                balance_response.json()[0]["aggregatedBalance"][
-                    "currentLiquidationValue"
-                ]
-            )
-        except Exception as e:
-            logger.error(f"API: 獲取總資產餘額時發生錯誤: {e}")
-            return 0
+        summary = self._account_summary("總資產餘額")
+        return float(summary["aggregatedBalance"]["currentLiquidationValue"])
 
     def get_cash(self) -> float:
         """獲取現金餘額
@@ -413,22 +408,8 @@ class SchwabAccount(Account):
         Returns:
             float: 現金餘額
         """
-        try:
-            cash_response = self.client.get_accounts()
-            if cash_response.status_code != 200:
-                logger.error(
-                    f"API: 獲取現金餘額失敗: {cash_response.status_code}: {cash_response.text}"
-                )
-                return 0
-
-            return float(
-                cash_response.json()[0]["securitiesAccount"]["currentBalances"][
-                    "cashBalance"
-                ]
-            )
-        except Exception as e:
-            logger.error(f"API: 獲取現金餘額時發生錯誤: {e}")
-            return 0
+        summary = self._account_summary("現金餘額")
+        return float(summary["securitiesAccount"]["currentBalances"]["cashBalance"])
 
     def get_settlement(self) -> int:
         """獲取結算交割資料
