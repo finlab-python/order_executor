@@ -518,7 +518,11 @@ class FugleAccount(TWStockAccount, RealtimeProvider):
                 )
 
     def cancel_order(self, order_id: str) -> None:
-        self._cancel(order_id)
+        if not self._cancel(order_id):
+            # 舊單可能仍有效，報錯讓 executor 不補下一張
+            raise RuntimeError(
+                f"cancel_order: 刪單 {order_id} 失敗，委託可能仍在市場上，請確認委託狀態"
+            )
 
     def _cancel(self, order_id: str) -> bool:
         """回傳券商是否接受刪單；沒成功就不能當成已刪，改價也不能掛重下的回呼"""

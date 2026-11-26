@@ -1496,6 +1496,13 @@ class FubonAccount(TWStockAccount, RealtimeProvider):
                     f"cancel_order: 無法取消委託單 {order_id}: {result.message if result else '未知錯誤'}"
                 )
             logging.info(f"已取消委託單 {order_id}")
+        elif (
+            order.status in (OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED)
+            and order.quantity > order.filled_quantity
+        ):
+            raise ValueError(
+                f"cancel_order: 委託單 {order_id} 仍有效但不可取消，請確認委託狀態"
+            )
         else:
             logging.warning(f"cancel_order: 委託單 {order_id} 不可取消")
 

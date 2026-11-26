@@ -262,8 +262,14 @@ class SchwabAccount(Account):
 
         Args:
             order_id (int): 要取消的訂單ID
+
+        Raises:
+            RuntimeError: 券商沒有接受取消；舊單可能仍有效，executor 不能接著補單
         """
-        self._cancel(order_id)
+        if not self._cancel(order_id):
+            raise RuntimeError(
+                f"cancel_order: 嘉信刪單 {order_id} 失敗，委託可能仍在市場上，請確認委託狀態"
+            )
 
     def _cancel(self, order_id: int) -> bool:
         """取消訂單，回傳券商是否接受取消"""

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime
 import importlib
 import sys
@@ -33,9 +34,12 @@ from finlab.online.core.position import Position
 from ..utils.mock_helpers import patch_utc_host_clock
 from .test_binance_order_safety_unit import _account as _binance_account
 from .test_fubon_order_safety_unit import (
+    OK,
     RATE_LIMITED,
     _balance_account,
     _capture_orders,
+    _ok,
+    _order_result,
 )
 from .test_fugle_order_safety_unit import _account as _fugle_account
 from .test_fugle_order_safety_unit import _import_fugle, _row
@@ -700,6 +704,63 @@ def test_failed_reprice_does_not_place_a_new_order(
     with contextlib.suppress(Exception):
         broker.account.update_order(order_id, price=CLOSE + 1)
     assert broker.placed() == []
+
+
+def _arm_cancel(broker: Broker, name: str, accepted: bool) -> None:
+    """備好一張原生的有效委託；accepted=False 時券商明確拒絕刪單"""
+    account = broker.account
+    if name == "schwab":
+        account.client.cancel_status = 200 if accepted else 400
+    elif name == "binance":
+        client = account.simple_client.client
+        client.open_orders = [{"symbol": "BTCUSDT", "orderId": 7, "side": "BUY", "origQty": "1",
+                               "executedQty": "0", "price": "60000", "status": "NEW", "time": 0}]  # fmt: skip
+        if not accepted:
+            client.cancel_order = _raise
+    elif name == "fubon":
+        record = _order_result(can_cancel=accepted)  # 富邦把不可取消的有效單也標成 NEW
+        account.sdk.stock.get_order_results = lambda _: _ok([record])
+        account.sdk.stock.cancel_order = lambda *_: OK
+        # 不留庫存，只看補單
+        account.sdk.accounting.unrealized_gains_and_loses = lambda _: OK
+    elif not accepted:
+        broker.reprice["odd_lot_failed_status" if name == "sinopac" else "odd_lot"]()
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+@pytest.mark.parametrize("status", [OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED])
+@pytest.mark.parametrize("action", [Action.BUY, Action.SELL])
+@pytest.mark.parametrize("name", ["schwab", "sinopac", "fugle", "binance", "fubon"])
+def test_rejected_cancel_stops_sync_before_placing(
+    monkeypatch: Any, name: str, action: Action, status: OrderStatus, accepted: bool
+) -> None:
+    """舊單刪不掉還有效時，再補單會重複委託（order_executor#79）"""
+    broker = BROKERS[name](monkeypatch)
+    account = broker.account
+    _arm_cancel(broker, name, accepted)
+    native = account.get_orders
+    account.get_orders = lambda: {
+        oid: dataclasses.replace(o, action=action, status=status) for oid, o in native().items()
+    }  # fmt: skip
+    sent: list[dict[str, Any]] = []
+    account.create_order = lambda **kw: sent.append(kw) or "new"
+    account.get_stocks = lambda ids: {
+        i: Stock(i, *(CLOSE,) * 5, 1, CLOSE, 1) for i in ids
+    }
+    account.get_price_info = lambda *_: {}
+    rejected = pytest.raises((RuntimeError, ValueError))
+    with contextlib.nullcontext() if accepted else rejected:
+        OrderExecutor(Position(broker.target), account).create_orders()
+    assert len(sent) == accepted
+
+
+def test_fubon_uncancellable_order_that_left_market_is_skipped(
+    monkeypatch: Any,
+) -> None:
+    broker = BROKERS["fubon"](monkeypatch)
+    record = _order_result(can_cancel=False, status=50, filled_qty=1000)
+    broker.account.sdk.stock.get_order_results = lambda _: _ok([record])
+    broker.account.cancel_order("S1")
 
 
 def test_fugle_failed_odd_lot_cancel_leaves_no_reorder_callback(
