@@ -237,13 +237,20 @@ class OrderExecutor:
         target_position = self._account_target_position()
 
         present_position = self.account.get_position()
-        # 現沖先買成交後，多數券商把部位回報成現股；這時目標也用現股比對，避免盤中重跑同步一賣一買
+        # 現沖先買／先賣成交後，多數券商（例如永豐）把部位回報成現股多單／空單；這時目標也用現股比對，避免盤中重跑同步一賣一買
         present_keys = {
             (self._symbol(p), p["order_condition"]) for p in present_position.position
         }
         target_keys = {
             (self._symbol(p), p["order_condition"]) for p in target_position.position
         }
+        present_cash_short = {
+            self._symbol(p)
+            for p in present_position.position
+            if p["order_condition"] == OrderCondition.CASH and p["quantity"] < 0
+        }
+        us_market = None
+        day_trading_short_as_cash = set()
         for pp in target_position.position:
             sid = self._symbol(pp)
             if (
@@ -251,8 +258,28 @@ class OrderExecutor:
                 and (sid, OrderCondition.CASH) in present_keys
                 and (sid, OrderCondition.DAY_TRADING_LONG) not in present_keys
                 and (sid, OrderCondition.CASH) not in target_keys
+            ) or (
+                pp["order_condition"] == OrderCondition.DAY_TRADING_SHORT
+                and sid in present_cash_short
+                and (sid, OrderCondition.DAY_TRADING_SHORT) not in present_keys
+                and (sid, OrderCondition.CASH) not in target_keys
             ):
+                if pp["order_condition"] == OrderCondition.DAY_TRADING_SHORT:
+                    day_trading_short_as_cash.add(sid)
                 pp["order_condition"] = OrderCondition.CASH
+            # 美股券商（嘉信）下單不分融資，持倉回報成現股；台股融資與現股是不同部位，照舊分開
+            elif (
+                pp["order_condition"] == OrderCondition.MARGIN_TRADING
+                and (sid, OrderCondition.CASH) in present_keys
+                and (sid, OrderCondition.MARGIN_TRADING) not in present_keys
+                and (sid, OrderCondition.CASH) not in target_keys
+            ):
+                if us_market is None:
+                    from finlab.markets.us import USMarket
+
+                    us_market = isinstance(self.account.get_market(), USMarket)
+                if us_market:
+                    pp["order_condition"] = OrderCondition.CASH
             # 空單目標預設是現股，券商（例如嘉信）回報成融券時也用融券比對，避免每次同步一賣一買
             elif (
                 pp["order_condition"] == OrderCondition.CASH
@@ -264,6 +291,14 @@ class OrderExecutor:
                 pp["order_condition"] = OrderCondition.SHORT_SELLING
 
         orders = target_position - present_position
+        # 只成交一部分的現沖先賣，剩下要加賣的仍用現沖先賣送出；回補照現股買進
+        for o in orders.position:
+            if (
+                self._symbol(o) in day_trading_short_as_cash
+                and o["order_condition"] == OrderCondition.CASH
+                and o["quantity"] < 0
+            ):
+                o["order_condition"] = OrderCondition.DAY_TRADING_SHORT
         if progress != 1:
 
             def scale(quantity: float) -> float:
@@ -546,10 +581,6 @@ class OrderExecutor:
 
                 sid = self._order_symbol(o)
                 price = stocks[sid].close
-
-                if o.price == price:
-                    continue
-
                 price = calculate_price_with_extra_bid(
                     price,
                     extra_bid_pct if o.action == Action.BUY else -extra_bid_pct,
@@ -564,6 +595,10 @@ class OrderExecutor:
                     price = min(price, up_limit)
                 else:
                     logger.warning("No price info for stock %s", sid)
+
+                # 追價與漲跌停夾價算完才比，原價等於報價時仍照 extra_bid_pct 改價
+                if o.price == price:
+                    continue
 
                 self.account.update_order(i, price=price)
 
