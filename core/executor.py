@@ -250,6 +250,7 @@ class OrderExecutor:
             if p["order_condition"] == OrderCondition.CASH and p["quantity"] < 0
         }
         us_market = None
+        day_trading_short_as_cash = set()
         for pp in target_position.position:
             sid = self._symbol(pp)
             if (
@@ -263,6 +264,8 @@ class OrderExecutor:
                 and (sid, OrderCondition.DAY_TRADING_SHORT) not in present_keys
                 and (sid, OrderCondition.CASH) not in target_keys
             ):
+                if pp["order_condition"] == OrderCondition.DAY_TRADING_SHORT:
+                    day_trading_short_as_cash.add(sid)
                 pp["order_condition"] = OrderCondition.CASH
             # 美股券商（嘉信）下單不分融資，持倉回報成現股；台股融資與現股是不同部位，照舊分開
             elif (
@@ -288,6 +291,14 @@ class OrderExecutor:
                 pp["order_condition"] = OrderCondition.SHORT_SELLING
 
         orders = target_position - present_position
+        # 只成交一部分的現沖先賣，剩下要加賣的仍用現沖先賣送出；回補照現股買進
+        for o in orders.position:
+            if (
+                self._symbol(o) in day_trading_short_as_cash
+                and o["order_condition"] == OrderCondition.CASH
+                and o["quantity"] < 0
+            ):
+                o["order_condition"] = OrderCondition.DAY_TRADING_SHORT
         if progress != 1:
 
             def scale(quantity: float) -> float:

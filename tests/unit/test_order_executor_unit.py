@@ -255,6 +255,9 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
             (TWMarket(), {}, dts, [(-1, DTS)]),
             (TWMarket(), {"2330": 1}, dts, [(-1, CASH), (-1, DTS)]),
             (TWMarket(), {"2330": -1}, both, [(-1, DTS)]),
+            # 只成交一部分時剩下的仍用現沖先賣；多賣了就用現股回補
+            (TWMarket(), {"2330": -1}, dts * 2, [(-1, DTS)]),
+            (TWMarket(), {"2330": -2}, dts, [(1, CASH)]),
             (USMarket(), {"AAPL": 10}, margin, []),
             (USMarket(), {"AAPL": 4}, margin, [(6, CASH)]),
             (USMarket(), {}, margin, [(10, MARGIN)]),
