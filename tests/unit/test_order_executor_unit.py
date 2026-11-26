@@ -233,6 +233,41 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
                     [(o["quantity"], o["order_condition"]) for o in orders], expected
                 )
 
+    def test_generate_orders_day_trading_short_and_us_margin_held_as_cash(self) -> None:
+        """現沖先賣成交回報成現股空單、美股融資回報成現股時，同步不再一買一賣"""
+        from finlab.markets.tw import TWMarket
+        from finlab.markets.us import USMarket
+
+        CASH, MARGIN = OrderCondition.CASH, OrderCondition.MARGIN_TRADING
+        DTS = OrderCondition.DAY_TRADING_SHORT
+        dts = Position({"2330": -1}, day_trading_short=True)
+        both = Position.from_list(
+            [
+                {"stock_id": "2330", "quantity": -1, "order_condition": oc}
+                for oc in (CASH, DTS)
+            ]
+        )
+        margin = Position({"AAPL": 10}, margin_trading=True)
+        tw_margin = Position({"2330": 1}, margin_trading=True)
+        # (帳戶市場, 現有部位, 目標部位, 預期委託)；條件不同的合法部位、台股融資照舊分開比對
+        for market, present, target, expected in [
+            (TWMarket(), {"2330": -1}, dts, []),
+            (TWMarket(), {}, dts, [(-1, DTS)]),
+            (TWMarket(), {"2330": 1}, dts, [(-1, CASH), (-1, DTS)]),
+            (TWMarket(), {"2330": -1}, both, [(-1, DTS)]),
+            (USMarket(), {"AAPL": 10}, margin, []),
+            (USMarket(), {"AAPL": 4}, margin, [(6, CASH)]),
+            (USMarket(), {}, margin, [(10, MARGIN)]),
+            (TWMarket(), {"2330": 1}, tw_margin, [(-1, CASH), (1, MARGIN)]),
+        ]:
+            with self.subTest(market=market, present=present, target=target):
+                self.mock_account.get_market.return_value = market
+                self.mock_account.get_position.return_value = Position(present)
+                orders = OrderExecutor(target, self.mock_account).generate_orders()
+                self.assertEqual(
+                    [(o["quantity"], o["order_condition"]) for o in orders], expected
+                )
+
     def test_cancel_orders(self) -> None:
         """測試取消委託單"""
         # 設置現有委託單
@@ -656,6 +691,33 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
 
         with self.assertRaises(ValueError):
             oe.update_order_price(buy_only=True, sell_only=True)
+
+    def test_update_order_price_limit_equals_close(self) -> None:
+        """原限價等於最新報價時仍照 extra_bid_pct 追價；算完等於原價才不改"""
+        self.mock_account.get_stocks.return_value = {"2330": Mock(close=100.0)}
+        self.mock_account.get_price_info = Mock(
+            return_value={"2330": {"漲停價": 108.0, "跌停價": 92.0}}
+        )
+        # 每組：委託方向、原限價、extra_bid_pct、預期改成的價格
+        for action, old, pct, expected in [
+            (Action.BUY, 100.0, 0.05, [105.0]),
+            (Action.SELL, 100.0, 0.05, [95.0]),
+            (Action.BUY, 100.0, -0.05, [95.0]),
+            (Action.BUY, 100.0, 0.1, [108.0]),
+            (Action.SELL, 100.0, 0.1, [92.0]),
+            (Action.BUY, 100.0, 0, []),
+            (Action.BUY, 105.0, 0.05, []),
+        ]:
+            with self.subTest(action=action, old=old, pct=pct):
+                self.mock_account.update_order.reset_mock()
+                order = Mock(
+                    stock_id="2330", action=action, price=old, status=OrderStatus.NEW
+                )
+                self.mock_account.get_orders.return_value = {"o": order}
+                oe = OrderExecutor(Position({}), self.mock_account)
+                oe.update_order_price(extra_bid_pct=pct)
+                calls = self.mock_account.update_order.call_args_list
+                self.assertEqual([c.kwargs["price"] for c in calls], expected)
 
 
 class TestCalculatePriceWithExtraBid(unittest.TestCase):
