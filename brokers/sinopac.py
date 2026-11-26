@@ -684,7 +684,13 @@ class SinopacAccount(TWStockAccount, RealtimeProvider):
             raise OddLotRepriceError(f"{context}: broker returned no order id")
 
     def cancel_order(self, order_id: str) -> None:
-        self._cancel(order_id)
+        cancelled = self._cancel(order_id)
+        if _cancel_failed(cancelled):
+            # 舊單可能仍有效，報錯讓 executor 不補下一張
+            raise RuntimeError(
+                f"cancel_order: 永豐刪單 {order_id} 失敗，委託可能仍在市場上，"
+                f"請確認委託狀態（{cancelled.status.msg}）"
+            )
 
     def _cancel(self, order_id: str) -> Any:
         self.update_trades()

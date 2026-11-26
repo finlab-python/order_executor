@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import logging
 import math
 import os
 import sys
@@ -440,7 +439,10 @@ class BinanceAccount(Account):
         try:
             self.simple_client.client.cancel_order(symbol=stock_id, orderId=order_id)
         except Exception as e:
-            logging.warning(f"cancel_order: Cannot cancel order {order_id}: {e}")
+            # 舊單可能仍有效，報錯讓 executor 不補下一張
+            raise RuntimeError(
+                f"cancel_order: Cannot cancel order {order_id}, it may still be open: {e}"
+            ) from e
 
     def get_orders(self) -> dict[str, Order]:
 
