@@ -375,8 +375,6 @@ executor.create_orders(market_order=True)
 
 Only one of `market_order`, `best_price_limit` and `extra_bid_pct` can be set.
 
-The account below doesn't match its target. Preview the orders, then send them all at once or in batches, and watch the account line up:
-
 To split a large order, call it several times with a rising `progress`. `progress` is a fraction of the *remaining* difference, not of the original target:
 
 ```python

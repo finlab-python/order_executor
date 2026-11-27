@@ -77,8 +77,6 @@ Each row lists a symbol, the quantity to hold, and the order condition (`CASH` f
 
 Each stock's allocation is floored to whole board lots, so a stock whose allocation is below one lot gets 0. To trade odd lots, set quantities by hand or combine strategies, see [Adjust the position](#adjust-the-position).
 
-Drag the fund below to watch money turn into whole shares, and see which stock misses out:
-
 ### Install the broker package and connect
 
 Install the package of the broker you use and set its credentials as environment variables; configure only that broker.

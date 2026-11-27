@@ -218,7 +218,7 @@ get_orders() -> dict[str, Order]
 
 **Returns**
 
-- `` (Dict[str, Order]): 所有委託單 id 與委託單資料 !!! example     `{'12345A': Order(order_id='12345A', stock_id='5410',...),...}`
+- `` (Dict[str, Order]): 所有委託單 id 與委託單資料 例如 `{'12345A': Order(order_id='12345A', stock_id='5410',...),...}`
 
 #### finlab.online.core.account.Account.get_stocks
 
@@ -234,7 +234,7 @@ get_stocks(stock_ids) -> dict[str, Stock]
 
 **Returns**
 
-- `` (dict): 報價資料， !!! example     `{'1101': Stock(stock_id='1101', open=31.15, high=31.85, low=31.1, close=31.65, bid_price=31.6, bid_volume=728.0, ask_price=31.65, ask_volume=202)}`
+- `` (dict): 報價資料， 例如 `{'1101': Stock(stock_id='1101', open=31.15, high=31.85, low=31.1, close=31.65, bid_price=31.6, bid_volume=728.0, ask_price=31.65, ask_volume=202)}`
 
 #### finlab.online.core.account.Account.get_position
 
@@ -514,8 +514,6 @@ Load a JSON file from the given path and convert it to a list of positions.
 ## 讓帳戶持股對齊目標
 
 `create_orders()` 會先取消帳戶裡未成交的委託，再送出讓帳戶持股變成目標部位的委託，預設以最後一筆成交價掛限價單，回傳送出（或預覽時將送出）的委託清單。`market_order`、`best_price_limit`、`extra_bid_pct` 三者只能擇一設定。
-
-下面的帳戶和目標不一樣。先預覽會送出哪些委託，再一次或分批送出，看帳戶怎麼對齊目標：
 
 ### 調整掛單價格
 

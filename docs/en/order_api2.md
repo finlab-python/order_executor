@@ -70,7 +70,7 @@ port.display()
 
 This simulates the combined portfolio and displays the same interactive report as a single backtest: cumulative return against the benchmark, risk and return metrics, and the holdings of every strategy.
 
-When several strategies hold the same stock, its weight in the portfolio is each strategy's weight × its weight in that strategy, added up. Hand out the chips below to try it:
+When several strategies hold the same stock, its weight in the portfolio is each strategy's weight × its weight in that strategy, added up.
 
 ## Calculate share quantities
 

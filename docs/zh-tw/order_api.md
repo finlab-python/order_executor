@@ -84,8 +84,6 @@ print(position)
 
 預設只買整張：每檔先用分到的資金買整張，剩下的錢再一張一張補給離目標比例最遠、還買得起的股票，所以分到的資金不足一張的股票可能補到一張，也可能是 0 張。想買零股、自己指定張數或合併多個策略，見下方[調整部位](#調整部位)。
 
-拉動下面的資金，看錢怎麼變成一張張股票，也看看哪一檔會買不到：
-
 ### 安裝券商套件並連接帳戶
 
 台股支援玉山證券、永豐證券、台新證券（原元富證券）及富邦證券，美股支援嘉信（Charles Schwab），擇一使用即可。帳號密碼設成環境變數，只需設定你要用的券商。
@@ -460,7 +458,7 @@ except ConnectionError as e:
 except Exception as e:
     print(f"\n❌ 未知錯誤：{e}")
     print("請檢查所有環境變數是否正確設定")
-    print("參考教學：https://doc.finlab.tw/details/order_api/")
+    print("參考教學：https://github.com/finlab-python/order_executor/blob/main/docs/zh-tw/order_api.md")
 ```
 
 </details>
