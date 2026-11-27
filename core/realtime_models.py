@@ -8,7 +8,6 @@ from enum import Enum
 from typing import Any
 
 from .enums import Action, OrderCondition, OrderStatus
-
 from .realtime_normalizers import (
     BOOK_DEPTH,
     calculate_tick_pct_change,

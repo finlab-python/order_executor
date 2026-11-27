@@ -36,7 +36,9 @@ __all__ = [
 
 def __getattr__(name: str) -> type:
     if name == "PocketAccount":
-        return importlib.import_module(".brokers.pocket", __name__).PocketAccount
+        from .brokers.pocket import PocketAccount
+
+        return PocketAccount
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

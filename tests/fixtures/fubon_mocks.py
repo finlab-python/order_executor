@@ -198,7 +198,7 @@ class FubonAccountMockHelper:
         if sdk_mock is None:
             sdk_mock = FubonSDKMock().get_sdk()
 
-        with patch("finlab_online.fubon_account.FubonSDK") as mock_sdk_class:
+        with FubonAccountMockHelper.patch_fubon_sdk() as mock_sdk_class:
             mock_sdk_class.return_value = sdk_mock
 
             # Mock 環境變數
