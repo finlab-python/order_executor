@@ -15,7 +15,7 @@ import pandas as pd
 from binance import client
 from binance.enums import ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET, SIDE_BUY, SIDE_SELL
 
-from finlab_online.core.account import (
+from ..core.account import (
     Account,
     Action,
     Order,
@@ -23,8 +23,8 @@ from finlab_online.core.account import (
     OrderStatus,
     Stock,
 )
-from finlab_online.core.position import Position
-from finlab_online.core.realtime_normalizers import to_optional_float
+from ..core.position import Position
+from ..core.realtime_normalizers import to_optional_float
 
 
 def round_step_size(

@@ -1,4 +1,4 @@
-"""Public API for finlab_online with stable import paths."""
+"""Public API for finlab.online with stable import paths."""
 
 from __future__ import annotations
 
@@ -36,30 +36,33 @@ __all__ = [
 
 def __getattr__(name: str) -> type:
     if name == "PocketAccount":
-        return importlib.import_module("finlab_online.brokers.pocket").PocketAccount
+        return importlib.import_module(".brokers.pocket", __name__).PocketAccount
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-# Legacy import paths (e.g. finlab_online.sinopac_account) redirected to
+# Legacy import paths (e.g. finlab.online.sinopac_account) redirected to
 # their real locations.  Broker modules load lazily — heavy deps like
 # shioaji are only pulled in when actually used.
 _MODULE_ALIASES: dict[str, str] = {
-    "finlab_online.base_account": "finlab_online.core.account",
-    "finlab_online.order_executor": "finlab_online.core.executor",
-    "finlab_online.enums": "finlab_online.core.enums",
-    "finlab_online.position": "finlab_online.core.position",
-    "finlab_online.utils": "finlab_online.core.utils",
-    "finlab_online.sinopac_account": "finlab_online.brokers.sinopac",
-    "finlab_online.fugle_account": "finlab_online.brokers.fugle",
-    "finlab_online.esun_account": "finlab_online.brokers.esun",
-    "finlab_online.fubon_account": "finlab_online.brokers.fubon",
-    "finlab_online.kgi_account": "finlab_online.brokers.kgi",
-    "finlab_online.masterlink_account": "finlab_online.brokers.masterlink",
-    "finlab_online.taishin_account": "finlab_online.brokers.taishin",
-    "finlab_online.yuanta_account": "finlab_online.brokers.yuanta",
-    "finlab_online.binance_account": "finlab_online.brokers.binance",
-    "finlab_online.pocket_account": "finlab_online.brokers.pocket",
-    "finlab_online.schwab_account": "finlab_online.brokers.schwab",
+    f"{__name__}.{old}": f"{__name__}.{new}"
+    for old, new in {
+        "base_account": "core.account",
+        "order_executor": "core.executor",
+        "enums": "core.enums",
+        "position": "core.position",
+        "utils": "core.utils",
+        "sinopac_account": "brokers.sinopac",
+        "fugle_account": "brokers.fugle",
+        "esun_account": "brokers.esun",
+        "fubon_account": "brokers.fubon",
+        "kgi_account": "brokers.kgi",
+        "masterlink_account": "brokers.masterlink",
+        "taishin_account": "brokers.taishin",
+        "yuanta_account": "brokers.yuanta",
+        "binance_account": "brokers.binance",
+        "pocket_account": "brokers.pocket",
+        "schwab_account": "brokers.schwab",
+    }.items()
 }
 
 

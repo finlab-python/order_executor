@@ -13,8 +13,8 @@ import requests
 
 from finlab import data
 from finlab.compat import is_typed_strict_mode, resolve_position_entry_symbol
-from finlab_online.core.enums import *
-from finlab_online.core.position import Position
+from .enums import *
+from .position import Position
 
 logger = logging.getLogger(__name__)
 
@@ -664,7 +664,7 @@ def calculate_price_with_extra_bid(
         return price * (1 + Decimal(str(extra_bid_pct)))
 
     from finlab.markets.us import USMarket
-    from finlab_online.core.utils import (
+    from .utils import (
         _round_to_etf_tick,
         _round_to_tick,
         _round_to_us_tick,

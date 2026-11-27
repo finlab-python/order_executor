@@ -34,10 +34,10 @@ from shioaji.position import StockPosition as SJStockPosition
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab_online.core.account import Order, Stock, TWSession, TWStockAccount
-from finlab_online.core.enums import *
-from finlab_online.core.position import Position
-from finlab_online.core.realtime_models import (
+from ..core.account import Order, Stock, TWSession, TWStockAccount
+from ..core.enums import *
+from ..core.position import Position
+from ..core.realtime_models import (
     BalanceUpdate,
     BidAsk,
     ConnectionState,
@@ -45,7 +45,7 @@ from finlab_online.core.realtime_models import (
     OrderUpdate,
     Tick,
 )
-from finlab_online.core.realtime_normalizers import (
+from ..core.realtime_normalizers import (
     finalize_backfilled_ticks,
     get_field_value,
     get_first_valid_float,
@@ -53,7 +53,7 @@ from finlab_online.core.realtime_normalizers import (
     to_optional_datetime,
     to_optional_float,
 )
-from finlab_online.core.realtime_provider import RealtimeProvider
+from ..core.realtime_provider import RealtimeProvider
 
 logger = logging.getLogger(__name__)
 

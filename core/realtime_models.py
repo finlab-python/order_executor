@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from finlab_online.core.enums import Action, OrderCondition, OrderStatus
+from .enums import Action, OrderCondition, OrderStatus
 
 from .realtime_normalizers import (
     BOOK_DEPTH,

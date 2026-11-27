@@ -37,19 +37,19 @@ except ModuleNotFoundError as e:
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab_online.core.account import (
+from ..core.account import (
     Order,
     Stock,
     TWSession,
     TWStockAccount,
 )
-from finlab_online.core.enums import *
-from finlab_online.core.position import Position
-from finlab_online.core.realtime_helpers import (
+from ..core.enums import *
+from ..core.position import Position
+from ..core.realtime_helpers import (
     build_bidask_from_quote,
     build_ticks_from_intraday_trade_rows,
 )
-from finlab_online.core.realtime_models import (
+from ..core.realtime_models import (
     BalanceUpdate,
     BidAsk,
     ConnectionState,
@@ -57,12 +57,12 @@ from finlab_online.core.realtime_models import (
     OrderUpdate,
     Tick,
 )
-from finlab_online.core.realtime_normalizers import (
+from ..core.realtime_normalizers import (
     get_field_value,
     get_first_valid_float,
     to_optional_float,
 )
-from finlab_online.core.realtime_provider import RealtimeProvider
+from ..core.realtime_provider import RealtimeProvider
 
 
 class MasterlinkAccount(TWStockAccount, RealtimeProvider):
