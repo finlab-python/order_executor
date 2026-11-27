@@ -10,13 +10,10 @@ from finlab import data, get_token
 from finlab.backtest import sim
 from finlab.core.firestore_rest import _get_firestore_url, extract_uid_from_id_token
 from finlab.markets.tw import TWMarket
-from finlab.portfolio import (
-    Portfolio,
-    PortfolioSyncManager,
-    create_custom_report,
-    create_report_from_cloud,
-)
+from finlab.portfolio import Portfolio, create_custom_report, create_report_from_cloud
 from finlab.portfolio.portfolio import PositionScheduler
+
+from finlab_online.portfolio import PortfolioSyncManager
 
 
 def series_equal(s1, s2):
@@ -74,7 +71,7 @@ def _unique_cloud_name(prefix):
     return f"pytest_{prefix}_{uuid.uuid4().hex[:12]}"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def uploaded_cloud_name(request):
     token, token_type = get_token()
     uid = extract_uid_from_id_token(token) if token_type == "id_token" else None
@@ -121,17 +118,12 @@ def uploaded_cloud_name(request):
     return reserve
 
 
-@pytest.fixture
-def uploaded_strategy_report(uploaded_cloud_name):
+@pytest.fixture(scope="module")
+def uploaded_strategy_id(uploaded_cloud_name):
+    # Shared by the tests that only read the report back from the cloud.
     strategy_id = uploaded_cloud_name("strategy")
-    report = create_strategy()
-    report.upload(strategy_id)
-    return strategy_id, report
-
-
-@pytest.fixture
-def uploaded_strategy_id(uploaded_strategy_report):
-    return uploaded_strategy_report[0]
+    create_strategy().upload(strategy_id)
+    return strategy_id
 
 
 def test_pm(uploaded_strategy_id):
@@ -291,10 +283,6 @@ def test_pm_empty():
 
 
 def test_pm_odd_lot():
-    from finlab.portfolio.portfolio import PositionScheduler
-
-    from finlab_online.portfolio import PortfolioSyncManager
-
     weights = pd.Series([0.1], index=["2330 台積電"])
     next_weights = pd.Series([0.2], index=["1101 台泥"])
     resample = None
@@ -459,10 +447,6 @@ def test_not_resample():
 
 
 def test_pm_reduce_strategy():
-    from finlab.portfolio.portfolio import PositionScheduler
-
-    from finlab_online.portfolio import PortfolioSyncManager
-
     weights = pd.Series([0.1], index=["2330 台積電"])
     next_weights = pd.Series([0.2], index=["1101 台泥"])
     resample = "W"
@@ -532,10 +516,6 @@ def test_pm_reduce_strategy():
 
 
 def test_custom_position():
-    from finlab.portfolio.portfolio import PositionScheduler
-
-    from finlab_online.portfolio import PortfolioSyncManager
-
     weights = pd.Series([0.1], index=["2330 台積電"])
     next_weights = pd.Series([0.2], index=["1101 台泥"])
     resample = "W"
@@ -597,10 +577,6 @@ def test_custom_position():
 
 
 def test_has_market_name_and_last_market_close_and_trade_at():
-    from finlab.portfolio.portfolio import PositionScheduler
-
-    from finlab_online.portfolio import PortfolioSyncManager
-
     weights = pd.Series([0.1], index=["2330 台積電"])
     next_weights = pd.Series([0.2], index=["1101 台泥"])
     resample = None
@@ -676,12 +652,7 @@ def test_rebalance_due_and_stop_triggered(monkeypatch):
     import io
     import logging
 
-    from finlab import data
-    from finlab.backtest import sim
     from finlab.core.report import ReportExecution
-    from finlab.portfolio import Portfolio
-
-    from finlab_online.portfolio import PortfolioSyncManager
 
     # This covers PM sync and stop logic with the signal-label rules; the TW
     # calendar window closes weeks-old boundaries and has its own unit tests.
@@ -720,7 +691,7 @@ def test_rebalance_due_and_stop_triggered(monkeypatch):
     report = sim(
         buy,
         resample="M",
-        upload=True,
+        upload=False,
         position_limit=1 / 3,
         fee_ratio=1.425 / 1000 / 3,
         stop_loss=0.08,
@@ -734,7 +705,7 @@ def test_rebalance_due_and_stop_triggered(monkeypatch):
     report2 = sim(
         buy2,
         resample="M",
-        upload=True,
+        upload=False,
         position_limit=1 / 3,
         fee_ratio=1.425 / 1000 / 3,
         stop_loss=0.08,
@@ -798,9 +769,6 @@ def _make_pm_with_strategy(
     strategy_name, entry_at, position, history=None, last_market_timestamp=None
 ):
     """Helper to build a PortfolioSyncManager with hand-crafted data."""
-    from finlab.markets.tw import TWMarket
-
-    from finlab_online.portfolio import PortfolioSyncManager
 
     market = TWMarket()
     if last_market_timestamp is None:
@@ -836,7 +804,6 @@ def test_strategy_position_close_at_open_empty_history():
 
 def test_strategy_position_close_at_open_single_same_day_history():
     """Close-strategy queried at='open' with single same-day history entry → returns current position."""
-    from finlab.markets.tw import TWMarket
 
     market = TWMarket()
     ts = market.market_close_at_timestamp(
@@ -856,7 +823,6 @@ def test_strategy_position_close_at_open_single_same_day_history():
 
 def test_strategy_position_close_at_open_normal_history():
     """Close-strategy queried at='open' with normal history → returns history[-1] (unchanged behavior)."""
-    from finlab.markets.tw import TWMarket
 
     market = TWMarket()
     ts = market.market_close_at_timestamp(
@@ -887,9 +853,6 @@ def test_strategy_position_open_at_open():
 
 def test_strategy_position_mixed_portfolio():
     """Mixed portfolio: get_strategy_position at='open' returns holdings from both strategies."""
-    from finlab.markets.tw import TWMarket
-
-    from finlab_online.portfolio import PortfolioSyncManager
 
     market = TWMarket()
     ts = market.market_close_at_timestamp(

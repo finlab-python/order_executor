@@ -7,8 +7,9 @@ validation logic that carries no broker or state dependencies.
 from __future__ import annotations
 
 import logging
-import math
 from typing import TYPE_CHECKING
+
+from .validation import replace_inf_nan
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -51,22 +52,5 @@ def position_type_check(position_name: str, data: MutableMapping[str, object]) -
                 type(value).__name__,
             )
 
-    if not isinstance(data.get("market"), str) and data.get("market") is None:
+    if data.get("market") is None:
         data["market"] = "tw_stock"
-
-
-def replace_inf_nan(data: object) -> object:
-    """Recursively replace *inf* / *NaN* floats with ``None``."""
-    if isinstance(data, float):
-        if math.isinf(data) or math.isnan(data):
-            return None
-        return data
-    if isinstance(data, dict):
-        return {k: replace_inf_nan(v) for k, v in data.items()}
-    if isinstance(data, list):
-        return [replace_inf_nan(item) for item in data]
-    if isinstance(data, tuple):
-        return tuple(replace_inf_nan(item) for item in data)
-    if isinstance(data, set):
-        return {replace_inf_nan(item) for item in data}
-    return data

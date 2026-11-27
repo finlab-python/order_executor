@@ -1,16 +1,9 @@
-import pytest
+from finlab.portfolio import Portfolio
+
+from finlab_online.portfolio import PortfolioSyncManager
 
 
-def _load_portfolio_classes():
-    pytest.importorskip("finlab.core.report")
-    from finlab.portfolio import Portfolio
-
-    from finlab_online.portfolio import PortfolioSyncManager
-
-    return PortfolioSyncManager, Portfolio
-
-
-def _make_empty_portfolio(Portfolio):
+def _make_empty_portfolio():
     class _EmptyPortfolio(Portfolio):
         def __init__(self):
             # Keep this lightweight for schema guardrail tests.
@@ -20,10 +13,9 @@ def _make_empty_portfolio(Portfolio):
 
 
 def test_portfolio_sync_manager_config_params_shape_is_stable():
-    PortfolioSyncManager, Portfolio = _load_portfolio_classes()
     pm = PortfolioSyncManager()
     pm.update(
-        _make_empty_portfolio(Portfolio),
+        _make_empty_portfolio(),
         total_balance=123456,
         rebalance_safety_weight=0.35,
         smooth_transition=True,
@@ -50,10 +42,9 @@ def test_portfolio_sync_manager_config_params_shape_is_stable():
 
 
 def test_portfolio_sync_manager_config_keeps_custom_and_excluded_fields():
-    PortfolioSyncManager, Portfolio = _load_portfolio_classes()
     pm = PortfolioSyncManager()
     pm.update(
-        _make_empty_portfolio(Portfolio),
+        _make_empty_portfolio(),
         total_balance=1,
         custom_position={"2454": 1},
         excluded_stock_ids=["2454"],

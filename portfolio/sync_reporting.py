@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 import pandas as pd
 
 from .sync_display import build_position_dataframe, build_strategy_info_dataframe
-from .sync_market_data import get_position_lots
+from .sync_market_data import DEFAULT_LOT, get_position_lots
 
 if TYPE_CHECKING:
     from finlab.schemas import PortfolioConfigDataDict, StrategyPositionDataDict
@@ -63,7 +63,7 @@ def format_portfolio_repr(
         estimated_value = (
             df.price.astype(float)
             * df.quantity.astype(float)
-            * df.index.map(lambda symbol: lots.get(symbol, 1000))
+            * df.index.map(lambda symbol: lots.get(symbol, DEFAULT_LOT))
         ).sum()
         result = f"Estimate value {int(estimated_value)}"
     else:

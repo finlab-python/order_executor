@@ -6,57 +6,41 @@ import datetime
 import hashlib
 import json
 import socket
-from contextlib import contextmanager
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest import mock
 
-import finlab.core.report as report_module
 import pandas as pd
 import pytest
 from finlab.backtest.sim import sim
 from finlab.exceptions import PortfolioError
 from finlab.portfolio import Portfolio
 
-import finlab_online.core.position as position_module
 import finlab_online.portfolio.sync_market_data as market_data_module
-import finlab_online.portfolio.sync_state as state_module
-import finlab_online.portfolio.sync_update as update_module
 from finlab_online.order_executor import OrderExecutor, Position
 from finlab_online.portfolio import PortfolioSyncManager
 
-from .offline_sim import SyntheticMarket
+from .offline_sim import (
+    RealDateTimeMeta,
+    TaipeiSyntheticMarket,
+    patched_datetime,
+    use_market,
+)
 
 pytestmark = pytest.mark.unit
 
 NOW = pd.Timestamp("2024-06-03 20:00", tz="Asia/Taipei")
-_RealDateTime = datetime.datetime
 
 
-class FixedMarket(SyntheticMarket):
+class FixedMarket(TaipeiSyntheticMarket):
     def __init__(self, end="2024-06-03"):
         super().__init__(pd.Timestamp(end))
         for symbol, price in {"1101": 100.0, "2330": 200.0, "2454": 600.0}.items():
             self._close[symbol] = price
 
-    @staticmethod
-    def tzinfo():
-        return datetime.timezone(datetime.timedelta(hours=8))
 
-    def market_close_at_timestamp(self, timestamp=None):
-        day = timestamp if timestamp is not None else self._close.index[-1]
-        return (
-            pd.Timestamp(pd.Timestamp(day).date()) + pd.Timedelta(hours=15)
-        ).tz_localize("Asia/Taipei")
-
-
-@contextmanager
 def _frozen_clock(now=NOW):
-    class Meta(type):
-        def __instancecheck__(cls, obj):
-            return isinstance(obj, _RealDateTime)
-
-    class FrozenDateTime(_RealDateTime, metaclass=Meta):
+    class FrozenDateTime(datetime.datetime, metaclass=RealDateTimeMeta):
         @classmethod
         def now(cls, tz=None):
             return cls.fromtimestamp(now.timestamp(), tz=tz or now.tzinfo)
@@ -64,16 +48,7 @@ def _frozen_clock(now=NOW):
         def astimezone(self, tz=None):
             return super().astimezone(tz or NOW.tzinfo)
 
-    fake = mock.MagicMock(wraps=datetime)
-    fake.datetime = FrozenDateTime
-    fake.timezone = datetime.timezone
-    fake.timedelta = datetime.timedelta
-    with (
-        mock.patch.object(report_module, "datetime", fake),
-        mock.patch.object(position_module, "datetime", fake),
-        mock.patch.object(update_module, "datetime", fake),
-    ):
-        yield
+    return patched_datetime(FrozenDateTime)
 
 
 @pytest.fixture
@@ -86,8 +61,7 @@ def scenario(monkeypatch, offline_sim):
     monkeypatch.setattr("finlab.login", forbidden)
     monkeypatch.setattr("finlab.get_token", forbidden)
     market = FixedMarket()
-    monkeypatch.setattr(market_data_module, "get_market_by_name", lambda name: market)
-    monkeypatch.setattr(state_module, "get_market_by_name", lambda name: market)
+    use_market(monkeypatch, market)
 
     close = market.get_price("close")
     updated_signal = pd.DataFrame(False, index=close.index, columns=close.columns)
@@ -337,10 +311,7 @@ def daily_scenario(monkeypatch, offline_sim):
             market._close.loc["2024-06-12":, "1101"] = (
                 80 if exit_kind == "stop_loss" else 115
             )
-        monkeypatch.setattr(
-            market_data_module, "get_market_by_name", lambda name: market
-        )
-        monkeypatch.setattr(state_module, "get_market_by_name", lambda name: market)
+        use_market(monkeypatch, market)
         reports = {}
         for sid, symbol in {"updated": "1101", "retained": "2454"}.items():
             signal = market._close * False

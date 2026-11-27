@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from .offline_sim import enable_offline_sim
+
 
 @pytest.fixture
 def offline_sim(monkeypatch):
-    """Run ``sim()`` offline; returns the ``SyntheticMarket`` class."""
-    from .offline_sim import enable_offline_sim
-
-    return enable_offline_sim(monkeypatch)
+    """Run ``sim()`` offline."""
+    enable_offline_sim(monkeypatch)

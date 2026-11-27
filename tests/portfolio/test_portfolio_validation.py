@@ -1,59 +1,8 @@
-"""Unit tests for finlab_online.portfolio.validation -- pure functions, no auth/network.
-
-When the compiled ``finlab.core`` Cython modules are missing (source-only CI
-checkout without a build step), this module installs lightweight stubs so that
-``finlab_online.portfolio.validation`` can be imported without its eager transitive
-imports blowing up.  When the real modules are present we leave ``sys.modules``
-untouched -- stubbing a real package breaks ``importlib.resources.files`` for
-later tests in the same pytest session (collection imports every test module
-up-front, so module-level pollution here leaks into every sibling test).
-"""
+"""Unit tests for finlab_online.portfolio.validation -- pure functions, no auth/network."""
 
 from __future__ import annotations
 
-import importlib
-import sys
-import types
-
 import pytest
-
-
-def _make_stub(name: str) -> types.ModuleType:
-    mod = types.ModuleType(name)
-    mod.__path__ = []  # type: ignore[attr-defined]
-    mod.__getattr__ = lambda attr: type(attr, (), {})
-    return mod
-
-
-def _install_core_stubs_if_missing() -> None:
-    """Install stub submodules only when the real finlab.core is unavailable."""
-    try:
-        importlib.import_module("finlab.core.report")
-        # Real compiled modules are importable -- don't touch sys.modules.
-        return
-    except ImportError:
-        pass
-
-    stubs = [
-        "finlab.core",
-        "finlab.core.firestore_rest",
-        "finlab.core.report",
-        "finlab.core.backtest_core",
-        "finlab.core.mae_mfe",
-        "finlab.core.metrics",
-        "finlab.core.utils_core",
-        "finlab.core.aes",
-        "finlab.online",
-        "finlab_online.enums",
-        "finlab_online.order_executor",
-        "finlab_online.core",
-        "finlab_online.core.account",
-    ]
-    for name in stubs:
-        sys.modules.setdefault(name, _make_stub(name))
-
-
-_install_core_stubs_if_missing()
 
 from finlab_online.portfolio.validation import (
     check_position_needs_market_default,

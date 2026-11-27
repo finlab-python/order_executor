@@ -5,25 +5,24 @@ from __future__ import annotations
 import datetime
 import hashlib
 import logging
-from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest import mock
 
-import finlab.core.report as report_module
 import pandas as pd
 import pytest
 from finlab.backtest.sim import sim
 from finlab.portfolio import Portfolio
 from finlab.session_calendar import SessionCalendar, canonical
 
-import finlab_online.core.position as position_module
-import finlab_online.portfolio.sync_market_data as sync_market_data_module
-import finlab_online.portfolio.sync_state as sync_state_module
-import finlab_online.portfolio.sync_update as sync_update_module
 from finlab_online.portfolio import PortfolioSyncManager
 from finlab_online.portfolio.sync_decisions import identify_updated_strategies
 
-from .offline_sim import SyntheticMarket
+from .offline_sim import (
+    RealDateTimeMeta,
+    TaipeiSyntheticMarket,
+    close_at,
+    patched_datetime,
+    use_market,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +55,6 @@ def calendar(now):
 
 
 TAIPEI = "Asia/Taipei"
-MARKET_CLOSE = pd.Timedelta("15:00:00")
 TOTAL_BALANCE = 10_000_000
 APRIL_BOUNDARY = "2024-04-30"
 MAY_BOUNDARY = "2024-05-31"
@@ -64,48 +62,17 @@ FIRST_RUN_AFTER_MAY = "2024-06-03"
 FIRST_RUN_AFTER_JUNE = "2024-07-01"
 MISSED = "missed the rebalance"
 MAY = pd.Timestamp(MAY_BOUNDARY)
-_RealDateTime = datetime.datetime
 
 
-def _close_at(day: str | pd.Timestamp) -> pd.Timestamp:
-    return (pd.Timestamp(pd.Timestamp(day).date()) + MARKET_CLOSE).tz_localize(TAIPEI)
-
-
-class TaipeiSyntheticMarket(SyntheticMarket):
-    """Synthetic prices with a tz-aware 15:00 Taipei close, like TWMarket."""
-
-    @staticmethod
-    def tzinfo() -> datetime.timezone:
-        return datetime.timezone(datetime.timedelta(hours=8))
-
-    def market_close_at_timestamp(self, timestamp=None) -> pd.Timestamp:
-        return _close_at(timestamp if timestamp is not None else self._close.index[-1])
-
-
-class _FrozenDateTimeMeta(type):
-    def __instancecheck__(cls, obj: object) -> bool:
-        return isinstance(obj, _RealDateTime)
-
-
-@contextmanager
 def _frozen_clock(now: pd.Timestamp):
     """Freeze ``datetime.now()`` in the modules that read the wall clock."""
 
-    class FrozenDateTime(_RealDateTime, metaclass=_FrozenDateTimeMeta):
+    class FrozenDateTime(datetime.datetime, metaclass=RealDateTimeMeta):
         @classmethod
         def now(cls, tz=None):
             return now.astimezone(tz) if tz else now.tz_convert(None).to_pydatetime()
 
-    fake = mock.MagicMock(wraps=datetime)
-    fake.datetime = FrozenDateTime
-    fake.timezone = datetime.timezone
-    fake.timedelta = datetime.timedelta
-    with (
-        mock.patch.object(report_module, "datetime", fake),
-        mock.patch.object(sync_update_module, "datetime", fake),
-        mock.patch.object(position_module, "datetime", fake),
-    ):
-        yield
+    return patched_datetime(FrozenDateTime)
 
 
 def _monthly_report(day: str):
@@ -142,11 +109,7 @@ def _held_symbols(pm: PortfolioSyncManager) -> set[str]:
 
 @pytest.fixture
 def pm(offline_sim, monkeypatch) -> PortfolioSyncManager:
-    market = TaipeiSyntheticMarket(pd.Timestamp(FIRST_RUN_AFTER_MAY))
-    monkeypatch.setattr(sync_state_module, "get_market_by_name", lambda name: market)
-    monkeypatch.setattr(
-        sync_market_data_module, "get_market_by_name", lambda name: market
-    )
+    use_market(monkeypatch, TaipeiSyntheticMarket(pd.Timestamp(FIRST_RUN_AFTER_MAY)))
     return PortfolioSyncManager()
 
 
@@ -199,7 +162,7 @@ def _allocation(boundary: object, *, calendar_path: bool = False) -> SimpleNames
         is_rebalance_due=lambda: False,
         uses_trading_calendar=lambda: calendar_path,
         weights=pd.Series({"2330": 1.0}, name=boundary),
-        market=SimpleNamespace(market_close_at_timestamp=_close_at),
+        market=SimpleNamespace(market_close_at_timestamp=close_at),
     )
 
 
@@ -225,9 +188,9 @@ def _identify(portfolio: dict, position: dict) -> list[str]:
     [
         (MAY, {"applied_signal_at": APRIL_BOUNDARY}, ["s"]),
         (MAY, {"applied_signal_at": MAY_BOUNDARY}, []),
-        (MAY, {"next_trading_time": _close_at(APRIL_BOUNDARY).isoformat()}, ["s"]),
-        (MAY, {"next_trading_time": _close_at(MAY_BOUNDARY).isoformat()}, []),
-        (MAY, {"next_trading_time": _close_at("2024-06-30").isoformat()}, []),
+        (MAY, {"next_trading_time": close_at(APRIL_BOUNDARY).isoformat()}, ["s"]),
+        (MAY, {"next_trading_time": close_at(MAY_BOUNDARY).isoformat()}, []),
+        (MAY, {"next_trading_time": close_at("2024-06-30").isoformat()}, []),
         ("weight", {"applied_signal_at": APRIL_BOUNDARY}, []),
         (pd.NaT, {"applied_signal_at": APRIL_BOUNDARY}, []),
     ],

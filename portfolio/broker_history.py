@@ -303,6 +303,15 @@ _SCHWAB_FLOWS = {
 }
 
 
+def _security_legs(t: dict[str, Any]) -> list[dict[str, Any]]:
+    """A Schwab transaction's non-cash ``transferItems``."""
+    return [
+        i
+        for i in t.get("transferItems", [])
+        if i.get("instrument", {}).get("assetType") not in (None, "CURRENCY")
+    ]
+
+
 def _schwab(
     account: Any, start: pd.Timestamp, end: pd.Timestamp, **_: Any
 ) -> BrokerHistory:
@@ -321,12 +330,7 @@ def _schwab(
             )
             kind, net = t.get("type"), float(t.get("netAmount") or 0.0)
             if kind == "TRADE":
-                legs = [
-                    i
-                    for i in t.get("transferItems", [])
-                    if i.get("instrument", {}).get("assetType")
-                    not in (None, "CURRENCY")
-                ]
+                legs = _security_legs(t)
                 if len(legs) != 1 or legs[0]["instrument"]["assetType"] == "OPTION":
                     notes.append(
                         f"{t.get('description') or t.get('activityId')} 非單一股票成交，已略過 / Not a single-stock trade; skipped."
@@ -347,12 +351,7 @@ def _schwab(
                     )
                 )
             elif kind == "DIVIDEND_OR_INTEREST":
-                symbols = [
-                    i["instrument"].get("symbol")
-                    for i in t.get("transferItems", [])
-                    if i.get("instrument", {}).get("assetType")
-                    not in (None, "CURRENCY")
-                ]
+                symbols = [i["instrument"].get("symbol") for i in _security_legs(t)]
                 events.append((when, net, "dividend", symbols[0] if symbols else None))
             elif kind in _SCHWAB_FLOWS:
                 kind = "deposit" if net >= 0 else "withdrawal"
