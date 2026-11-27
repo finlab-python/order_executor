@@ -25,8 +25,8 @@ def _import_fugle(monkeypatch: Any) -> types.ModuleType:
     for name, mod in [("constant", constant), ("order", order), ("sdk", sdk), ("util", util)]:
         monkeypatch.setitem(sys.modules, f"esun_trade.{name}", mod)
     monkeypatch.setitem(sys.modules, "esun_trade", types.ModuleType("esun_trade"))
-    sys.modules.pop("finlab.online.brokers.fugle", None)
-    return importlib.import_module("finlab.online.brokers.fugle")
+    sys.modules.pop("finlab_online.brokers.fugle", None)
+    return importlib.import_module("finlab_online.brokers.fugle")
 
 
 def _account(fugle: types.ModuleType, sdk: Any) -> Any:

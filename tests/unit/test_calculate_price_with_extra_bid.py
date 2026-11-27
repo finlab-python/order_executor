@@ -5,8 +5,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 from finlab.markets.us import USMarket
-from finlab.online.base_account import Action
-from finlab.online.order_executor import calculate_price_with_extra_bid
+from finlab_online.base_account import Action
+from finlab_online.order_executor import calculate_price_with_extra_bid
 
 
 def test_calculate_price_with_extra_bid_cases() -> None:

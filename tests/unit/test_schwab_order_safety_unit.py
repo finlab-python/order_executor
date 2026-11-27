@@ -58,8 +58,8 @@ def _account(monkeypatch: Any, cancel_status: int = 200) -> Any:
     auth.client_from_token_file = None
     monkeypatch.setitem(sys.modules, "schwab", types.ModuleType("schwab"))
     monkeypatch.setitem(sys.modules, "schwab.auth", auth)
-    sys.modules.pop("finlab.online.brokers.schwab", None)
-    module = importlib.import_module("finlab.online.brokers.schwab")
+    sys.modules.pop("finlab_online.brokers.schwab", None)
+    module = importlib.import_module("finlab_online.brokers.schwab")
 
     account = module.SchwabAccount.__new__(module.SchwabAccount)
     account.client = _FakeClient(cancel_status)
@@ -92,8 +92,8 @@ def test_get_position_without_holdings_is_empty(monkeypatch: Any) -> None:
 
 
 def test_query_failure_raises_instead_of_empty(monkeypatch: Any) -> None:
-    from finlab.online.core.executor import OrderExecutor
-    from finlab.online.core.position import Position
+    from finlab_online.core.executor import OrderExecutor
+    from finlab_online.core.position import Position
 
     account = _account(monkeypatch)
     account.client.accounts = _response(429)

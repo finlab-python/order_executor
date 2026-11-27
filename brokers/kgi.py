@@ -13,10 +13,10 @@ import kgisuperpy as kgi
 from finlab import data
 from finlab.compat import resolve_id_column
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Order, Stock, TWSession, TWStockAccount
-from finlab.online.core.enums import Action, OrderCondition, OrderStatus
-from finlab.online.core.position import Position
-from finlab.online.core.realtime_normalizers import calculate_tick_pct_change
+from finlab_online.core.account import Order, Stock, TWSession, TWStockAccount
+from finlab_online.core.enums import Action, OrderCondition, OrderStatus
+from finlab_online.core.position import Position
+from finlab_online.core.realtime_normalizers import calculate_tick_pct_change
 
 logger = logging.getLogger(__name__)
 

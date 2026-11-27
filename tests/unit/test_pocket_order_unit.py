@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from finlab.online.core.enums import Action
+from finlab_online.core.enums import Action
 
 from ..utils.mock_helpers import patch_utc_host_clock
 
@@ -30,8 +30,8 @@ def _make_account(
     monkeypatch: pytest.MonkeyPatch, utc_time: tuple | None = None
 ) -> object:
     monkeypatch.setitem(sys.modules, "pocketx", types.ModuleType("pocketx"))
-    sys.modules.pop("finlab.online.brokers.pocket", None)
-    pocket_module = importlib.import_module("finlab.online.brokers.pocket")
+    sys.modules.pop("finlab_online.brokers.pocket", None)
+    pocket_module = importlib.import_module("finlab_online.brokers.pocket")
     if utc_time is not None:
         patch_utc_host_clock(monkeypatch, pocket_module, utc_time)
     account = pocket_module.PocketAccount.__new__(pocket_module.PocketAccount)
@@ -95,12 +95,12 @@ def test_pocket_public_import_uses_official_sdk(monkeypatch, simu_ca):
     monkeypatch.setitem(sys.modules, "pocketx", sdk)
     # The unrelated PyPI package must never be used as the broker SDK.
     monkeypatch.setitem(sys.modules, "pocket", types.ModuleType("pocket"))
-    sys.modules.pop("finlab.online.brokers.pocket", None)
+    sys.modules.pop("finlab_online.brokers.pocket", None)
     monkeypatch.delenv("POCKET_SIMU_CA", raising=False)
     if simu_ca:
         monkeypatch.setenv("POCKET_SIMU_CA", simu_ca)
 
-    from finlab.online import PocketAccount
+    from finlab_online import PocketAccount
 
     account = PocketAccount(
         api_key="test-key", secret_key="test-password",

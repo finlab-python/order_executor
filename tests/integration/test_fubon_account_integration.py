@@ -19,9 +19,9 @@ pytest.importorskip("fubon_neo")
 # 導入測試基礎設施
 # 導入被測試的模組
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import TWSession, tw_session
-from finlab.online.enums import Action, OrderStatus
-from finlab.online.order_executor import OrderExecutor, Position
+from finlab_online.core.account import TWSession, tw_session
+from finlab_online.enums import Action, OrderStatus
+from finlab_online.order_executor import OrderExecutor, Position
 
 from ..fixtures.fubon_test_data import COMMON_TEST_SCENARIOS
 from ..conftest import FUBON_ENV_VARS, has_fubon_credentials, skip_if_no_fubon_credentials
@@ -43,7 +43,7 @@ class TestFubonAccountIntegration(IntegrationTestCase, AccountTestMixin):
         super().setUp()
         skip_during_fixing_session(self)
         try:
-            from finlab.online.fubon_account import FubonAccount
+            from finlab_online.fubon_account import FubonAccount
 
             self.fubon_account = FubonAccount()
             logging.info("富邦帳戶初始化成功")
@@ -396,7 +396,7 @@ class TestFubonAccountOrderExecutor(IntegrationTestCase):
         super().setUp()
         skip_during_fixing_session(self)
         try:
-            from finlab.online.fubon_account import FubonAccount
+            from finlab_online.fubon_account import FubonAccount
 
             self.fubon_account = FubonAccount()
         except Exception as e:

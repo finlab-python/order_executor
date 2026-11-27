@@ -20,16 +20,16 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from finlab.online.core.account import (
+from finlab_online.core.account import (
     Order,
     Stock,
     TWSession,
     TWStockAccount,
     tw_session,
 )
-from finlab.online.core.enums import Action, OrderCondition, OrderStatus
-from finlab.online.core.executor import OrderExecutor
-from finlab.online.core.position import Position
+from finlab_online.core.enums import Action, OrderCondition, OrderStatus
+from finlab_online.core.executor import OrderExecutor
+from finlab_online.core.position import Position
 
 from ..utils.mock_helpers import patch_utc_host_clock
 from .test_binance_order_safety_unit import _account as _binance_account
@@ -285,8 +285,8 @@ def _pocket(monkeypatch: Any) -> Broker:
 
 def _kgi(monkeypatch: Any) -> Broker:
     monkeypatch.setitem(sys.modules, "kgisuperpy", KGI_SDK)
-    sys.modules.pop("finlab.online.brokers.kgi", None)
-    module = importlib.import_module("finlab.online.brokers.kgi")
+    sys.modules.pop("finlab_online.brokers.kgi", None)
+    module = importlib.import_module("finlab_online.brokers.kgi")
     account = module.KGIAccount.__new__(module.KGIAccount)
     order = _Order()
     account.api = NS(
@@ -320,8 +320,8 @@ def _kgi(monkeypatch: Any) -> Broker:
 
 
 def _yuanta(monkeypatch: Any) -> Broker:
-    sys.modules.pop("finlab.online.brokers.yuanta", None)
-    module = importlib.import_module("finlab.online.brokers.yuanta")
+    sys.modules.pop("finlab_online.brokers.yuanta", None)
+    module = importlib.import_module("finlab_online.brokers.yuanta")
     account = module.YuantaAccount.__new__(module.YuantaAccount)
     account.account = ACCOUNT
     account._init_state()

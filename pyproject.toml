@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finlab-online"
+version = "1.0.0"
+description = "Open-source broker connectors and order executor for FinLab strategies."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "FinLab", email = "finlab.company@finlab.tw" }]
+# Runs on top of finlab (data, markets, positions). finlab still installs this
+# package itself for now, so declaring finlab here would make a cycle.
+dependencies = []
+
+[project.urls]
+Source = "https://github.com/finlab-python/order_executor"
+
+[tool.setuptools]
+# The repository root is the package: it is also checked out as finlab's submodule.
+package-dir = { "finlab_online" = "." }
+packages = ["finlab_online", "finlab_online.core", "finlab_online.brokers"]

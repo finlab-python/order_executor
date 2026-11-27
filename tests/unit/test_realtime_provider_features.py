@@ -4,9 +4,9 @@ import datetime
 import time
 from collections.abc import Callable
 
-from finlab.online.core.realtime_helpers import build_ticks_from_intraday_trade_rows
-from finlab.online.core.realtime_models import BidAsk, Tick
-from finlab.online.core.realtime_provider import RealtimeProvider
+from finlab_online.core.realtime_helpers import build_ticks_from_intraday_trade_rows
+from finlab_online.core.realtime_models import BidAsk, Tick
+from finlab_online.core.realtime_provider import RealtimeProvider
 
 
 class _DummyRealtimeProvider(RealtimeProvider):

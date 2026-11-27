@@ -12,9 +12,9 @@ from typing import Any
 from finlab.config import get_default_market
 from finlab.market import Market
 from finlab.markets.tw import TWMarket
-from finlab.online.core.enums import *
-from finlab.online.core.position import Position
-from finlab.online.core.realtime_normalizers import to_optional_float
+from finlab_online.core.enums import *
+from finlab_online.core.position import Position
+from finlab_online.core.realtime_normalizers import to_optional_float
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class Account(ABC):
     永豐證券
     ```py
     import os
-    from finlab.online.sinopac_account import SinopacAccount
+    from finlab_online.sinopac_account import SinopacAccount
 
 
     # 舊版請使用
@@ -168,7 +168,7 @@ class Account(ABC):
     ```
     玉山證券:
     ```py
-    from finlab.online.esun_account import EsunAccount
+    from finlab_online.esun_account import EsunAccount
     import os
     os.environ['ESUN_CONFIG_PATH'] = '玉山證券交易設定檔(config.ini.example)路徑'
     os.environ['ESUN_MARKET_API_KEY'] = '玉山證券的行情API Token'

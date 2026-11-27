@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 import unittest
 
-from finlab.online.base_account import Action
-from finlab.online.enums import OrderCondition
-from finlab.online.order_executor import OrderExecutor, Position
+from finlab_online.base_account import Action
+from finlab_online.enums import OrderCondition
+from finlab_online.order_executor import OrderExecutor, Position
 
 try:
     from schwab_account import SchwabAccount

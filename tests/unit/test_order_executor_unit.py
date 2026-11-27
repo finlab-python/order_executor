@@ -11,8 +11,8 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 
 # 導入被測試的模組
-from finlab.online.enums import Action, OrderCondition, OrderStatus
-from finlab.online.order_executor import OrderExecutor, Position
+from finlab_online.enums import Action, OrderCondition, OrderStatus
+from finlab_online.order_executor import OrderExecutor, Position
 
 # 導入測試基礎設施
 from ..utils.test_base import AccountTestMixin, MockTestCase
@@ -633,7 +633,7 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
                 oe.create_orders(**kwargs)
         self.mock_account.cancel_order.assert_not_called()
 
-    @patch("finlab.online.order_executor.data")
+    @patch("finlab_online.order_executor.data")
     def test_update_order_price(self, mock_data: Mock) -> None:
         """測試更新委託單價格"""
         # Mock 價格數據
@@ -662,7 +662,7 @@ class TestOrderExecutorUnit(MockTestCase, AccountTestMixin):
         # 應該調用 update_order 兩次
         self.assertEqual(self.mock_account.update_order.call_count, 2)
 
-    @patch("finlab.online.order_executor.data")
+    @patch("finlab_online.order_executor.data")
     def test_update_order_price_buy_only_sell_only(self, mock_data: Mock) -> None:
         """測試 update_order_price 只更新買單或只更新賣單"""
         mock_price_data = Mock()
@@ -728,7 +728,7 @@ class TestCalculatePriceWithExtraBid(unittest.TestCase):
 
     def test_calculate_price_with_extra_bid_positive(self) -> None:
         """測試正向額外競價"""
-        from finlab.online.order_executor import calculate_price_with_extra_bid
+        from finlab_online.order_executor import calculate_price_with_extra_bid
 
         # 測試 5% 額外競價
         result = calculate_price_with_extra_bid(100.0, 0.05)
@@ -736,7 +736,7 @@ class TestCalculatePriceWithExtraBid(unittest.TestCase):
 
     def test_calculate_price_with_extra_bid_negative(self) -> None:
         """測試負向額外競價（折扣）"""
-        from finlab.online.order_executor import calculate_price_with_extra_bid
+        from finlab_online.order_executor import calculate_price_with_extra_bid
 
         # 測試 -3% 折扣  # noqa: ERA001
         result = calculate_price_with_extra_bid(100.0, -0.03)
@@ -744,7 +744,7 @@ class TestCalculatePriceWithExtraBid(unittest.TestCase):
 
     def test_calculate_price_with_extra_bid_zero(self) -> None:
         """測試零額外競價"""
-        from finlab.online.order_executor import calculate_price_with_extra_bid
+        from finlab_online.order_executor import calculate_price_with_extra_bid
 
         result = calculate_price_with_extra_bid(100.0, 0.0)
         self.assertAlmostEqual(result, 100.0, places=2)

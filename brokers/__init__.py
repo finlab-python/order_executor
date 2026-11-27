@@ -3,17 +3,17 @@
 from importlib import import_module
 
 _EXPORTS: dict[str, tuple[str, str]] = {
-    "BinanceAccount": ("finlab.online.brokers.binance", "BinanceAccount"),
-    "EsunAccount": ("finlab.online.brokers.esun", "EsunAccount"),
-    "FubonAccount": ("finlab.online.brokers.fubon", "FubonAccount"),
-    "FugleAccount": ("finlab.online.brokers.fugle", "FugleAccount"),
-    "KGIAccount": ("finlab.online.brokers.kgi", "KGIAccount"),
-    "MasterlinkAccount": ("finlab.online.brokers.masterlink", "MasterlinkAccount"),
-    "PocketAccount": ("finlab.online.brokers.pocket", "PocketAccount"),
-    "SchwabAccount": ("finlab.online.brokers.schwab", "SchwabAccount"),
-    "SinopacAccount": ("finlab.online.brokers.sinopac", "SinopacAccount"),
-    "TaishinAccount": ("finlab.online.brokers.taishin", "TaishinAccount"),
-    "YuantaAccount": ("finlab.online.brokers.yuanta", "YuantaAccount"),
+    "BinanceAccount": ("finlab_online.brokers.binance", "BinanceAccount"),
+    "EsunAccount": ("finlab_online.brokers.esun", "EsunAccount"),
+    "FubonAccount": ("finlab_online.brokers.fubon", "FubonAccount"),
+    "FugleAccount": ("finlab_online.brokers.fugle", "FugleAccount"),
+    "KGIAccount": ("finlab_online.brokers.kgi", "KGIAccount"),
+    "MasterlinkAccount": ("finlab_online.brokers.masterlink", "MasterlinkAccount"),
+    "PocketAccount": ("finlab_online.brokers.pocket", "PocketAccount"),
+    "SchwabAccount": ("finlab_online.brokers.schwab", "SchwabAccount"),
+    "SinopacAccount": ("finlab_online.brokers.sinopac", "SinopacAccount"),
+    "TaishinAccount": ("finlab_online.brokers.taishin", "TaishinAccount"),
+    "YuantaAccount": ("finlab_online.brokers.yuanta", "YuantaAccount"),
 }
 
 __all__ = [

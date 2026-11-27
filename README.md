@@ -1,6 +1,18 @@
-# finlab.online
+# finlab-online
 
-Multi-broker order execution framework for automated portfolio rebalancing. Part of the [FinLab](https://doc.finlab.tw/) quantitative trading package.
+Open-source broker connectors and order executor for [FinLab](https://finlab.finance) strategies: turn a strategy's positions into orders on your own brokerage account, from your own machine, with your own credentials.
+
+FinLab 策略的開源下單套件：在自己的電腦、用自己的券商帳號，把策略部位轉成委託。
+
+## Install
+
+```bash
+pip install finlab finlab-online
+```
+
+Code written for `finlab.online` keeps working unchanged: `from finlab.online import OrderExecutor` and the older paths such as `finlab.online.order_executor` and `finlab.online.sinopac_account` load this package. The broker SDKs (for example `shioaji` for Sinopac) are installed separately, as before.
+
+原本寫 `finlab.online` 的程式不用改，裝好這個套件就能照常執行。
 
 ## Supported Brokers
 
@@ -18,7 +30,7 @@ Multi-broker order execution framework for automated portfolio rebalancing. Part
 ## Package Structure
 
 ```
-finlab/online/
+finlab_online/
 ├── core/               # Abstract interfaces, position, executor, enums, realtime
 ├── brokers/            # Broker-specific Account implementations
 ├── dashboard.py        # Cloud-connected multi-strategy rebalancing engine

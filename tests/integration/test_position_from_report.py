@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from finlab import auth, data
-from finlab.online.order_executor import Position
+from finlab_online.order_executor import Position
 
 sim = pytest.importorskip(
     "finlab.backtest",

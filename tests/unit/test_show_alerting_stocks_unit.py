@@ -7,11 +7,11 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from finlab.online.core.executor import (
+from finlab_online.core.executor import (
     SINOTRADE_ALERTING_URLS,
     SINOTRADE_SYMBOL_COLUMN,
 )
-from finlab.online.order_executor import OrderExecutor, Position
+from finlab_online.order_executor import OrderExecutor, Position
 
 pytestmark = pytest.mark.unit
 
@@ -33,9 +33,9 @@ def _executor(target: dict[str, float]) -> OrderExecutor:
 
 def _run(oe: OrderExecutor, read_html: Mock | None = None) -> Mock:
     get = Mock(return_value=Mock(text=ALERTING_HTML))
-    with patch("finlab.online.core.executor.requests.get", get), patch(
-        "finlab.online.core.executor.data.get", return_value=CLOSE
-    ), patch("finlab.online.core.executor.pd.read_html", read_html or pd.read_html):
+    with patch("finlab_online.core.executor.requests.get", get), patch(
+        "finlab_online.core.executor.data.get", return_value=CLOSE
+    ), patch("finlab_online.core.executor.pd.read_html", read_html or pd.read_html):
         oe.show_alerting_stocks()
     return get
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from finlab.online.brokers.fugle import (
+from finlab_online.brokers.fugle import (
     FugleAccount,
     create_finlab_order,
     to_finlab_stock,

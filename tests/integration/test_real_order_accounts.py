@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from finlab import data
-from finlab.online.order_executor import OrderExecutor, Position
+from finlab_online.order_executor import OrderExecutor, Position
 
 from .real_order_helpers import (
     run_account_order_flow,
@@ -13,12 +13,12 @@ from .real_order_helpers import (
 )
 
 try:
-    from finlab.online.sinopac_account import SinopacAccount
+    from finlab_online.sinopac_account import SinopacAccount
 except ImportError:
     SinopacAccount = None
 
 try:
-    from finlab.online.fugle_account import FugleAccount
+    from finlab_online.fugle_account import FugleAccount
 except ImportError:
     FugleAccount = None
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import types
 from typing import Any
 
-from finlab.online.core.enums import Action, OrderStatus
-from finlab.online.core.realtime_models import ConnectionState
+from finlab_online.core.enums import Action, OrderStatus
+from finlab_online.core.realtime_models import ConnectionState
 
 from ..fixtures.fubon_mocks import import_fubon_module_with_fake_sdk
 

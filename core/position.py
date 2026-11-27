@@ -13,8 +13,8 @@ import pandas as pd
 
 from finlab import config
 from finlab.compat import normalize_position_dict, resolve_position_entry_symbol
-from finlab.online.core.enums import *
-from finlab.online.core.utils import greedy_allocation
+from finlab_online.core.enums import *
+from finlab_online.core.utils import greedy_allocation
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ class Position:
         Examples:
             設計部位，持有一張和 100 股 1101
             ```py
-            from finlab.online.order_executor import Position
+            from finlab_online.order_executor import Position
 
             Position({'1101': 1.1})
             ```
@@ -182,7 +182,7 @@ class Position:
 
             將兩個部位相加
             ```py
-            from finlab.online.order_executor import Position
+            from finlab_online.order_executor import Position
 
             p1 = Position({'1101': 1})
             p2 = Position({'2330': 1})
@@ -229,8 +229,8 @@ class Position:
         Attributes:
             position (`list` of `dict`): 股票詳細部位
               ```py
-              from finlab.online.enums import OrderCondition
-              from finlab.online.order_executor import Position
+              from finlab_online.enums import OrderCondition
+              from finlab_online.order_executor import Position
 
               Position.from_list(
               [{
@@ -331,7 +331,7 @@ class Position:
             odd_lot (bool): 是否考慮零股。為 False 時只買整張，資金不足一張的股票會是 0 股，
                 並發出 `ZeroShareAllocationWarning`。
             board_lot_size (None 或 int): 一張股票等於幾股
-            allocation (function): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。
+            allocation (function): 資產配置演算法選定，預設為`finlab_online.utils.greedy_allocation`（最大資金部屬貪婪法）。
                 呼叫方式為 `allocation(weights, price * board_lot_size, effective_fund * 10**precision)`，
                 其中 effective_fund 在 leverage > 1 時為 fund * leverage，否則為 fund；
                 precision 為依零股與 board_lot_size 調整後的有效精度。
@@ -349,7 +349,7 @@ class Position:
         Examples:
               例如，用 100 萬的資金，全部投入，持有 1101 和 2330 各一半：
               ```py
-              from finlab.online.order_executor import Position
+              from finlab_online.order_executor import Position
 
               Position.from_weight({
               '1101': 0.5,
@@ -558,7 +558,7 @@ class Position:
             price (pd.Series or `dict` of `float`): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
             odd_lot (bool): 是否考慮零股。預設為 False，只使用整張操作。
             board_lot_size (int): 一張股票等於幾股。預設為1000，一張等於1000股。
-            allocation (func): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。
+            allocation (func): 資產配置演算法選定，預設為`finlab_online.utils.greedy_allocation`（最大資金部屬貪婪法）。
             margin_trading (bool): 做多部位是否使用融資
             short_selling (bool): 做空部位是否使用融券
             day_trading_long (bool): 做多部位為當沖先做多
@@ -568,7 +568,7 @@ class Position:
         !!! example
             ```py
             from finlab import backtest
-            from finlab.online.order_executor import Position
+            from finlab_online.order_executor import Position
 
             report1 = backtest.sim(...)
             report2 = backtest.sim(...)
