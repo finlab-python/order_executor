@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from finlab.online.core.enums import Action, OrderCondition
+from finlab_online.core.enums import Action, OrderCondition
 
 from ..fixtures.fubon_mocks import import_fubon_module_with_fake_sdk
 from ..utils.mock_helpers import patch_utc_host_clock

@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from finlab.online.core.enums import Action
+from finlab_online.core.enums import Action
 
 FILTERS = [
     {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
@@ -79,8 +79,8 @@ def _account(monkeypatch: Any) -> Any:
         ("cachetools.func", cachetools.func),
     ]:
         monkeypatch.setitem(sys.modules, name, module)
-    sys.modules.pop("finlab.online.brokers.binance", None)
-    module = importlib.import_module("finlab.online.brokers.binance")
+    sys.modules.pop("finlab_online.brokers.binance", None)
+    module = importlib.import_module("finlab_online.brokers.binance")
 
     account = module.BinanceAccount.__new__(module.BinanceAccount)
     account.simple_client = module.BinanceSimpleClient(_FakeClient())
@@ -156,8 +156,8 @@ def test_best_price_limit_is_rejected(monkeypatch: Any) -> None:
 
 
 def test_get_orders_use_finlab_types(monkeypatch: Any) -> None:
-    from finlab.online.core.executor import OrderExecutor
-    from finlab.online.core.position import Position
+    from finlab_online.core.executor import OrderExecutor
+    from finlab_online.core.position import Position
 
     account = _account(monkeypatch)
     client = account.simple_client.client
@@ -187,8 +187,8 @@ def test_get_orders_use_finlab_types(monkeypatch: Any) -> None:
     ids=["create_orders", "execute_orders"],
 )
 def test_best_price_limit_rejected_before_cancelling(monkeypatch: Any, call: Any) -> None:
-    from finlab.online.core.executor import OrderExecutor
-    from finlab.online.core.position import Position
+    from finlab_online.core.executor import OrderExecutor
+    from finlab_online.core.position import Position
 
     account = _account(monkeypatch)
     client = account.simple_client.client

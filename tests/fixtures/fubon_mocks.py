@@ -13,7 +13,7 @@ from unittest.mock import Mock, _patch, _patch_dict, patch
 from ..utils.mock_helpers import MockBuilder, create_mock_result
 
 if TYPE_CHECKING:
-    from finlab.online.brokers.fubon import FubonAccount
+    from finlab_online.brokers.fubon import FubonAccount
 
 
 class FubonSDKMock:
@@ -198,7 +198,7 @@ class FubonAccountMockHelper:
         if sdk_mock is None:
             sdk_mock = FubonSDKMock().get_sdk()
 
-        with patch("finlab.online.fubon_account.FubonSDK") as mock_sdk_class:
+        with FubonAccountMockHelper.patch_fubon_sdk() as mock_sdk_class:
             mock_sdk_class.return_value = sdk_mock
 
             # Mock 環境變數
@@ -210,7 +210,7 @@ class FubonAccountMockHelper:
                     "FUBON_CERT_PATH": "/test/path/cert.pfx",
                 },
             ):
-                from finlab.online.fubon_account import FubonAccount
+                from finlab_online.fubon_account import FubonAccount
 
                 account = FubonAccount()
                 account.sdk = sdk_mock  # 確保 SDK 是我們的 mock
@@ -219,7 +219,7 @@ class FubonAccountMockHelper:
     @staticmethod
     def patch_fubon_sdk() -> _patch[Mock]:
         """返回可用於裝飾器的 FubonSDK patch"""
-        return patch("finlab.online.fubon_account.FubonSDK")
+        return patch("finlab_online.fubon_account.FubonSDK")
 
     @staticmethod
     def patch_environment() -> _patch_dict:
@@ -260,6 +260,6 @@ def import_fubon_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     monkeypatch.setitem(sys.modules, "fubon_neo", package_module)
     monkeypatch.setitem(sys.modules, "fubon_neo.sdk", sdk_module)
     monkeypatch.setitem(sys.modules, "fubon_neo.constant", constant_module)
-    sys.modules.pop("finlab.online.brokers.fubon", None)
+    sys.modules.pop("finlab_online.brokers.fubon", None)
 
-    return importlib.import_module("finlab.online.brokers.fubon")
+    return importlib.import_module("finlab_online.brokers.fubon")

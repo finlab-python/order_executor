@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from finlab.online.core.realtime_models import Tick
-from finlab.online.core.realtime_normalizers import (
+from finlab_online.core.realtime_models import Tick
+from finlab_online.core.realtime_normalizers import (
     calculate_tick_pct_change,
     get_first_valid_float,
 )

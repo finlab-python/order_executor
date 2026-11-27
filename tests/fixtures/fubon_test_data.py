@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from finlab.online.enums import Action, OrderCondition
+from finlab_online.enums import Action, OrderCondition
 
 
 class FubonTestData:

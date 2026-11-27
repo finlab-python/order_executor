@@ -7,7 +7,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from finlab.online.core.enums import Action, OrderCondition, OrderStatus
+from finlab_online.core.enums import Action, OrderCondition, OrderStatus
 
 from ..utils.mock_helpers import patch_utc_host_clock
 
@@ -178,8 +178,8 @@ def _fake_sdk(trader):
 @pytest.fixture
 def make_account(monkeypatch: pytest.MonkeyPatch):
     def make(utc_time: tuple = (2, 0, 0)):
-        sys.modules.pop("finlab.online.brokers.yuanta", None)
-        module = importlib.import_module("finlab.online.brokers.yuanta")
+        sys.modules.pop("finlab_online.brokers.yuanta", None)
+        module = importlib.import_module("finlab_online.brokers.yuanta")
         patch_utc_host_clock(monkeypatch, module, utc_time)
         monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
         acc = module.YuantaAccount.__new__(module.YuantaAccount)

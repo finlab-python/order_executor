@@ -36,7 +36,9 @@ __all__ = [
 
 def __getattr__(name: str) -> type:
     if name == "PocketAccount":
-        return importlib.import_module("finlab.online.brokers.pocket").PocketAccount
+        from .brokers.pocket import PocketAccount
+
+        return PocketAccount
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -44,22 +46,25 @@ def __getattr__(name: str) -> type:
 # their real locations.  Broker modules load lazily — heavy deps like
 # shioaji are only pulled in when actually used.
 _MODULE_ALIASES: dict[str, str] = {
-    "finlab.online.base_account": "finlab.online.core.account",
-    "finlab.online.order_executor": "finlab.online.core.executor",
-    "finlab.online.enums": "finlab.online.core.enums",
-    "finlab.online.position": "finlab.online.core.position",
-    "finlab.online.utils": "finlab.online.core.utils",
-    "finlab.online.sinopac_account": "finlab.online.brokers.sinopac",
-    "finlab.online.fugle_account": "finlab.online.brokers.fugle",
-    "finlab.online.esun_account": "finlab.online.brokers.esun",
-    "finlab.online.fubon_account": "finlab.online.brokers.fubon",
-    "finlab.online.kgi_account": "finlab.online.brokers.kgi",
-    "finlab.online.masterlink_account": "finlab.online.brokers.masterlink",
-    "finlab.online.taishin_account": "finlab.online.brokers.taishin",
-    "finlab.online.yuanta_account": "finlab.online.brokers.yuanta",
-    "finlab.online.binance_account": "finlab.online.brokers.binance",
-    "finlab.online.pocket_account": "finlab.online.brokers.pocket",
-    "finlab.online.schwab_account": "finlab.online.brokers.schwab",
+    f"{__name__}.{old}": f"{__name__}.{new}"
+    for old, new in {
+        "base_account": "core.account",
+        "order_executor": "core.executor",
+        "enums": "core.enums",
+        "position": "core.position",
+        "utils": "core.utils",
+        "sinopac_account": "brokers.sinopac",
+        "fugle_account": "brokers.fugle",
+        "esun_account": "brokers.esun",
+        "fubon_account": "brokers.fubon",
+        "kgi_account": "brokers.kgi",
+        "masterlink_account": "brokers.masterlink",
+        "taishin_account": "brokers.taishin",
+        "yuanta_account": "brokers.yuanta",
+        "binance_account": "brokers.binance",
+        "pocket_account": "brokers.pocket",
+        "schwab_account": "brokers.schwab",
+    }.items()
 }
 
 

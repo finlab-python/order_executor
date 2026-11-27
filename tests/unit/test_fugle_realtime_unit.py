@@ -37,9 +37,9 @@ def _import_fugle_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleType:
     monkeypatch.setitem(sys.modules, "esun_trade.order", order_module)
     monkeypatch.setitem(sys.modules, "esun_trade.constant", constant_module)
     monkeypatch.setitem(sys.modules, "esun_trade.util", util_module)
-    sys.modules.pop("finlab.online.brokers.fugle", None)
+    sys.modules.pop("finlab_online.brokers.fugle", None)
 
-    module = importlib.import_module("finlab.online.brokers.fugle")
+    module = importlib.import_module("finlab_online.brokers.fugle")
     return importlib.reload(module)
 
 

@@ -16,9 +16,9 @@ import pandas as pd
 import pytest
 
 from finlab.dataframe import FinlabDataFrame
-from finlab.online.enums import OrderCondition
-from finlab.online.order_executor import Position
-from finlab.online.position import ZeroShareAllocationWarning
+from finlab_online.enums import OrderCondition
+from finlab_online.order_executor import Position
+from finlab_online.position import ZeroShareAllocationWarning
 
 
 def test_position_json_roundtrip(tmp_path: Path) -> None:

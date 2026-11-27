@@ -6,8 +6,8 @@ import types
 
 import pytest
 
-from finlab.online.core.enums import Action, OrderStatus
-from finlab.online.core.realtime_models import ConnectionState
+from finlab_online.core.enums import Action, OrderStatus
+from finlab_online.core.realtime_models import ConnectionState
 
 
 class _FakeQuote:
@@ -141,9 +141,9 @@ def _import_sinopac_module_with_fake_sdk(
     monkeypatch.setitem(sys.modules, "shioaji.constant", constant_module)
     monkeypatch.setitem(sys.modules, "shioaji.order", order_module)
     monkeypatch.setitem(sys.modules, "shioaji.position", position_module)
-    sys.modules.pop("finlab.online.brokers.sinopac", None)
+    sys.modules.pop("finlab_online.brokers.sinopac", None)
 
-    module = importlib.import_module("finlab.online.brokers.sinopac")
+    module = importlib.import_module("finlab_online.brokers.sinopac")
     return importlib.reload(module)
 
 

@@ -12,9 +12,9 @@ from typing import Any
 from finlab.config import get_default_market
 from finlab.market import Market
 from finlab.markets.tw import TWMarket
-from finlab.online.core.enums import *
-from finlab.online.core.position import Position
-from finlab.online.core.realtime_normalizers import to_optional_float
+from .enums import *
+from .position import Position
+from .realtime_normalizers import to_optional_float
 
 logger = logging.getLogger(__name__)
 

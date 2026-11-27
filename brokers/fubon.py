@@ -19,19 +19,19 @@ from fubon_neo.sdk import Order as FBOrder
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import (
+from ..core.account import (
     Order,
     Stock,
     TWSession,
     TWStockAccount,
 )
-from finlab.online.core.enums import *
-from finlab.online.core.position import Position
-from finlab.online.core.realtime_helpers import (
+from ..core.enums import *
+from ..core.position import Position
+from ..core.realtime_helpers import (
     build_bidask_from_quote,
     build_ticks_from_intraday_trade_rows,
 )
-from finlab.online.core.realtime_models import (
+from ..core.realtime_models import (
     BalanceUpdate,
     BidAsk,
     ConnectionState,
@@ -39,12 +39,12 @@ from finlab.online.core.realtime_models import (
     OrderUpdate,
     Tick,
 )
-from finlab.online.core.realtime_normalizers import (
+from ..core.realtime_normalizers import (
     get_field_value,
     get_first_valid_float,
     to_optional_float,
 )
-from finlab.online.core.realtime_provider import RealtimeProvider
+from ..core.realtime_provider import RealtimeProvider
 
 # 常數定義
 STOCK_LOT_SIZE = 1000  # 一張股票的股數

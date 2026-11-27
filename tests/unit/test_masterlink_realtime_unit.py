@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from finlab.online.core.account import Order
-from finlab.online.core.enums import Action, OrderCondition, OrderStatus
+from finlab_online.core.account import Order
+from finlab_online.core.enums import Action, OrderCondition, OrderStatus
 
 from ..utils.mock_helpers import patch_utc_host_clock
 
@@ -142,9 +142,9 @@ def _import_masterlink_module_with_fake_sdk(monkeypatch: Any) -> types.ModuleTyp
     fake_sdk_module.OrderType = types.SimpleNamespace(Stock="Stock")
 
     monkeypatch.setitem(sys.modules, "taishin_sdk", fake_sdk_module)
-    sys.modules.pop("finlab.online.brokers.masterlink", None)
+    sys.modules.pop("finlab_online.brokers.masterlink", None)
 
-    module = importlib.import_module("finlab.online.brokers.masterlink")
+    module = importlib.import_module("finlab_online.brokers.masterlink")
     return importlib.reload(module)
 
 
@@ -690,8 +690,8 @@ def test_masterlink_reprice_by_replace_raises_on_failure(
 def test_masterlink_fixing_session_skips_board_lots_not_filled_at_close(
     monkeypatch: Any, kwargs: dict[str, Any], placed: list[tuple[str, str]]
 ) -> None:
-    from finlab.online.core.executor import OrderExecutor
-    from finlab.online.core.position import Position
+    from finlab_online.core.executor import OrderExecutor
+    from finlab_online.core.position import Position
 
     module, account = _new_masterlink_account(monkeypatch)
     patch_utc_host_clock(monkeypatch, module, (6, 10))  # 台北 14:10
@@ -761,15 +761,15 @@ def test_taishin_login_reads_taishin_env_then_masterlink(monkeypatch: Any) -> No
 
 def test_taishin_account_is_masterlink_account(monkeypatch: Any) -> None:
     module = _import_masterlink_module_with_fake_sdk(monkeypatch)
-    for name in ("finlab.online.brokers.taishin", "finlab.online.taishin_account"):
+    for name in ("finlab_online.brokers.taishin", "finlab_online.taishin_account"):
         monkeypatch.delitem(sys.modules, name, raising=False)
-    from finlab.online.taishin_account import TaishinAccount
+    from finlab_online.taishin_account import TaishinAccount
 
     assert TaishinAccount is module.MasterlinkAccount
 
 
 def test_missing_taishin_sdk_says_where_to_download(monkeypatch: Any) -> None:
     monkeypatch.setitem(sys.modules, "taishin_sdk", None)
-    monkeypatch.delitem(sys.modules, "finlab.online.brokers.masterlink")
+    monkeypatch.delitem(sys.modules, "finlab_online.brokers.masterlink")
     with pytest.raises(ModuleNotFoundError, match="taishin_sdk.*download-sdk"):
-        importlib.import_module("finlab.online.brokers.masterlink")
+        importlib.import_module("finlab_online.brokers.masterlink")

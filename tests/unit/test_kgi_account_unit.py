@@ -10,7 +10,7 @@ from types import SimpleNamespace as NS
 import pandas as pd
 import pytest
 
-from finlab.online.core.enums import Action, OrderCondition, OrderStatus
+from finlab_online.core.enums import Action, OrderCondition, OrderStatus
 
 from ..utils.mock_helpers import patch_utc_host_clock
 
@@ -79,8 +79,8 @@ class _Order:
 def make(monkeypatch):
     def make(utc_time=(2, 0, 0)):
         monkeypatch.setitem(sys.modules, "kgisuperpy", SDK)
-        sys.modules.pop("finlab.online.brokers.kgi", None)
-        module = importlib.import_module("finlab.online.brokers.kgi")
+        sys.modules.pop("finlab_online.brokers.kgi", None)
+        module = importlib.import_module("finlab_online.brokers.kgi")
         patch_utc_host_clock(monkeypatch, module, utc_time)
         # 假 SDK 同步回報，_ack 不必真的等
         monkeypatch.setattr(
@@ -117,7 +117,7 @@ def test_login_selects_stock_account_in_production(make, monkeypatch):
     monkeypatch.setattr(SDK, "login", login, raising=False)
     monkeypatch.setenv("KGI_PERSON_ID", "A123456789")
     monkeypatch.setenv("KGI_PASSWORD", "pw")
-    from finlab.online.kgi_account import KGIAccount
+    from finlab_online.kgi_account import KGIAccount
 
     KGIAccount()
     assert (api.args, api.selected) == (("A123456789", "pw", False), ["S1"])

@@ -13,10 +13,10 @@ from typing import Any
 
 from finlab import data
 from finlab.markets.tw import TWMarket
-from finlab.online.core.account import Order, Stock, TWSession, TWStockAccount
-from finlab.online.core.enums import Action, OrderCondition, OrderStatus
-from finlab.online.core.position import Position
-from finlab.online.core.realtime_normalizers import calculate_tick_pct_change
+from ..core.account import Order, Stock, TWSession, TWStockAccount
+from ..core.enums import Action, OrderCondition, OrderStatus
+from ..core.position import Position
+from ..core.realtime_normalizers import calculate_tick_pct_change
 
 logger = logging.getLogger(__name__)
 

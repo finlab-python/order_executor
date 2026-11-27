@@ -13,8 +13,8 @@ import pandas as pd
 
 from finlab import config
 from finlab.compat import normalize_position_dict, resolve_position_entry_symbol
-from finlab.online.core.enums import *
-from finlab.online.core.utils import greedy_allocation
+from .enums import *
+from .utils import greedy_allocation
 
 logger = logging.getLogger(__name__)
 

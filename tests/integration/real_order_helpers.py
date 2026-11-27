@@ -6,10 +6,10 @@ import time
 import unittest
 from typing import Any
 
-from finlab.online.base_account import Action
-from finlab.online.core.account import Account
-from finlab.online.enums import OrderStatus
-from finlab.online.order_executor import OrderExecutor, Position
+from finlab_online.base_account import Action
+from finlab_online.core.account import Account
+from finlab_online.enums import OrderStatus
+from finlab_online.order_executor import OrderExecutor, Position
 
 
 def verify_order_executor_flow(

@@ -18,7 +18,7 @@ pytest.importorskip("fubon_neo")
 from fubon_neo.constant import BSAction, OrderType
 
 # 導入被測試的模組
-from finlab.online.enums import Action, OrderCondition, OrderStatus
+from finlab_online.enums import Action, OrderCondition, OrderStatus
 
 from ..fixtures.fubon_mocks import FubonAccountMockHelper, FubonSDKMock
 from ..utils.mock_helpers import MockBuilder
@@ -40,7 +40,7 @@ class TestFubonAccountUnit(MockTestCase, AccountTestMixin):
         ):
             mock_sdk_class.return_value = self.sdk_mock.get_sdk()
 
-            from finlab.online.fubon_account import FubonAccount
+            from finlab_online.fubon_account import FubonAccount
 
             account = FubonAccount()
 
@@ -57,7 +57,7 @@ class TestFubonAccountUnit(MockTestCase, AccountTestMixin):
         """測試缺少憑證時初始化失敗"""
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaises(ValueError) as context:
-                from finlab.online.fubon_account import FubonAccount
+                from finlab_online.fubon_account import FubonAccount
 
                 FubonAccount()
 
@@ -74,7 +74,7 @@ class TestFubonAccountUnit(MockTestCase, AccountTestMixin):
             mock_sdk_class.return_value = sdk_mock
 
             with self.assertRaises(Exception) as context:
-                from finlab.online.fubon_account import FubonAccount
+                from finlab_online.fubon_account import FubonAccount
 
                 FubonAccount()
 
@@ -368,7 +368,7 @@ class TestFubonAccountErrorHandling(MockTestCase):
 
     def test_handle_exceptions_decorator(self) -> None:
         """測試 handle_exceptions 裝飾器"""
-        from finlab.online.fubon_account import handle_exceptions
+        from finlab_online.fubon_account import handle_exceptions
 
         @handle_exceptions(default_return="default_value", log_prefix="test: ")
         def test_function() -> None:
