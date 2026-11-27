@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finlab-online"
-version = "1.0.0"
+version = "1.1.0"
 description = "Open-source broker connectors and order executor for FinLab strategies."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,4 +21,9 @@ Source = "https://github.com/finlab-python/order_executor"
 [tool.setuptools]
 # The repository root is the package: it is also checked out as finlab's submodule.
 package-dir = { "finlab_online" = "." }
-packages = ["finlab_online", "finlab_online.core", "finlab_online.brokers"]
+packages = [
+    "finlab_online",
+    "finlab_online.brokers",
+    "finlab_online.core",
+    "finlab_online.portfolio",
+]

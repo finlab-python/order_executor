@@ -10,9 +10,9 @@ FinLab 策略的開源下單套件：在自己的電腦、用自己的券商帳�
 pip install finlab finlab-online
 ```
 
-Code written for `finlab.online` keeps working unchanged: `from finlab.online import OrderExecutor` and the older paths such as `finlab.online.order_executor` and `finlab.online.sinopac_account` load this package. The broker SDKs (for example `shioaji` for Sinopac) are installed separately, as before.
+Code written for `finlab.online` keeps working unchanged: `from finlab.online import OrderExecutor` and the older paths such as `finlab.online.order_executor` and `finlab.online.sinopac_account` load this package, and so do `from finlab.portfolio import PortfolioSyncManager` and `TradeReview.from_account()`. The broker SDKs (for example `shioaji` for Sinopac) are installed separately, as before.
 
-原本寫 `finlab.online` 的程式不用改，裝好這個套件就能照常執行。
+原本寫 `finlab.online`、`PortfolioSyncManager` 或 `TradeReview.from_account()` 的程式不用改，裝好這個套件就能照常執行。
 
 ## Supported Brokers
 
@@ -33,6 +33,7 @@ Code written for `finlab.online` keeps working unchanged: `from finlab.online im
 finlab_online/
 ├── core/               # Abstract interfaces, position, executor, enums, realtime
 ├── brokers/            # Broker-specific Account implementations
+├── portfolio/          # PortfolioSyncManager: keep a finlab Portfolio in sync with an account
 ├── dashboard.py        # Cloud-connected multi-strategy rebalancing engine
 ├── panel.py            # Jupyter notebook GUI for interactive order placement
 └── tests/              # Unit and integration tests
