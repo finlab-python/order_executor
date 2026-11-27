@@ -201,15 +201,13 @@ def _rebuild_updated_positions(
             free_value * weight / total_update_weight if total_update_weight != 0 else 0
         )
 
-        market = allocation.market
-        next_trading_time = market.market_close_at_timestamp(
+        next_trading_time = allocation.market.market_close_at_timestamp(
             allocation.next_trading_date
         )
+
+        market = allocation.market
         last_market_timestamp = market.market_close_at_timestamp(
             market.get_price("close").index[-1]
-        )
-        trade_at = (
-            allocation.trade_at if isinstance(allocation.trade_at, str) else "close"
         )
 
         # Position.from_report follows the same rule to pick its target.
@@ -247,8 +245,12 @@ def _rebuild_updated_positions(
             "position": pos,
             "allocation": fund,
             "weight": weight,
-            "entry_at": trade_at,
-            "exit_at": trade_at,
+            "entry_at": allocation.trade_at
+            if isinstance(allocation.trade_at, str)
+            else "close",
+            "exit_at": allocation.trade_at
+            if isinstance(allocation.trade_at, str)
+            else "close",
             "stop": [],
             "stop_loss": allocation.stop_loss,
             "take_profit": allocation.take_profit
@@ -257,7 +259,7 @@ def _rebuild_updated_positions(
             "trail_stop": allocation.trail_stop
             if allocation.trail_stop == allocation.trail_stop
             else None,
-            "market": market.get_name(),
+            "market": allocation.market.get_name(),
             "last_market_timestamp": last_market_timestamp.isoformat(),
         }
         if applied is not None:

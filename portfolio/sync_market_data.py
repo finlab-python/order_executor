@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import pandas as pd
-    from finlab.market import Market
     from finlab.portfolio.portfolio import PositionScheduler
     from finlab.schemas import PositionEntryDict, StrategyPositionDataDict
 
@@ -19,9 +18,6 @@ from finlab.markets import get_market_by_name
 from finlab.markets.tw import TWMarket
 
 logger = logging.getLogger(__name__)
-
-# Shares per position unit for symbols without a strategy market (TW board lot).
-DEFAULT_LOT = 1000
 
 __all__ = [
     "calc_position_value",
@@ -79,10 +75,7 @@ def compute_existing_asset_value(
             sid_market = TWMarket()
 
         sid_lot = sid_market.get_odd_lot()
-        close = sid_market.get_price("close", adj=False)
-        symbols = [resolve_position_entry_symbol(p) for p in info["position"]]
-        # Fill only the held symbols, not the whole market table.
-        sid_price = close[close.columns.intersection(symbols)].ffill().iloc[-1]
+        sid_price = sid_market.get_price("close", adj=False).ffill().iloc[-1]
         asset_value += calc_position_value(
             info["position"], lot=sid_lot, price=sid_price
         )
@@ -90,20 +83,14 @@ def compute_existing_asset_value(
     return asset_value
 
 
-def _market_snapshot(
-    market: Market,
-) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
-    return (
-        market.get_reference_price(),
-        market.get_price("close", adj=False).iloc[-1].to_dict(),
-        market.get_price("volume", adj=False).iloc[-1].to_dict(),
-    )
-
-
 def fetch_tw_market_snapshot() -> tuple[
     dict[str, float], dict[str, float], dict[str, float]
 ]:
-    return _market_snapshot(TWMarket())
+    market = TWMarket()
+    ref_price = market.get_reference_price()
+    close_price = market.get_price("close", adj=False).iloc[-1].to_dict()
+    volume = market.get_price("volume", adj=False).iloc[-1].to_dict()
+    return ref_price, close_price, volume
 
 
 def fetch_portfolio_market_snapshot(
@@ -123,7 +110,12 @@ def fetch_portfolio_market_snapshot(
     for name, symbols in symbols_by_market.items():
         if name == "tw_stock":
             continue
-        market_snapshot = _market_snapshot(get_market_by_name(name))
+        market = get_market_by_name(name)
+        market_snapshot = (
+            market.get_reference_price(),
+            market.get_price("close", adj=False).iloc[-1].to_dict(),
+            market.get_price("volume", adj=False).iloc[-1].to_dict(),
+        )
         for combined, quotes in zip(snapshot, market_snapshot, strict=True):
             combined.update(
                 (symbol, quotes[symbol]) for symbol in symbols if symbol in quotes

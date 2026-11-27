@@ -19,10 +19,20 @@ if TYPE_CHECKING:
 
 from finlab.utils import get_tmp_dir
 
-from .sync_execution import CreateOrderKwargs
-from .sync_execution import create_order_executor as _create_order_executor_from_state
+from .sync_execution import (
+    CreateOrderKwargs,
+)
+from .sync_execution import (
+    build_order_executor as _build_order_executor_from_state,
+)
+from .sync_execution import (
+    create_order_executor as _create_order_executor_from_state,
+)
 from .sync_execution import sync_portfolio as _sync_portfolio
 from .sync_margin import margin_cash_position_combine
+from .sync_market_data import (
+    calc_position_value as _calc_position_value_from_market_data,
+)
 from .sync_market_data import (
     fetch_portfolio_market_snapshot as _fetch_portfolio_market_snapshot,
 )
@@ -30,24 +40,60 @@ from .sync_reporting import (
     build_total_position_dataframe as _build_total_position_dataframe,
 )
 from .sync_reporting import format_portfolio_repr as _format_portfolio_repr
-from .sync_state import clear_state as _clear_state
-from .sync_state import get_last_market_timestamp as _get_last_market_timestamp
-from .sync_state import get_position as _get_position
-from .sync_state import get_strategy_position as _get_strategy_position
-from .sync_storage import DataPayload
-from .sync_storage import get_data_payload as _get_data_payload
-from .sync_storage import get_data_typed as _get_data_typed
-from .sync_storage import load_cloud_data as _load_cloud_data
-from .sync_storage import load_local_data as _load_local_data
-from .sync_storage import load_path_data as _load_path_data
-from .sync_storage import normalize_and_check_payload as _normalize_and_check_payload
-from .sync_storage import save_cloud_data as _save_cloud_data
-from .sync_storage import save_local_data as _save_local_data
-from .sync_storage import save_path_data as _save_path_data
-from .sync_storage import set_data_payload as _set_data_payload
-from .sync_storage import set_data_typed as _set_data_typed
-from .sync_update import extract_saved_update_params as _extract_saved_update_params
+from .sync_state import (
+    clear_state as _clear_state,
+)
+from .sync_state import (
+    get_last_market_timestamp as _get_last_market_timestamp,
+)
+from .sync_state import (
+    get_position as _get_position,
+)
+from .sync_state import (
+    get_strategy_position as _get_strategy_position,
+)
+from .sync_storage import (
+    DataPayload,
+)
+from .sync_storage import (
+    get_data_payload as _get_data_payload,
+)
+from .sync_storage import (
+    get_data_typed as _get_data_typed,
+)
+from .sync_storage import (
+    get_local_path as _get_local_path_from_storage,
+)
+from .sync_storage import (
+    load_cloud_data as _load_cloud_data,
+)
+from .sync_storage import (
+    load_local_data as _load_local_data,
+)
+from .sync_storage import (
+    load_path_data as _load_path_data,
+)
+from .sync_storage import (
+    save_cloud_data as _save_cloud_data,
+)
+from .sync_storage import (
+    save_local_data as _save_local_data,
+)
+from .sync_storage import (
+    save_path_data as _save_path_data,
+)
+from .sync_storage import (
+    set_data_payload as _set_data_payload,
+)
+from .sync_storage import (
+    set_data_typed as _set_data_typed,
+)
+from .sync_update import (
+    extract_saved_update_params as _extract_saved_update_params,
+)
 from .sync_update import update_portfolio_state as _update_portfolio_state
+from .sync_validation import position_type_check
+from .validation import normalize_data_payload
 
 
 class PortfolioSyncManager:
@@ -62,13 +108,30 @@ class PortfolioSyncManager:
         "https://asia-east2-fdata-299302.cloudfunctions.net/auth_portfolio"
     )
 
+    @staticmethod
+    def _normalize_data_payload(data: DataPayload | None) -> DataPayload:
+        return normalize_data_payload(data)
+
     def __init__(
         self, data: DataPayload | None = None, start_with_empty: bool = False
     ) -> None:
         """建構投資組合。"""
 
-        self.data: DataPayload = _normalize_and_check_payload(data)
+        normalized_data = self._normalize_data_payload(data)
+
+        if "position" in normalized_data:
+            positions = cast(
+                "dict[str, dict[str, object]]", normalized_data["position"]
+            )
+            for k, v in positions.items():
+                position_type_check(k, v)
+
+        self.data: DataPayload = normalized_data
         self._start_with_empty: bool = start_with_empty
+
+    @classmethod
+    def _get_local_path(cls, name: str) -> str:
+        return _get_local_path_from_storage(cls.LOCAL_DIR, name)
 
     @classmethod
     def from_local(cls, name: str = "default") -> PortfolioSyncManager:
@@ -149,6 +212,12 @@ class PortfolioSyncManager:
     def set_data_typed(self, data: object) -> PortfolioSyncManager:
         self.data = _set_data_typed(data)
         return self
+
+    @staticmethod
+    def _calc_position_value(
+        position: list[PositionEntryDict], lot: float, price: pd.Series
+    ) -> float:
+        return _calc_position_value_from_market_data(position, lot, price)
 
     def update_same_config(self, portfolio: Portfolio) -> None:
         update = cast("Callable[..., None]", self.update)
@@ -246,6 +315,18 @@ class PortfolioSyncManager:
             None
         """
         self.data = _clear_state()
+
+    def _build_order_executor(
+        self,
+        account: Account,
+        at: str,
+        consider_margin_as_asset: bool,
+        market_name: str | None,
+    ) -> OrderExecutor:
+        """Build an :class:`OrderExecutor` from the current ideal position."""
+        return _build_order_executor_from_state(
+            self.data, account, at, consider_margin_as_asset, market_name
+        )
 
     def sync(
         self,

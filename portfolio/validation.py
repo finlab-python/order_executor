@@ -12,10 +12,7 @@ import copy
 import math
 from typing import Any
 
-from finlab.compat import resolve_position_entry_symbol
 from finlab.exceptions import PortfolioError
-
-from ..core.enums import OrderCondition
 
 # ---------------------------------------------------------------------------
 # Position field validation
@@ -92,8 +89,8 @@ def validate_position_fields(position_name: str, data: dict[str, Any]) -> list[s
 
 
 def check_position_needs_market_default(data: dict[str, Any]) -> bool:
-    """Return True when *data* has no ``market`` (missing or ``None``)."""
-    return data.get("market") is None
+    """Return True when *data* lacks a string ``market`` and has ``None``."""
+    return not isinstance(data.get("market"), str) and data.get("market") is None
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +240,7 @@ def compute_position_value(
         Mapping from symbol to latest price.
     resolve_symbol:
         Optional callable ``(dict) -> str`` to extract the symbol key from
-        a position entry.  Defaults to ``resolve_position_entry_symbol``.
+        a position entry.  Defaults to ``lambda p: p.get('symbol') or p['stock_id']``.
 
     Returns
     -------
@@ -256,7 +253,9 @@ def compute_position_value(
         If a symbol is not found in *prices*.
     """
     if resolve_symbol is None:
-        resolve_symbol = resolve_position_entry_symbol
+
+        def resolve_symbol(p: dict[str, Any]) -> str:
+            return p.get("symbol") or p["stock_id"]
 
     total = 0.0
     for p in position:
@@ -272,6 +271,10 @@ def compute_position_value(
 # ---------------------------------------------------------------------------
 # Margin / cash position adjustment
 # ---------------------------------------------------------------------------
+
+# OrderCondition integer values used by core.enums
+_ORDER_CONDITION_CASH = 1
+_ORDER_CONDITION_MARGIN_TRADING = 2
 
 
 def merge_margin_cash_adjustments(
@@ -290,7 +293,7 @@ def merge_margin_cash_adjustments(
         account positions.
     resolve_symbol:
         Optional callable ``(dict) -> str``.  Defaults to
-        ``resolve_position_entry_symbol``.
+        ``lambda p: p.get('symbol') or p['stock_id']``.
 
     Returns
     -------
@@ -298,7 +301,9 @@ def merge_margin_cash_adjustments(
         Adjusted position entries with zero-quantity entries removed.
     """
     if resolve_symbol is None:
-        resolve_symbol = resolve_position_entry_symbol
+
+        def resolve_symbol(p: dict[str, Any]) -> str:
+            return p.get("symbol") or p["stock_id"]
 
     cash: dict[str, dict[str, Any]] = {}
     margin: dict[str, dict[str, Any]] = {}
@@ -307,9 +312,9 @@ def merge_margin_cash_adjustments(
         entry = p.copy()
         sid = resolve_symbol(entry)
         oc = entry.get("order_condition")
-        if oc == OrderCondition.CASH:
+        if oc == _ORDER_CONDITION_CASH:
             cash[sid] = entry
-        elif oc == OrderCondition.MARGIN_TRADING:
+        elif oc == _ORDER_CONDITION_MARGIN_TRADING:
             margin[sid] = entry
 
     sids = cash.keys() | margin.keys()

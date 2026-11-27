@@ -47,18 +47,20 @@ def get_strategy_position(
 
     has_market_timestamp = strategy_position.get("last_market_timestamp") is not None
     is_trade_at_open = strategy_position["entry_at"] == "open"
+    last_market_timestamp_is_the_same = (
+        strategy_position.get("last_market_timestamp")
+        == market.market_close_at_timestamp(
+            market.get_price("close").index[-1]
+        ).isoformat()
+    )
 
     latest_market_timestamp = get_last_market_timestamp(data)
 
     use_previous_position = (
         (at == "open")
         and has_market_timestamp
+        and last_market_timestamp_is_the_same
         and not is_trade_at_open
-        # Last: loads the market's close table, which only this check needs.
-        and strategy_position.get("last_market_timestamp")
-        == market.market_close_at_timestamp(
-            market.get_price("close").index[-1]
-        ).isoformat()
     ) or (
         (at == "prev_close")
         and (latest_market_timestamp == strategy_position.get("last_market_timestamp"))
@@ -85,8 +87,7 @@ def get_position(
 ) -> Position:
     positions = {
         pname: Position.from_list(get_strategy_position(data, pname, at))
-        for pname, sdata in data["position"].items()
-        if market_name is None or sdata["market"] == market_name
+        for pname in data["position"]
     }
 
     for pname, pos in positions.items():
@@ -95,6 +96,13 @@ def get_position(
                 p["weight"] *= data["position"][pname]["weight"]
             else:
                 p["weight"] = 1 / len(pos.position) * data["position"][pname]["weight"]
+
+    if market_name is not None:
+        positions = {
+            pname: pos
+            for pname, pos in positions.items()
+            if data["position"][pname]["market"] == market_name
+        }
 
     result = sum(list(positions.values()), Position({}))
 

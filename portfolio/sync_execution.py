@@ -41,12 +41,11 @@ def build_order_executor(
     consider_margin_as_asset: bool,
     market_name: str | None,
 ) -> OrderExecutor:
+    account_position = account.get_position()
     ideal_position = get_position(data, market_name=market_name, at=at)
 
     if consider_margin_as_asset:
-        ideal_position = margin_cash_position_combine(
-            account.get_position(), ideal_position
-        )
+        ideal_position = margin_cash_position_combine(account_position, ideal_position)
 
     return OrderExecutor(ideal_position, account)
 

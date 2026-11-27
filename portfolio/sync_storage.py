@@ -26,7 +26,6 @@ __all__ = [
     "load_cloud_data",
     "load_local_data",
     "load_path_data",
-    "normalize_and_check_payload",
     "save_cloud_data",
     "save_local_data",
     "save_path_data",
@@ -42,7 +41,13 @@ def get_local_path(local_dir: str, name: str) -> str:
 
 
 def load_local_data(name: str, local_dir: str) -> dict[str, Any]:
-    return load_path_data(get_local_path(local_dir, name))
+    path = get_local_path(local_dir, name)
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"path {path} not existed")
+
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_cloud_data(name: str, cloud_url: str) -> dict[str, Any]:
@@ -70,7 +75,10 @@ def load_path_data(path: str) -> dict[str, Any]:
 
 
 def save_local_data(data: dict[str, Any], name: str, local_dir: str) -> None:
-    save_path_data(data, get_local_path(local_dir, name))
+    path = get_local_path(local_dir, name)
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, default=str)
 
 
 def save_cloud_data(
@@ -93,7 +101,9 @@ def save_path_data(data: dict[str, Any], path: str) -> None:
 def get_data_payload(
     data: dict[str, Any], typed: bool = False
 ) -> dict[str, Any] | PortfolioData:
-    if typed or is_typed_strict_mode():
+    if is_typed_strict_mode() and not typed:
+        return get_data_typed(data)
+    if typed:
         return get_data_typed(data)
     return copy.deepcopy(data)
 
@@ -110,7 +120,11 @@ def set_data_payload(data: dict[str, Any] | Any, typed: bool = False) -> dict[st
     if not isinstance(data, dict):
         raise ValueError(f"data should be dict, got {type(data)}")
 
-    return normalize_and_check_payload(data)
+    normalized_data = normalize_data_payload(data)
+    for k, v in normalized_data.get("position", {}).items():
+        position_type_check(k, v)
+
+    return normalized_data
 
 
 def get_data_typed(data: dict[str, Any]) -> PortfolioData:
@@ -131,12 +145,8 @@ def set_data_typed(data: dict[str, Any] | Any) -> dict[str, Any]:
     else:
         raise ValueError("data should be dict or schema object with to_dict()")
 
-    return normalize_and_check_payload(cast("dict[str, Any]", payload))
-
-
-def normalize_and_check_payload(data: dict[str, Any] | None) -> dict[str, Any]:
-    """Normalize *data* and warn about mistyped fields in each strategy position."""
-    normalized_data = normalize_data_payload(data)
-    for k, v in normalized_data["position"].items():
+    normalized_data = normalize_data_payload(cast("dict[str, Any]", payload))
+    for k, v in normalized_data.get("position", {}).items():
         position_type_check(k, v)
+
     return normalized_data

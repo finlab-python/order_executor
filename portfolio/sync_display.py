@@ -14,7 +14,7 @@ import pandas as pd
 from finlab.compat import resolve_position_entry_symbol
 
 from ..core.enums import OrderCondition
-from .sync_market_data import DEFAULT_LOT, get_position_lots
+from .sync_market_data import get_position_lots
 
 if TYPE_CHECKING:
     from finlab.schemas import PortfolioConfigDataDict, StrategyPositionDataDict
@@ -29,17 +29,24 @@ def _build_strategy_map(
     config: PortfolioConfigDataDict,
 ) -> dict[tuple[str, object], str]:
     """Map ``(symbol, order_condition)`` to a comma-separated strategy string."""
-    sources = [(name, info["position"]) for name, info in position_data.items()]
-    if "custom_position" in config:
-        sources.append(("custom", config["custom_position"]))
-
     has_strategy: dict[tuple[str, object], str] = {}
-    for name, stocks in sources:
-        for stock in stocks:
-            key = (resolve_position_entry_symbol(stock), stock["order_condition"])
-            has_strategy[key] = (
-                f"{has_strategy[key]},{name}" if key in has_strategy else name
-            )
+    for name, info in position_data.items():
+        for stock in info["position"]:
+            s_id = resolve_position_entry_symbol(stock)
+            key = (s_id, stock["order_condition"])
+            if key not in has_strategy:
+                has_strategy[key] = name
+            else:
+                has_strategy[key] += "," + name
+
+    if "custom_position" in config:
+        for stock in config["custom_position"]:
+            s_id = resolve_position_entry_symbol(stock)
+            key = (s_id, stock["order_condition"])
+            if key not in has_strategy:
+                has_strategy[key] = "custom"
+            else:
+                has_strategy[key] += ",custom"
 
     return has_strategy
 
@@ -66,7 +73,7 @@ def build_position_dataframe(
     df = (
         pd.DataFrame(position.position)
         .assign(
-            lot=lambda df: df.symbol.map(lambda symbol: lots.get(symbol, DEFAULT_LOT)),
+            lot=lambda df: df.symbol.map(lambda symbol: lots.get(symbol, 1000)),
             strategy=lambda df: df.apply(
                 lambda r: has_strategy.get(
                     (resolve_position_entry_symbol(r), r.order_condition), ""
