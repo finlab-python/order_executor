@@ -18,7 +18,7 @@ With a single strategy, [Orders: one strategy](order_api.md) is simpler.
 
 Before the next trading day opens, run your strategies and obtain their reports. Use any one of these three approaches:
 
-### Your own backtest
+**Your own backtest**
 
 Write your own strategies following [Backtesting](https://studio.finlab.finance/en/docs/details/backtest) and get reports by backtesting:
 
@@ -32,8 +32,7 @@ report2 = backtest.sim(...)
 ```
 
 This approach runs the complete code and may take some time.
-
-### Strategies in Studio
+**Strategies in Studio**
 
 Select strategies from [Strategies](https://studio.finlab.finance/en/strategies) in FinLab Studio, note their names, and download the reports:
 
@@ -43,8 +42,7 @@ from finlab.portfolio import create_report_from_cloud
 report1 = create_report_from_cloud('NAME_OF_STRATEGY1')
 report2 = create_report_from_cloud('NAME_OF_STRATEGY2')
 ```
-
-### Set weights directly
+**Set weights directly**
 
 Suitable for users who already hold positions and want to rebalance periodically:
 
@@ -72,7 +70,7 @@ port.display()
 
 This simulates the combined portfolio and displays the same interactive report as a single backtest: cumulative return against the benchmark, risk and return metrics, and the holdings of every strategy.
 
-When several strategies hold the same stock, its weight in the portfolio is each strategy's weight × its weight in that strategy, added up.
+When several strategies hold the same stock, its weight in the portfolio is each strategy's weight × its weight in that strategy, added up. Hand out the chips below to try it:
 
 ## Calculate share quantities
 
@@ -90,7 +88,9 @@ When several strategies hold the same stock, its weight in the portfolio is each
 
 ### Create or load the PortfolioSyncManager
 
-Create a new PM the first time:
+Create a new PM the first time; after that, load the existing positions from the cloud or from local storage:
+
+**First-time setup**
 
 ```python
 from finlab.portfolio import PortfolioSyncManager
@@ -99,32 +99,45 @@ from finlab.portfolio import PortfolioSyncManager
 pm = PortfolioSyncManager()
 pm.to_local()
 ```
+**Load from cloud**
 
-After that, load the existing positions from local storage or from the cloud:
+```python
+from finlab.portfolio import PortfolioSyncManager
+
+# Load existing positions from cloud
+pm = PortfolioSyncManager.from_cloud()
+```
+**Load from local**
 
 ```python
 from finlab.portfolio import PortfolioSyncManager
 
 # Load existing positions from local storage
 pm = PortfolioSyncManager.from_local()
-# or from cloud
-# pm = PortfolioSyncManager.from_cloud()
 ```
 
 ### Update the holdings
 
-Pass the portfolio and your total balance to `pm.update()`, in the way that fits your account (pick one):
+Pass the portfolio and your total balance to `pm.update()`, in the way that fits your account:
+
+**Rebalance only on scheduled dates**
 
 ```python
 # The program will only rebalance on scheduled rebalancing dates.
 # On first creation, positions will be empty.
 pm.update(port, total_balance=100_000)
+```
+**Odd lots**
 
-# Or odd lot trading (Taiwan)
-# pm.update(port, total_balance=1_000_000, odd_lot=True)
+```python
+# Odd lot trading (Taiwan)
+pm.update(port, total_balance=1_000_000, odd_lot=True)
+```
+**Margin trading**
 
-# Or margin / short selling
-# pm.update(port, total_balance=100_000, margin_trading=True)
+```python
+# Margin / short selling
+pm.update(port, total_balance=100_000, margin_trading=True)
 ```
 
 Check the result:
@@ -137,30 +150,40 @@ print(pm.get_position())
 
 Please run `PortfolioSyncManager.update` daily to ensure positions remain accurate.
 
-### A script to run every day
+### Save the positions
 
-After the first-time setup in [Create or load the PortfolioSyncManager](#create-or-load-the-portfoliosyncmanager), run this every day: load the PM, update it, sync the account, and save the positions to the cloud or to local storage (the same place you load them from):
+**Save to cloud**
 
 ```python
-from finlab.online.schwab_account import SchwabAccount
-from finlab.portfolio import PortfolioSyncManager
+pm.to_cloud()
+```
+**Save to local**
 
-# Load the positions saved by the previous run
-pm = PortfolioSyncManager.from_local()
-# or from the cloud
-# pm = PortfolioSyncManager.from_cloud()
-
-# port: today's Portfolio, built as in "Combine them into one portfolio" above
-pm.update(port, total_balance=100_000)
-
-# Your broker account, set up as in "Connect your broker account" below
-account = SchwabAccount()
-pm.sync(account)
-
-# Save the positions for the next run
+```python
 pm.to_local()
-# or to the cloud
-# pm.to_cloud()
+```
+
+### A script to run every day
+
+First-time setup:
+
+```python
+# Initialize PortfolioSyncManager
+pm = PortfolioSyncManager()
+pm.to_local()
+```
+
+Then run daily:
+
+```python
+# Initialize PortfolioSyncManager
+pm = PortfolioSyncManager.from_local()
+
+# Perform operations
+# pm.update(...)
+
+# Save results
+pm.to_local()
 ```
 
 > [!NOTE]
@@ -248,52 +271,182 @@ Update process:
 
 ### Connect your broker account
 
-Supported brokers are Charles Schwab for U.S. stocks and E.SUN, SinoPac, Taishin (formerly Masterlink) and Fubon Securities for Taiwan stocks. Setup is identical to a single strategy: install the broker package, set its credentials as environment variables and create the account, as described in [Orders: one strategy](order_api.md#install-the-broker-package-and-connect). The examples there name the account object `acc`; this page calls it `account`. For example, with Charles Schwab, once its environment variables are set:
+Connect the account of the broker you use: Charles Schwab for U.S. stocks, or E.SUN, SinoPac, Taishin (formerly Masterlink) or Fubon Securities for Taiwan stocks. Set the credentials as environment variables; you only need the broker you use.
+
+**Charles Schwab**
+
+For U.S. stocks.
+
+1. Register an app on the [Schwab Developer Portal](https://developer.schwab.com/) to get an app key and secret.
+2. Create a token file with the login flow of [schwab-py](https://schwab-py.readthedocs.io/) (`pip install schwab-py`); `SchwabAccount` reads that file.
+3. Set the variables and connect:
 
 ```python
+import os
 from finlab.online.schwab_account import SchwabAccount
+
+os.environ['SCHWAB_API_KEY'] = 'Schwab app key'
+os.environ['SCHWAB_SECRET'] = 'Schwab app secret'
+os.environ['SCHWAB_TOKEN_PATH'] = '/path/to/token.json'
 
 account = SchwabAccount()
 ```
+**E.SUN**
+
+E.SUN Securities, for Taiwan stocks.
+
+1. Follow the [config tutorial](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/quick-start/) to obtain the config file.
+2. Log in to the [E.SUN Securities API](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/key/) to get the market data Token.
+3. Set the variables and connect:
+
+```python
+from finlab.online.esun_account import EsunAccount
+import os
+
+os.environ['ESUN_CONFIG_PATH'] = 'path to config.ini.example'
+os.environ['ESUN_MARKET_API_KEY'] = 'E.SUN market API Token'
+os.environ['ESUN_ACCOUNT_PASSWORD'] = 'E.SUN account password'
+os.environ['ESUN_CERT_PASSWORD'] = 'E.SUN certificate password'
+
+account = EsunAccount()
+```
+
+<details><summary>Legacy Fugle environment variables (still supported)</summary>
+
+```python
+from finlab.online.fugle_account import FugleAccount
+import os
+
+os.environ['FUGLE_CONFIG_PATH'] = 'path to config.ini.example'
+os.environ['FUGLE_MARKET_API_KEY'] = 'market API Token'
+os.environ['FUGLE_ACCOUNT_PASSWORD'] = 'account password'
+os.environ['FUGLE_CERT_PASSWORD'] = 'certificate password'
+
+account = FugleAccount()
+```
+
+</details>
+
+If you encounter error codes, check the [E.SUN Securities documentation](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/reference/error-code/).
+**SinoPac**
+
+SinoPac Securities, for Taiwan stocks.
+
+1. Obtain the certificate (see SinoPac's [API key and certificate guide](https://sinotrade.github.io/tutor/prepare/token/)):
+    - Click "Download certificate" on the [API management page](https://www.sinotrade.com.tw/newweb/PythonAPIKey/) of SinoPac's website. This works on Windows and macOS.
+    - Or download it with eleader, which runs on Windows only.
+2. Set the variables and connect:
+
+```python
+import os
+from finlab.online.sinopac_account import SinopacAccount
+
+os.environ['SHIOAJI_API_KEY'] = 'SinoPac API_KEY'
+os.environ['SHIOAJI_SECRET_KEY'] = 'SinoPac SECRET_KEY'
+os.environ['SHIOAJI_CERT_PERSON_ID'] = 'National ID number'
+os.environ['SHIOAJI_CERT_PATH'] = 'SinoPac certificate path'
+os.environ['SHIOAJI_CERT_PASSWORD'] = 'SinoPac certificate password'  # defaults to National ID
+
+account = SinopacAccount()
+```
+**Taishin**
+
+Taishin Securities (formerly Masterlink), for Taiwan stocks. Masterlink Securities merged into Taishin Securities on April 6, 2026. Full steps are in Taishin's [preparation guide](https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare/):
+
+1. **Sign**: sign the API risk disclosure online. It takes effect the next day.
+2. **Certificate**: apply for and export a .pfx certificate with the certificate e-manager app described in the preparation guide; certificates from the certificate express service cannot be used with the API.
+3. **Install**: download the wheel for your platform from [Taishin's SDK page](https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/download/download-sdk/) and install it with `pip install taishin_sdk-<version>-cp37-abi3-<platform>.whl`. Python 3.8–3.12 is officially supported.
+4. **Connect**:
+
+```python
+import os
+from finlab.online.taishin_account import TaishinAccount
+
+os.environ['TAISHIN_NATIONAL_ID'] = 'National ID number'
+os.environ['TAISHIN_ACCOUNT'] = 'Branch code + account'  # first account if unset
+os.environ['TAISHIN_ACCOUNT_PASS'] = 'Login password'
+os.environ['TAISHIN_CERT_PATH'] = 'Path to the .pfx certificate'
+os.environ['TAISHIN_CERT_PASS'] = 'Certificate password'
+
+account = TaishinAccount()
+
+# First time only: activate API trading (returns True), then delete this line
+# account.sdk.register_api_auth(account.target_account)
+```
+
+<details><summary>Legacy Masterlink environment variables (still supported)</summary>
+
+`MasterlinkAccount` (`finlab.online.masterlink_account`) and `TaishinAccount` are the same class; when `TAISHIN_*` is not set, the matching `MASTERLINK_*` variable is read, e.g. `MASTERLINK_NATIONAL_ID`. Existing code keeps working once `taishin_sdk` is installed.
+
+</details>
+
+**Fubon**
+
+Fubon Securities, for Taiwan stocks. Refer to the [Fubon Securities tutorial](https://www.fbs.com.tw/TradeAPI/docs/trading/introduction/):
+
+```python
+import os
+from finlab.online.fubon_account import FubonAccount
+
+os.environ['FUBON_NATIONAL_ID'] = "A123456789"
+os.environ['FUBON_ACCOUNT_PASS'] = "your_password"
+os.environ['FUBON_CERT_PATH'] = "/path/to/cert.pfx"
+os.environ['FUBON_CERT_PASS'] = "certificate password"  # optional: passed to the Fubon SDK at login
+os.environ['FUBON_ACCOUNT'] = "account number"  # optional: use this account, error if not found; first stock account if unset
+# os.environ['FUBON_BASE_URL'] = "connection URL"  # optional: passed to the Fubon SDK (FubonSDK)
+
+account = FubonAccount()
+```
+
+`FUBON_NATIONAL_ID`, `FUBON_ACCOUNT_PASS` and `FUBON_CERT_PATH` are required; a missing one raises an error. The other three are optional.
 
 ### Sync the account
 
-Preview with simulated orders first:
+Preview with simulated orders first, then pick how orders are priced:
+
+**Simulated orders**
 
 ```python
 # Simulation only, no actual orders placed
 pm.sync(account, view_only=True)
 ```
-
-Then pick how orders are priced:
+**Latest price orders**
 
 ```python
-# Latest price orders (default): uses the latest transaction price as limit price
+# Default: uses the latest transaction price as limit price
 pm.sync(account)
+```
+**Market orders**
 
-# Or market orders on Schwab; Taiwan brokers buy at the upper and sell at the
+```python
+# Market orders on Schwab; Taiwan brokers buy at the upper and sell at the
 # lower price limit. Suitable for highly liquid stocks
-# pm.sync(account, market_order=True)
+pm.sync(account, market_order=True)
+```
+**Aggressive 1% limit orders**
 
-# Or an aggressive limit order at 1% above current price (easier to fill)
-# pm.sync(account, extra_bid_pct=0.01)
+```python
+# Limit order at 1% above current price (easier to fill)
+pm.sync(account, extra_bid_pct=0.01)
+```
+**Conservative 1% limit orders**
 
-# Or a conservative limit order at 1% below current price (harder to fill)
-# pm.sync(account, extra_bid_pct=-0.01)
+```python
+# Limit order at 1% below current price (harder to fill)
+pm.sync(account, extra_bid_pct=-0.01)
 ```
 
 ### Update the limit price or cancel orders
 
-For orders that have not filled yet, get an order executor from the PM, then either update the limit price or cancel the orders (pick one):
+For orders that have not filled yet:
 
 ```python
-order_executor = pm.create_order_executor(account)
-
 # Update limit price
+order_executor = pm.create_order_executor(account)
 order_executor.update_order_price()
 
-# Or cancel all pending orders
-# order_executor.cancel_orders()
+# Cancel all pending orders
+order_executor.cancel_orders()
 ```
 
 ### Deposit in advance for restricted Taiwan stocks

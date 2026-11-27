@@ -18,7 +18,7 @@
 
 在下一個交易日開盤前，先執行策略並取得交易報告。以下三種方式擇一：
 
-### 自己回測
+**自己回測**
 
 依[歷史回測](https://studio.finlab.finance/docs/details/backtest)寫好自己的策略，回測取得報告：
 
@@ -32,8 +32,7 @@ report2 = backtest.sim(...)
 ```
 
 這種方式需要完整執行程式碼，可能會花費一些時間。
-
-### 下載平台上的策略
+**下載平台上的策略**
 
 在 FinLab Studio 的[策略庫](https://studio.finlab.finance/strategies)選擇想要下單的策略，記下名稱後下載報告：
 
@@ -43,8 +42,7 @@ from finlab.portfolio import create_report_from_cloud
 report1 = create_report_from_cloud('NAME_OF_STRATEGY1')
 report2 = create_report_from_cloud('NAME_OF_STRATEGY2')
 ```
-
-### 直接指定持股權重
+**直接指定持股權重**
 
 適合已有持股、希望定期重新平衡的人：
 
@@ -72,7 +70,7 @@ port.display()
 
 ![display](img/portfolio.png)
 
-幾個策略持有同一檔股票時，組合裡它的權重是各策略權重 × 它在策略裡的權重，再加起來。
+幾個策略持有同一檔股票時，組合裡它的權重是各策略權重 × 它在策略裡的權重，再加起來。分配下面的籌碼試試：
 
 ## 計算每檔股票的張數
 
@@ -90,40 +88,54 @@ port.display()
 
 ### 建立或載入 PortfolioSyncManager
 
-第一次使用時建立新的 PM 並儲存：
+第一次使用時建立新的 PM；之後從雲端或本機載入原本的部位：
+
+**第一次建立**
 
 ```python
 from finlab.portfolio import PortfolioSyncManager
 
-# 建立一個新的資料庫，存起來讓之後可以載入
+# 建立一個新的資料庫
 pm = PortfolioSyncManager()
-pm.to_local()
 ```
+**從雲端載入**
 
-之後從本機或雲端載入原本的部位：
+```python
+from finlab.portfolio import PortfolioSyncManager
+
+# 從雲端取得原本的部位
+pm = PortfolioSyncManager.from_cloud()
+```
+**從本機載入**
 
 ```python
 from finlab.portfolio import PortfolioSyncManager
 
 # 從本地端取得原本的部位
 pm = PortfolioSyncManager.from_local()
-# 或從雲端取得
-# pm = PortfolioSyncManager.from_cloud()
 ```
 
 ### 更新持股
 
-把投資組合與總資金交給 `pm.update()`，依需求選擇一種更新方式：
+把投資組合與總資金交給 `pm.update()`，依需求選擇更新方式：
+
+**換股日才換股**
 
 ```python
-# 換股日才換股：程式會在換股日當天，才會進行換股，所以第一次創建時，會是空的。
+# 程式會在換股日當天，才會進行換股，所以第一次創建時，會是空的。
 pm.update(port, total_balance=1000000)
+```
+**零股**
 
-# 或零股交易
-# pm.update(port, total_balance=1000000, odd_lot=True)
+```python
+# 零股交易
+pm.update(port, total_balance=1000000, odd_lot=True)
+```
+**融資交易**
 
-# 或融資、融券交易
-# pm.update(port, total_balance=1000000, margin_trading=True)
+```python
+# 融資、融券交易
+pm.update(port, total_balance=1000000, margin_trading=True)
 ```
 
 查看更新後的部位：
@@ -152,30 +164,40 @@ stock_id
 
 請每日執行 `PortfolioSyncManager.update`，以確保部位的正確性。
 
-### 每天自動執行的腳本
+### 儲存部位
 
-第一次先照[建立或載入 PortfolioSyncManager](#建立或載入-portfoliosyncmanager)建立並儲存部位。之後每天執行下面的腳本：載入部位、更新、與帳戶同步，再存回原本載入的地方（本機或雲端）。
+**儲存到雲端**
 
 ```python
-from finlab.online.sinopac_account import SinopacAccount
-from finlab.portfolio import PortfolioSyncManager
+pm.to_cloud()
+```
+**儲存到本機**
 
-# 載入上一次儲存的部位
-pm = PortfolioSyncManager.from_local()
-# 或從雲端載入
-# pm = PortfolioSyncManager.from_cloud()
-
-# port：用當天報告組成的投資組合，見上方「組合成一個投資組合」
-pm.update(port, total_balance=1000000)
-
-# 券商帳戶，以永豐為例，設定方式見下方「連接券商帳戶」
-account = SinopacAccount()
-pm.sync(account)
-
-# 儲存部位，下次執行時載入
+```python
 pm.to_local()
-# 或存到雲端
-# pm.to_cloud()
+```
+
+### 每天自動執行的腳本
+
+第一次請先建立部位並儲存：
+
+```python
+# 初始化 PortfolioSyncManager
+pm = PortfolioSyncManager()
+pm.to_local()
+```
+
+之後每天自動執行：
+
+```python
+# 初始化 PortfolioSyncManager
+pm = PortfolioSyncManager.from_local()
+
+# 相關操作
+# pm.update(...)
+
+# 保存最後的操作結果
+pm.to_local()
 ```
 
 > [!NOTE]
@@ -263,56 +285,189 @@ pm.to_local()
 
 ### 連接券商帳戶
 
-台股支援玉山證券、永豐證券、台新證券（原元富證券）以及富邦證券，美股支援嘉信（Charles Schwab），擇一使用即可。設定方式和單一策略相同，見[下單：單一策略](order_api.md#安裝券商套件並連接帳戶)；那邊的範例把帳戶物件命名為 `acc`，這一頁用 `account`。以永豐證券為例：
+台股支援玉山證券、永豐證券、台新證券（原元富證券）以及富邦證券，美股支援嘉信（Charles Schwab）。帳號密碼設成環境變數，只要設定您需要的券商，不需要多個券商同時串接。
+
+**玉山證券**
+
+[▶ YouTube](https://www.youtube.com/watch?v=AAGcIgJAUVY)
+
+1. 照 [config 教學](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/quick-start/)取得 config 設定檔。
+2. 登入[玉山證券 API](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/key/)，取得市場行情 Token。
+3. 設定環境變數並連線：
 
 ```python
+from finlab.online.esun_account import EsunAccount
+import os
+
+os.environ['ESUN_CONFIG_PATH'] = '玉山證券交易設定檔(config.ini.example)路徑'
+os.environ['ESUN_MARKET_API_KEY'] = '玉山證券的行情API Token'
+os.environ['ESUN_ACCOUNT_PASSWORD'] = '玉山證券的帳號密碼'
+os.environ['ESUN_CERT_PASSWORD'] = '玉山證券的憑證密碼'
+
+account = EsunAccount()
+```
+
+<details><summary>舊版 Fugle 環境變數（仍可使用）</summary>
+
+```python
+from finlab.online.fugle_account import FugleAccount
+import os
+
+os.environ['FUGLE_CONFIG_PATH'] = '玉山證券交易設定檔(config.ini.example)路徑'
+os.environ['FUGLE_MARKET_API_KEY'] = '玉山證券的行情API Token'
+os.environ['FUGLE_ACCOUNT_PASSWORD'] = '玉山證券的帳號密碼'
+os.environ['FUGLE_CERT_PASSWORD'] = '玉山證券的憑證密碼'
+
+account = FugleAccount()
+```
+
+</details>
+
+下單出現錯誤代碼時，可以到[玉山證券文件](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/reference/error-code/)查找原因。不熟悉用 FinLab 套件下單的話，建議先照[券商的教學](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/quick-start/)練習；那邊串接成功，FinLab 套件的串接也是如法炮製。
+**永豐證券**
+
+[▶ YouTube](https://www.youtube.com/watch?v=BDsVOI4cZNk)
+
+1. 取得憑證（見永豐官方的[金鑰與憑證申請](https://sinotrade.github.io/zh/tutor/prepare/token/)）：
+    - 到永豐理財網的 [API 管理頁面](https://www.sinotrade.com.tw/newweb/PythonAPIKey/)點「下載憑證」，Windows、macOS 都可以下載。
+    - 也可以用 eleader 下載憑證，eleader 只支援 Windows。
+2. 設定環境變數並連線：
+
+```python
+import os
 from finlab.online.sinopac_account import SinopacAccount
+
+os.environ['SHIOAJI_API_KEY'] = '永豐證券API_KEY'
+os.environ['SHIOAJI_SECRET_KEY'] = '永豐證券SECRET_KEY'
+os.environ['SHIOAJI_CERT_PERSON_ID'] = '身份證字號'
+os.environ['SHIOAJI_CERT_PATH'] = '永豐證券憑證路徑'
+os.environ['SHIOAJI_CERT_PASSWORD'] = '永豐證券憑證密碼'  # 預設與身份證字號相同
 
 account = SinopacAccount()
 ```
 
+不熟悉用 FinLab 套件下單的話，建議先照[券商的教學](https://sinotrade.github.io/quickstart/)練習；那邊串接成功，FinLab 套件的串接就會非常簡單。
+**台新證券（原元富）**
+
+元富證券已於 2026 年 4 月 6 日併入台新證券。詳細步驟見台新官方的[事前準備](https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare/)：
+
+1. **簽署**：線上簽署「API 使用風險暨聲明書」，簽署隔天才生效。
+2. **憑證**：用「憑證e管家」申請並匯出 .pfx 憑證檔；用「憑證快遞」申請的憑證不能用在 API。
+3. **安裝**：到[台新 SDK 下載頁](https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/download/download-sdk/)下載對應平台的 whl，用 `pip install taishin_sdk-<版本>-cp37-abi3-<平台>.whl` 安裝。官方支援 Python 3.8～3.12。
+4. **連線**：
+
+```python
+import os
+from finlab.online.taishin_account import TaishinAccount
+
+os.environ['TAISHIN_NATIONAL_ID'] = '身分證字號'
+os.environ['TAISHIN_ACCOUNT'] = '分公司代號加帳號'  # 不設定就用第一個帳號
+os.environ['TAISHIN_ACCOUNT_PASS'] = '登入密碼'
+os.environ['TAISHIN_CERT_PATH'] = '憑證檔（.pfx）路徑'
+os.environ['TAISHIN_CERT_PASS'] = '憑證密碼'
+
+account = TaishinAccount()
+
+# 第一次使用台新 API 時執行一次，開通 API 資格（成功回傳 True），之後可以刪掉
+# account.sdk.register_api_auth(account.target_account)
+```
+
+<details><summary>舊版元富環境變數（仍可使用）</summary>
+
+`MasterlinkAccount`（`finlab.online.masterlink_account`）與 `TaishinAccount` 是同一個類別，沒有設定 `TAISHIN_*` 時會讀對應的 `MASTERLINK_*`，例如 `MASTERLINK_NATIONAL_ID`。原本的程式不用改，只要把套件換成 `taishin_sdk`。
+
+</details>
+
+**富邦證券**
+
+請參考[富邦證券的教學](https://www.fbs.com.tw/TradeAPI/docs/trading/introduction/)取得憑證，把憑證放在對應的路徑，安裝相對應的套件後執行：
+
+```python
+import os
+from finlab.online.fubon_account import FubonAccount
+
+# 設定環境變數
+os.environ['FUBON_NATIONAL_ID'] = "A123456789"
+os.environ['FUBON_ACCOUNT_PASS'] = "your_password"
+os.environ['FUBON_CERT_PATH'] = "/path/to/cert.pfx"
+os.environ['FUBON_CERT_PASS'] = "憑證密碼"  # 選填：登入時傳給富邦 SDK 的憑證密碼
+os.environ['FUBON_ACCOUNT'] = "帳號"  # 選填：指定帳號，找不到會報錯；不設定就用第一個證券帳戶
+# os.environ['FUBON_BASE_URL'] = "連線網址"  # 選填：傳給富邦 SDK（FubonSDK）的連線網址
+
+account = FubonAccount()
+```
+
+`FUBON_NATIONAL_ID`、`FUBON_ACCOUNT_PASS`、`FUBON_CERT_PATH` 必須設定，缺少時會報錯；其餘三個是選填。
+**Charles Schwab**
+
+嘉信（Charles Schwab）用於美股帳戶：
+
+1. 到 [Schwab Developer Portal](https://developer.schwab.com/) 註冊 app，取得 app key 與 secret。
+2. 用 [schwab-py](https://schwab-py.readthedocs.io/) 的登入流程（`pip install schwab-py`）建立 token 檔，`SchwabAccount` 會讀取這個檔案。
+3. 設定環境變數並連線：
+
+```python
+import os
+from finlab.online.schwab_account import SchwabAccount
+
+os.environ['SCHWAB_API_KEY'] = 'Schwab app key'
+os.environ['SCHWAB_SECRET'] = 'Schwab app secret'
+os.environ['SCHWAB_TOKEN_PATH'] = '/path/to/token.json'
+
+account = SchwabAccount()
+```
+
 ### 批次下單，與帳戶同步
 
-先用模擬下單確認：
+先用模擬下單確認，再選一種價格方式實際下單：
+
+**模擬下單**
 
 ```python
 # 不會真的下單，模擬而已
 pm.sync(account, view_only=True)
 ```
-
-確認無誤後，選一種價格方式實際下單：
+**最新價格下單**
 
 ```python
-# 最新價格下單（預設）：使用最近一筆成交價當成限價
+# 預設使用最近一筆成交價當成限價
 pm.sync(account)
+```
+**市價單**
 
-# 或市價單：漲停買入，跌停賣出，針對流動性高的個股較適合
-# pm.sync(account, market_order=True)
+```python
+# 漲停買入，跌停賣出，針對流動性高的個股較適合
+pm.sync(account, market_order=True)
+```
+**以優勢 1% 限價下單**
 
-# 或以優勢 1% 限價下單（較容易成交）
-# pm.sync(account, extra_bid_pct=0.01)
+```python
+# 以優勢 1％ 限價下單 (較容易成交)
+pm.sync(account, extra_bid_pct=0.01)
+```
+**比劣勢 1% 限價掛單**
 
-# 或比劣勢 1% 限價掛單（較不容易成交）
-# pm.sync(account, extra_bid_pct=-0.01)
+```python
+# 比劣勢 1% 限價掛單(較不容易成交)
+pm.sync(account, extra_bid_pct=-0.01)
 ```
 
 ### 更新限價或刪除委託
 
-委託送出後還沒成交時，先從 PM 取得 `order_executor`，再擇一更新限價或刪單：
+委託送出後還沒成交時：
 
 ```python
-order_executor = pm.create_order_executor(account)
-
 # 更新限價
+order_executor = pm.create_order_executor(account)
 order_executor.update_order_price()
 
-# 或刪除所有委託單
-# order_executor.cancel_orders()
+# 刪除所有委託單
+order_executor.cancel_orders()
 ```
 
 ### 處置股與警示股要先圈存
 
-若下單部位含有「全額交割股」、「處置股」、「警示股」，需先於證券帳戶圈存。參考[富果圈存](https://support.fugle.tw/trading/trading-troubleshoot/5231/)、[永豐圈存](https://www.sinotrade.com.tw/richclub/freshman/%E6%B0%B8%E8%B1%90%E9%87%91%E8%AD%89%E5%88%B8-%E9%A0%90%E6%94%B6%E6%AC%BE%E5%88%B8-%E6%95%B8%E4%BD%8D%E5%B9%B3%E5%8F%B0%E6%9C%8D%E5%8B%99%E5%85%A5%E5%8F%A3%E4%BB%8B%E7%B4%B9-%E6%83%B3%E8%B2%B7%E8%99%95%E7%BD%AE%E8%82%A1%E5%85%88%E7%9C%8B%E9%80%99%E4%B8%80%E7%AF%87--60ee886daefbe326a0c7bb1b)方式。`order_executor.show_alerting_stocks()`（只適用台股）會列出待下單股票中的處置股與警示股。
+若下單部位含有「全額交割股」、「處置股」、「警示股」，需先於證券帳戶圈存。參考[富果圈存](https://support.fugle.tw/trading/trading-troubleshoot/5231/?gclid=CjwKCAiAvK2bBhB8EiwAZUbP1BfmktsP8ULMWOxu0RVhTW3i3Tr_nmAfwhNuKY7635XHCq2J51FmVBoCGwAQAvD_BwE)、[永豐圈存](https://www.sinotrade.com.tw/richclub/freshman/%E6%B0%B8%E8%B1%90%E9%87%91%E8%AD%89%E5%88%B8-%E9%A0%90%E6%94%B6%E6%AC%BE%E5%88%B8-%E6%95%B8%E4%BD%8D%E5%B9%B3%E5%8F%B0%E6%9C%8D%E5%8B%99%E5%85%A5%E5%8F%A3%E4%BB%8B%E7%B4%B9-%E6%83%B3%E8%B2%B7%E8%99%95%E7%BD%AE%E8%82%A1%E5%85%88%E7%9C%8B%E9%80%99%E4%B8%80%E7%AF%87--60ee886daefbe326a0c7bb1b)方式。`order_executor.show_alerting_stocks()`（只適用台股）會列出待下單股票中的處置股與警示股。
 
 ## 下一步
 

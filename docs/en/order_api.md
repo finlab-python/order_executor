@@ -9,10 +9,11 @@ Live order execution connects to **Charles Schwab** for U.S. stocks and to **E.S
 >
 > Errors can lead to financial losses. Before placing orders:
 >
-> 1. Run the full workflow with `view_only=True` for at least 1 week to preview the orders
+> 1. Run the full workflow with `view_only=True` for at least 1 week
 > 2. Initial capital should not exceed **10-20%** of total funds
-> 3. Monitor positions and order status daily
-> 4. Set stop-loss mechanisms to avoid large single-trade losses
+> 3. Use `view_only=True` to preview orders
+> 4. Monitor positions and order status daily
+> 5. Set stop-loss mechanisms to avoid large single-trade losses
 
 ## From backtest to orders
 
@@ -76,11 +77,13 @@ Each row lists a symbol, the quantity to hold, and the order condition (`CASH` f
 
 Each stock's allocation is floored to whole board lots, so a stock whose allocation is below one lot gets 0. To trade odd lots, set quantities by hand or combine strategies, see [Adjust the position](#adjust-the-position).
 
+Drag the fund below to watch money turn into whole shares, and see which stock misses out:
+
 ### Install the broker package and connect
 
 Install the package of the broker you use and set its credentials as environment variables; configure only that broker.
 
-#### Charles Schwab
+**Charles Schwab**
 
 For U.S. stocks.
 
@@ -102,8 +105,7 @@ os.environ['SCHWAB_TOKEN_PATH'] = '/path/to/token.json'
 
 acc = SchwabAccount()
 ```
-
-#### E.SUN
+**E.SUN**
 
 E.SUN Securities, for Taiwan stocks.
 
@@ -144,12 +146,11 @@ acc = FugleAccount()
 </details>
 
 For error codes, see the [E.SUN Securities documentation](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/reference/error-code/). If you are new to the broker API, practice with the [broker's tutorial](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/quick-start/) first.
-
-#### SinoPac
+**SinoPac**
 
 SinoPac Securities, for Taiwan stocks.
 
-1. Obtain the certificate (see SinoPac's [API key and certificate guide](https://sinotrade.github.io/tutor/prepare/token/)):
+1. Obtain the certificate (see SinoPac's [API key and certificate guide](https://sinotrade.github.io/zh/tutor/prepare/token/)):
     - Click "Download certificate" on the [API management page](https://www.sinotrade.com.tw/newweb/PythonAPIKey/) of SinoPac's website. This works on Windows and macOS.
     - Or download it with eleader, which runs on Windows only.
 2. Install the package, set the variables and connect:
@@ -174,8 +175,7 @@ acc = SinopacAccount()
 ```
 
 If you are new to the broker API, practice with the [broker's tutorial](https://sinotrade.github.io/quickstart/) first.
-
-#### Taishin
+**Taishin**
 
 Taishin Securities (formerly Masterlink), for Taiwan stocks. Masterlink Securities merged into Taishin Securities on April 6, 2026. Full steps are in Taishin's [preparation guide](https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare/):
 
@@ -211,7 +211,7 @@ acc = TaishinAccount()
 
 </details>
 
-#### Fubon
+**Fubon**
 
 Fubon Securities, for Taiwan stocks. Refer to the [Fubon Securities tutorial](https://www.fbs.com.tw/TradeAPI/docs/trading/introduction/) to obtain the certificate, place it in the appropriate path, install the required packages, and then run:
 
@@ -259,15 +259,13 @@ When the preview matches what you expect, place the orders. By default the lates
 order_executer.create_orders()
 ```
 
-For orders that have not filled yet, either update the limit price (the latest transaction price becomes the new limit price):
+For orders that have not filled yet:
 
 ```python
+# Update limit price (use the latest transaction price as new limit price)
 order_executer.update_order_price()
-```
 
-or cancel all pending orders:
-
-```python
+# Cancel all pending orders
 order_executer.cancel_orders()
 ```
 
@@ -668,7 +666,11 @@ position = Position.from_report(report, fund=30_000, odd_lot=True)
 
 ### Preview before trading
 
-Run the whole workflow daily with `create_orders(view_only=True)` for 1-2 weeks, and confirm the printed orders match your expectations before using real funds.
+Run the whole workflow daily with `view_only=True` for 1-2 weeks, and confirm the printed orders match your expectations before using real funds:
+
+```python
+order_executor.create_orders(view_only=True)
+```
 
 ### Schedule a daily run
 

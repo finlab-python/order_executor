@@ -8,16 +8,23 @@
 
 ### 連上券商帳戶
 
-台股以永豐為例，美股以嘉信為例（見註解），其他券商的支援程度見下方的表：
+**台股**
+
+以永豐為例，其他台股券商的支援程度見下方的表：
 
 ```python
 from finlab.online.sinopac_account import SinopacAccount
 
 acc = SinopacAccount()
+```
+**美股**
 
-# 美股（嘉信）
-# from finlab.online.schwab_account import SchwabAccount
-# acc = SchwabAccount()
+以嘉信為例：
+
+```python
+from finlab.online.schwab_account import SchwabAccount
+
+acc = SchwabAccount()
 ```
 
 ### 建立覆盤
@@ -57,15 +64,26 @@ review.report.display()  # FinLab 報表：淨值曲線、績效指標、MAE/MFE
 
 `compare` 用「目標日收盤時」的實際部位和目標比，不會用到之後的成交。目標可以是股數，也可以是權重：
 
+**台股**
+
 ```python
 import pandas as pd
 
 target = pd.DataFrame({"2330": [2000], "2454": [1000]}, index=["2026-03-02"])
-# 美股：target = pd.DataFrame({"AAPL": [20], "MSFT": [10]}, index=["2026-03-02"])
 review.compare(target)  # date, stock_id, target, actual, diff（股數）
 
 weights = pd.DataFrame({"2330": [0.6], "2454": [0.4]}, index=["2026-03-02"])
-# 美股：weights = pd.DataFrame({"AAPL": [0.6], "MSFT": [0.4]}, index=["2026-03-02"])
+review.compare(weights, kind="weight")  # 也可以比權重
+```
+**美股**
+
+```python
+import pandas as pd
+
+target = pd.DataFrame({"AAPL": [20], "MSFT": [10]}, index=["2026-03-02"])
+review.compare(target)  # date, stock_id, target, actual, diff（股數）
+
+weights = pd.DataFrame({"AAPL": [0.6], "MSFT": [0.4]}, index=["2026-03-02"])
 review.compare(weights, kind="weight")  # 也可以比權重
 ```
 

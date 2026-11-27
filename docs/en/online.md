@@ -57,6 +57,8 @@ graph LR
 Run the strategy, size the holdings, connect to the broker and preview the orders. `view_only=True` only prints the orders; remove it once they look right.
 
 ```python
+import os
+
 from finlab import data
 from finlab.backtest import sim
 from finlab.online.order_executor import OrderExecutor, Position
@@ -73,7 +75,10 @@ report = sim(position, resample='M', upload=False)
 target = Position.from_report(report, fund=100_000)
 
 # 3. Connect to Charles Schwab (pip install schwab-py)
-account = SchwabAccount()  # reads SCHWAB_API_KEY, SCHWAB_SECRET, SCHWAB_TOKEN_PATH
+os.environ['SCHWAB_API_KEY'] = 'YOUR_APP_KEY'
+os.environ['SCHWAB_SECRET'] = 'YOUR_APP_SECRET'
+os.environ['SCHWAB_TOKEN_PATH'] = '/path/to/token.json'
+account = SchwabAccount()
 
 # 4. Preview the orders, then place them
 executor = OrderExecutor(target, account=account)
@@ -97,20 +102,28 @@ Each broker has its own account class. They all implement the same `Account` int
 | Pocket | Taiwan stocks | `finlab.online.pocket_account.PocketAccount` |
 | Binance | Crypto | `finlab.online.binance_account.BinanceAccount` |
 
-Quantities follow the account's market: **shares** for U.S. accounts (board lot of 1 share) and **lots of 1,000 shares** for Taiwan accounts, where a fraction is an odd lot (1.5 means 1,500 shares, with the 0.5 sent as an odd-lot order).
+Quantities follow the account's market: **shares** for U.S. accounts (board lot of 1 share) and **lots of 1,000 shares** for Taiwan accounts, where a fraction is an odd lot.
 
 ### Keep credentials in environment variables
 
-Don't hardcode credentials. Set them outside the code (shell profile, secret manager, CI secrets) and the account class reads them, or pass them explicitly from your own configuration:
+Never hardcode credentials. Set them outside the code (shell profile, secret manager, CI secrets) and the account class reads them, or pass them explicitly from your own configuration:
 
 ```python
+import os
+
 from finlab.online.schwab_account import SchwabAccount
 
-# Reads SCHWAB_API_KEY, SCHWAB_SECRET and SCHWAB_TOKEN_PATH
+# Set SCHWAB_API_KEY, SCHWAB_SECRET and SCHWAB_TOKEN_PATH outside the code
+# (shell profile, secret manager, CI secrets)
 account = SchwabAccount()
 
-# Or pass them explicitly from your own configuration:
-# account = SchwabAccount(api_key=..., app_secret=..., token_path=...)
+# Or pass them explicitly from your own configuration
+account = SchwabAccount(
+    api_key=os.environ['SCHWAB_API_KEY'],
+    app_secret=os.environ['SCHWAB_SECRET'],
+    token_path=os.environ['SCHWAB_TOKEN_PATH'],
+)
+# Never hardcode credentials in source code!
 ```
 
 ### Set up Pocket Securities
@@ -190,10 +203,10 @@ account.update_order(order_id, price=price * 0.99)
 
 ### account.cancel_order()
 
-Cancels an open order.
+Cancels an open order. Call `get_orders()` first to work with the latest order status.
 
 ```python
-# order_id comes from create_order() or the keys of account.get_orders()
+account.get_orders()
 account.cancel_order(order_id)
 ```
 
@@ -362,6 +375,8 @@ executor.create_orders(market_order=True)
 
 Only one of `market_order`, `best_price_limit` and `extra_bid_pct` can be set.
 
+The account below doesn't match its target. Preview the orders, then send them all at once or in batches, and watch the account line up:
+
 To split a large order, call it several times with a rising `progress`. `progress` is a fraction of the *remaining* difference, not of the original target:
 
 ```python
@@ -369,12 +384,11 @@ import time
 
 # Split large orders into 3 executions
 # After each fill the remaining gap shrinks, so the fraction must increase
-for i, p in enumerate([1 / 3, 1 / 2, 1]):
-    if i > 0:
-        time.sleep(60)  # 1-minute interval between batches
+for p in [1 / 3, 1 / 2, 1]:
     executor.create_orders(
         progress=p  # Execute 1/3, 1/2, then all of the remaining gap
     )
+    time.sleep(60)  # 1-minute interval
 ```
 
 To keep development runs from placing orders, switch on an environment variable:
@@ -465,7 +479,24 @@ executor.show_alerting_stocks()
 
 ### Make sure the capital is there
 
-Before ordering, compare the target's market value with `account.get_total_balance()`; if it is too high, lower the fund passed to `Position.from_report()` or add capital. The [pre-order safety check](order_api.md#error-2-pre-order-safety-check-failure) does this together with the holdings-count and per-stock weight checks.
+```python
+# Compare the target value with the account value before ordering
+price = account.get_price([p['symbol'] for p in target])
+required_cash = sum(float(p['quantity']) * price[p['symbol']] for p in target)
+available = account.get_total_balance()
+
+if required_cash > available:
+    print(
+        f"Insufficient capital! Required {required_cash:,.0f}, available {available:,.0f}"
+    )
+    # Lower the fund passed to Position.from_report() or add capital
+else:
+    executor.create_orders()
+```
+
+### Quantity units differ by market
+
+U.S. accounts trade in shares (`{'AAPL': 10}` is 10 shares). Taiwan accounts trade in lots of 1,000 shares, so a quantity of 1.5 means 1,500 shares, with the fraction sent as an odd-lot order.
 
 ### Taiwan-only checks
 
@@ -501,7 +532,42 @@ Each `Order` (a dataclass) has these fields:
 
 <details><summary>How do I make sure an order run is safe?</summary>
 
-Before calling `create_orders()`, check the number of holdings, the weight of each stock and the available capital. The [pre-order safety check](order_api.md#error-2-pre-order-safety-check-failure) in the single-strategy tutorial runs all three and raises an error if any fails.
+Implement the following safety checks:
+
+```python
+def safe_order_check(target, account, max_stocks=50, max_weight=0.15):
+    """Pre-order safety check"""
+    price = account.get_price([p['symbol'] for p in target])
+    values = {p['symbol']: float(p['quantity']) * price[p['symbol']] for p in target}
+    total = sum(values.values())
+
+    # 1. Check position count
+    if len(values) > max_stocks:
+        raise ValueError(
+            f"Too many positions ({len(values)}), exceeds limit of {max_stocks}"
+        )
+
+    # 2. Check single stock weight
+    largest = max(values.values()) / total if total else 0
+    if largest > max_weight:
+        raise ValueError(
+            f"Single stock weight too high ({largest:.1%}), exceeds limit of {max_weight:.0%}"
+        )
+
+    # 3. Check available capital
+    available = account.get_total_balance()
+    if total > available * 1.1:  # 10% buffer
+        raise ValueError(
+            f"Insufficient capital! Required {total:,.0f}, available {available:,.0f}"
+        )
+
+    print("Safety check passed")
+    return True
+
+# Usage
+if safe_order_check(target, account):
+    executor.create_orders()
+```
 
 </details>
 
@@ -520,7 +586,34 @@ Common causes:
 
 <details><summary>How do I run orders on a daily schedule?</summary>
 
-[Schedule a daily run](order_api.md#schedule-a-daily-run) in the single-strategy tutorial has a script that reruns the strategy and places the orders at a set time each day; run the [pre-order safety check](order_api.md#error-2-pre-order-safety-check-failure) before its `create_orders()` call.
+```python
+import time
+
+import schedule
+from finlab.online.order_executor import OrderExecutor, Position
+
+def auto_trade():
+    """Daily automatic trading"""
+    try:
+        # 1. Get the latest target (rerun the strategy first)
+        target = Position.from_report(report, fund=100_000)
+
+        # 2. Safety check
+        if safe_order_check(target, account):
+            # 3. Execute orders
+            OrderExecutor(target, account=account).create_orders()
+            print(f"Order completed: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    except Exception as e:
+        # 4. Error notification (Email, chat webhook)
+        print(f"Order failed: {e}")
+
+# Run daily at 15:30, 30 minutes before the 16:00 U.S. close (machine clock on New York time)
+schedule.every().day.at("15:30").do(auto_trade)
+
+while True:
+    schedule.run_pending()
+    time.sleep(60)
+```
 
 To rerun a strategy every day without keeping your own process alive, you can also use the [FinLab CLI](https://studio.finlab.finance/en/docs/cli).
 
@@ -549,12 +642,26 @@ except Exception as e:
 
 </details>
 
+> [!CAUTION]
+> **Final reminder**
+>
+> **Always preview orders and start small before using real capital!**
+>
+> **Recommended test checklist**:
+> - Order workflow executes without errors
+> - Position calculations are correct (match expectations)
+> - Capital control is normal (no overspending)
+> - Error handling mechanisms work
+> - Notification mechanisms function properly
+> - Runs continuously for 1 month without issues
+>
+> **Only consider using real capital after all items above are confirmed!**
+
 ## Next steps
 
-- [Checklist before going live](order_api.md#checklist-before-going-live) What to confirm before using real capital.
-- [Orders: one strategy](order_api.md) Broker credentials and the basic order flow.
-- [Orders: many strategies](order_api2.md) Combine strategies with PortfolioSyncManager, then trade.
+- [Live trading, single strategy](order_api.md) Broker credentials and the basic order flow.
+- [Live trading, multiple strategies](order_api2.md) Combine strategies with PortfolioSyncManager, then trade.
 - [Risk management](https://studio.finlab.finance/en/docs/workflows/risk_management) Position sizing, stops and capital control in live trading.
 - [Complete strategy workflow](https://studio.finlab.finance/en/docs/workflows/complete_strategy_workflow) From research and backtesting to live trading.
 
-Source code is in [core/](../../core/) and [brokers/](../../brokers/).
+Source code is on [GitHub](https://github.com/finlab-python/finlab/blob/main/finlab/online/).
