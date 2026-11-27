@@ -53,17 +53,7 @@ report = backtest.sim(...)
 print(report.current_trades)
 ```
 
-<details><summary>範例輸出</summary>
-
-| stock_id | entry_date | exit_date  | entry_sig_date | exit_sig_date | position   | period   | entry_index | exit_index | return | entry_price   | exit_price | mae | gmfe      | bmfe     | mdd      | pdays     | next_weights |
-|------------|------------|----------------|---------------|------------|----------|-------------|------------|--------|---------------|------------|-----|-----------|----------|----------|-----------|--------|--------------|
-| 1416 廣豐    | 2021-10-01 | NaT            | 2021-09-30    | 2022-06-30 | 0.510197 | 159.0       | 3566.0     | -1.0   | -3.539823e-02 | 10.60      | NaN | -0.053097 | 0.070796 | 0.070796 | -0.115702 | 37.0   | 0.060665     |
-| 1453 大將    | 2021-10-01 | NaT            | 2021-09-30    | 2022-06-30 | 0.510197 | 159.0       | 3566.0     | -1.0   | 2.348165e+00  | 8.43       | NaN | -0.086763 | 2.403782 | 0.245829 | -0.624585 | 60.0   | 0.171264     |
-| 1524 耿鼎    | 2022-04-01 | NaT            | 2022-03-31    | 2022-06-30 | 0.611632 | 39.0        | 3686.0     | -1.0   | -3.330669e-16 | 10.60      | NaN | -0.476658 | 0.015152 | 0.000000 | -0.476658 | 2.0    | 0.122168     |
-| 2543 皇昌    | 2021-10-01 | NaT            | 2021-09-30    | NaT        | 0.510197 | 159.0       | 3566.0     | -1.0   | 1.073232e-01  | 7.46       | NaN | -0.063131 | 0.363636 | 0.008838 | -0.268519 | 44.0   | 0.070298     |
-| 2701 萬企    | 2022-04-01 | NaT            | 2022-03-31    | 2022-06-30 | 0.611632 | 39.0        | 3686.0     | -1.0   | -3.330669e-16 | 12.05      | NaN | -0.025105 | 0.029289 | 0.029289 | -0.052846 | 18.0   | 0.063107     |
-
-</details>
+`current_trades` 列出最新訊號日仍持有或有變動的交易，包含進出場日期、報酬率、MAE/MFE、目前的目標權重 `weight`，以及下次換股的 `next_weights`。
 
 確認沒問題後，用 `Position.from_report()` 依投入的總資金換算每檔股票的張數：
 
@@ -84,13 +74,11 @@ print(position)
 
 預設只買整張：每檔先用分到的資金買整張，剩下的錢再一張一張補給離目標比例最遠、還買得起的股票，所以分到的資金不足一張的股票可能補到一張，也可能是 0 張。想買零股、自己指定張數或合併多個策略，見下方[調整部位](#調整部位)。
 
-拉動下面的資金，看錢怎麼變成一張張股票，也看看哪一檔會買不到：
-
 ### 安裝券商套件並連接帳戶
 
 台股支援玉山證券、永豐證券、台新證券（原元富證券）及富邦證券，美股支援嘉信（Charles Schwab），擇一使用即可。帳號密碼設成環境變數，只需設定你要用的券商。
 
-**玉山證券**
+#### 玉山證券
 
 [▶ YouTube](https://www.youtube.com/watch?v=AAGcIgJAUVY)
 
@@ -130,8 +118,9 @@ acc = FugleAccount()
 
 </details>
 
-下單錯誤代碼請見[玉山證券文件](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/reference/error-code/)；若不熟券商 API，可先照[券商教學](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/quick-start/)練習。
-**永豐證券**
+下單錯誤代碼請見[玉山證券文件](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/reference/error-code/)。若不熟券商 API，可先照[券商教學](https://www.esunsec.com.tw/trading-platforms/api-trading/docs/trading/quick-start/)練習；那邊串接成功，FinLab 套件的串接也是如法炮製。
+
+#### 永豐證券
 
 [▶ YouTube](https://www.youtube.com/watch?v=BDsVOI4cZNk)
 
@@ -157,8 +146,9 @@ os.environ['SHIOAJI_CERT_PASSWORD'] = '永豐證券憑證密碼'  # 預設與身
 acc = SinopacAccount()
 ```
 
-若不熟券商 API，可先照[券商教學](https://sinotrade.github.io/quickstart/)練習。
-**台新證券（原元富）**
+若不熟券商 API，可先照[券商教學](https://sinotrade.github.io/quickstart/)練習；那邊串接成功，FinLab 套件的串接就很簡單。
+
+#### 台新證券（原元富）
 
 元富證券已於 2026 年 4 月 6 日併入台新證券。詳細步驟見台新官方的[事前準備](https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare/)：
 
@@ -194,7 +184,7 @@ acc = TaishinAccount()
 
 </details>
 
-**富邦證券**
+#### 富邦證券
 
 請參考[富邦證券的教學](https://www.fbs.com.tw/TradeAPI/docs/trading/introduction/)取得憑證，把憑證放在對應的路徑，安裝相對應的套件後執行：
 
@@ -213,7 +203,8 @@ acc = FubonAccount()
 ```
 
 `FUBON_NATIONAL_ID`、`FUBON_ACCOUNT_PASS`、`FUBON_CERT_PATH` 必須設定，缺少時會報錯；其餘三個是選填。
-**Charles Schwab**
+
+#### Charles Schwab
 
 嘉信（Charles Schwab）用於美股帳戶：
 
@@ -258,7 +249,7 @@ order_executer.show_alerting_stocks()
 
 若沒有待下單股票落在名單中，則只會顯示「待下單股票中無處置股或警示股。」
 
-下單部位含有「全額交割股」、「處置股」、「警示股」時，需先於證券帳戶圈存，作法依券商而定，例如[永豐圈存](https://www.sinotrade.com.tw/richclub/freshman/%E6%B0%B8%E8%B1%90%E9%87%91%E8%AD%89%E5%88%B8-%E9%A0%90%E6%94%B6%E6%AC%BE%E5%88%B8-%E6%95%B8%E4%BD%8D%E5%B9%B3%E5%8F%B0%E6%9C%8D%E5%8B%99%E5%85%A5%E5%8F%A3%E4%BB%8B%E7%B4%B9-%E6%83%B3%E8%B2%B7%E8%99%95%E7%BD%AE%E8%82%A1%E5%85%88%E7%9C%8B%E9%80%99%E4%B8%80%E7%AF%87--60ee886daefbe326a0c7bb1b)。依 `show_alerting_stocks()` 的結果圈存後，再繼續下單。
+下單部位含有「全額交割股」、「處置股」、「警示股」時，需先於證券帳戶圈存，作法依券商而定，例如[富果圈存](https://support.fugle.tw/trading/trading-troubleshoot/5231/)、[永豐圈存](https://www.sinotrade.com.tw/richclub/freshman/%E6%B0%B8%E8%B1%90%E9%87%91%E8%AD%89%E5%88%B8-%E9%A0%90%E6%94%B6%E6%AC%BE%E5%88%B8-%E6%95%B8%E4%BD%8D%E5%B9%B3%E5%8F%B0%E6%9C%8D%E5%8B%99%E5%85%A5%E5%8F%A3%E4%BB%8B%E7%B4%B9-%E6%83%B3%E8%B2%B7%E8%99%95%E7%BD%AE%E8%82%A1%E5%85%88%E7%9C%8B%E9%80%99%E4%B8%80%E7%AF%87--60ee886daefbe326a0c7bb1b)。依 `show_alerting_stocks()` 的結果圈存後，再繼續下單。
 
 ### 先預覽，再下單
 
@@ -275,13 +266,15 @@ order_executer.create_orders(view_only=True)
 order_executer.create_orders()
 ```
 
-委託送出後還沒成交時，可以更新限價或刪單：
+委託送出後還沒成交時，可以擇一更新限價（將最後一筆成交價當成新的限價）：
 
 ```python
-# 更新限價（將最後一筆成交價當成新的限價）
 order_executer.update_order_price()
+```
 
-# 刪除所有委託單
+或刪除所有委託單：
+
+```python
 order_executer.cancel_orders()
 ```
 
@@ -346,9 +339,7 @@ total_position = position1 + position2
 
 ## 查看帳戶目前的部位
 
-連線後的帳戶物件都可以用 `get_position()` 查目前的部位，例如永豐或玉山證券：
-
-**永豐證券**
+連線後的帳戶物件都可以用 `get_position()` 查目前的部位，例如永豐證券：
 
 ```python
 from finlab.online.sinopac_account import SinopacAccount
@@ -356,24 +347,13 @@ from finlab.online.sinopac_account import SinopacAccount
 acc = SinopacAccount()
 print(acc.get_position())
 ```
-**玉山證券**
-
-```python
-from finlab.online.esun_account import EsunAccount
-
-acc = EsunAccount()
-
-# 或使用舊版名稱（仍可使用）
-# from finlab.online.fugle_account import FugleAccount
-# acc = FugleAccount()
-
-print(acc.get_position())
-```
 
 ```text
 [{'stock_id': '2330', 'quantity': 1, 'order_condition': <OrderCondition.CASH: 1>}
  {'stock_id': '1101', 'quantity': 1.001, 'order_condition': <OrderCondition.CASH: 1>}]
 ```
+
+其他券商的用法相同，例如玉山證券改用 `EsunAccount()`（`finlab.online.esun_account`）。
 
 ## 常見錯誤與解決方法
 
@@ -460,7 +440,6 @@ except ConnectionError as e:
 except Exception as e:
     print(f"\n❌ 未知錯誤：{e}")
     print("請檢查所有環境變數是否正確設定")
-    print("參考教學：https://doc.finlab.tw/details/order_api/")
 ```
 
 </details>
@@ -654,9 +633,6 @@ order_executor = OrderExecutor(position, account=acc)
 print("=== 檢查處置股 ===")
 order_executor.show_alerting_stocks()
 print("若上面列出處置股/警示股，請至券商平台圈存後再下單")
-print("參考圈存教學：")
-print("  - 富果：https://support.fugle.tw/trading/trading-troubleshoot/5231/")
-print("  - 永豐：https://www.sinotrade.com.tw/richclub/freshman/...")
 # 等待用戶手動圈存後再繼續
 input("圈存完成（或不需圈存）後，按 Enter 繼續...")
 

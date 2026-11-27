@@ -97,18 +97,23 @@ executor.create_orders(view_only=True)  # 只印出委託，不會下單
 
 ### 用環境變數保存帳密
 
-帳密不要寫進程式碼。在程式以外設定好環境變數（shell 設定檔、密鑰管理服務、CI secrets），帳戶類別會自己讀取；也可以從你的設定明確傳入：
+帳密不要寫進程式碼。在程式以外（shell 設定檔、密鑰管理服務、CI secrets）設定好環境變數，帳戶類別會自己讀取：
+
+```python
+from finlab.online.sinopac_account import SinopacAccount
+
+# 讀取 SHIOAJI_API_KEY、SHIOAJI_SECRET_KEY、SHIOAJI_CERT_PERSON_ID、
+# SHIOAJI_CERT_PATH、SHIOAJI_CERT_PASSWORD 後登入
+account = SinopacAccount()
+```
+
+也可以改成從自己的設定讀出帳密後明確傳入，取代上面的寫法：
 
 ```python
 import os
 
 from finlab.online.sinopac_account import SinopacAccount
 
-# 在程式碼以外設定 SHIOAJI_API_KEY、SHIOAJI_SECRET_KEY、SHIOAJI_CERT_PERSON_ID、
-# SHIOAJI_CERT_PATH、SHIOAJI_CERT_PASSWORD（shell 設定檔、密鑰管理服務、CI secrets）
-account = SinopacAccount()
-
-# 或從自己的設定明確傳入
 account = SinopacAccount(
     api_key=os.environ['SHIOAJI_API_KEY'],
     secret_key=os.environ['SHIOAJI_SECRET_KEY'],
@@ -116,7 +121,6 @@ account = SinopacAccount(
     certificate_path=os.environ['SHIOAJI_CERT_PATH'],
     certificate_password=os.environ['SHIOAJI_CERT_PASSWORD'],
 )
-# 不要在程式碼中硬編碼帳密！
 ```
 
 各券商要設定哪些變數，見[實盤下單教學](order_api.md)。
@@ -141,152 +145,24 @@ from finlab.online import PocketAccount
 
 </details>
 
-### finlab.online.core.account.Account
+### Account
+
+每個帳戶類別都有下面這些查詢方法；`get_price()` 與下單、改單、刪單見後面幾節。
 
 ```python
-Account()
+account.get_position()       # 帳戶目前的持股（Position）
+account.get_total_balance()  # 帳戶淨值
 ```
 
-#### finlab.online.core.account.Account.create_order
-
-```python
-create_order(action, stock_id, quantity, price, odd_lot, market_order, best_price_limit, order_cond) -> str
-```
-
-產生新的委託單
-
-**Parameters**
-
-- `action` (Action): 買賣方向，通常為 'BUY' 或是 'SELL'
-- `stock_id` (str): 股票代號 ex: '2330'
-- `quantity` (Number): 委託股票的總數量（張數），允許小數點
-- `price` (Number): 股票買賣的價格(限價單)
-- `force` (bool): 是否用最差之價格（長跌停）強制成交? 當成交量足夠時，可以比較快成交，然而當成交量低時，容易有大的滑價
-- `wait_for_best_price` (bool): 是否用最佳之價格（長跌停），無限時間等待？當今天要出場時，可以開啟等漲停價來購買，當今天要買入時，可以掛跌停價等待買入時機。
-
-**Returns**
-
-- `` (str): order id 券商提供的委託單編號
-
-#### finlab.online.core.account.Account.update_order
-
-```python
-update_order(order_id, price, quantity) -> None
-```
-
-產生新的委託單
-
-**Attributes**
-
-- `order_id` (str): 券商所提供的委託單 ID
-- `price` (Number): 更新的限價
-- `quantity` (Number): 更新的待成交量
-
-**Returns**
-
-- `` (None): 無跳出 erorr 代表成功更新委託單
-
-#### finlab.online.core.account.Account.cancel_order
-
-```python
-cancel_order(order_id) -> None
-```
-
-刪除委託單
-
-建議使用 刪除委託單此功能前，先使用 update_order() 來更新委託單的狀況！如下
-```py
-acc.update_order()
-acc.cancel_order('ORDER_ID')
-```
-
-**Attributes**
-
-- `order_id` (str): 券商所提供的委託單 ID
-
-**Returns**
-
-- `` (None): 代表成功更新委託單
-
-#### finlab.online.core.account.Account.get_orders
-
-```python
-get_orders() -> dict[str, Order]
-```
-
-拿到現在所有委託單
-
-**Returns**
-
-- `` (Dict[str, Order]): 所有委託單 id 與委託單資料 !!! example     `{'12345A': Order(order_id='12345A', stock_id='5410',...),...}`
-
-#### finlab.online.core.account.Account.get_stocks
-
-```python
-get_stocks(stock_ids) -> dict[str, Stock]
-```
-
-拿到現在股票報價
-
-**Attributes**
-
-- `stock_ids` (`list` of `str`): 一次拿取所有股票的報價，ex: ['1101', '2330']
-
-**Returns**
-
-- `` (dict): 報價資料， !!! example     `{'1101': Stock(stock_id='1101', open=31.15, high=31.85, low=31.1, close=31.65, bid_price=31.6, bid_volume=728.0, ask_price=31.65, ask_volume=202)}`
-
-#### finlab.online.core.account.Account.get_position
-
-```python
-get_position() -> Position
-```
-
-拿到當前帳戶的股票部位
-
-**Returns**
-
-- `` (Position): 當前股票部位
-
-#### finlab.online.core.account.Account.get_total_balance
-
-```python
-get_total_balance() -> int
-```
-
-拿到當前帳戶的股票部位淨值
-
-#### finlab.online.core.account.Account.get_cash
-
-```python
-get_cash() -> int
-```
-
-拿到當前帳戶的現金
-
-#### finlab.online.core.account.Account.get_settlement
-
-```python
-get_settlement() -> int
-```
-
-拿到當前帳戶的結算資料
-
-#### finlab.online.core.account.Account.support_best_price_limit
-
-```python
-support_best_price_limit() -> bool
-```
-
-是否能以漲跌停價掛單（best_price_limit）
-
-#### finlab.online.core.account.Account.get_market
-
-```python
-get_market() -> Market
-```
-
-拿到當前帳戶的市場
+| 方法 | 回傳 | 說明 |
+|---|---|---|
+| `get_stocks(stock_ids)` | `dict[str, Stock]` | 即時報價，例如 `get_stocks(['1101', '2330'])`。每檔一個 `Stock`，含開高低收（`open`、`high`、`low`、`close`）與最佳一檔買賣價量（`bid_price`、`bid_volume`、`ask_price`、`ask_volume`）。 |
+| `get_position()` | `Position` | 帳戶目前的持股。 |
+| `get_total_balance()` | `Number` | 帳戶淨值。 |
+| `get_cash()` | `Number` | 現金餘額。 |
+| `get_settlement()` | `Number` | 尚未交割的金額。 |
+| `support_best_price_limit()` | `bool` | 能不能用 `best_price_limit` 掛漲跌停價；預設 `True`，幣安為 `False`，這時設定 `best_price_limit` 會報錯。 |
+| `get_market()` | `Market` | 帳戶所屬的市場：台股券商是 `TWMarket`；券商類別沒有指定時，用 FinLab 的預設市場。 |
 
 ### account.get_price()
 
@@ -300,224 +176,211 @@ price = account.get_price(['2330', '2317'])
 |---|---|---|---|
 | `stock_ids` | `list[str]` | 必填 | 股票代號清單。 |
 
+### account.create_order()
+
+送出一筆新委託，回傳券商的委託單編號。`OrderExecutor` 會代為呼叫，自己逐筆下單時才需要直接用。
+
+```python
+from finlab.online.enums import Action
+
+price = account.get_price(['2330'])['2330']
+order_id = account.create_order(Action.BUY, '2330', 1, price=price)  # 以最後成交價買 1 張
+```
+
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `action` | `Action` | 必填 | `Action.BUY` 或 `Action.SELL`。 |
+| `stock_id` | `str` | 必填 | 股票代號，例如 `'2330'`。 |
+| `quantity` | `Number` | 必填 | 委託數量：台股整股單是張，`odd_lot=True` 的零股單是股；美股是股。 |
+| `price` | `Number` | `None` | 限價。 |
+| `odd_lot` | `bool` | `False` | 台股：下零股單。 |
+| `market_order` | `bool` | `False` | 盡量立即成交：台股買單掛漲停價、賣單掛跌停價（嘉信改送市價單）。 |
+| `best_price_limit` | `bool` | `None` | 掛最有利的漲跌停價（芭樂價）等待成交：買單掛跌停價、賣單掛漲停價。 |
+| `order_cond` | `OrderCondition` | `OrderCondition.CASH` | `CASH`（現股）、`MARGIN_TRADING`（融資）、`SHORT_SELLING`（融券）、`DAY_TRADING_LONG`（當沖先買）或 `DAY_TRADING_SHORT`（當沖先賣）。 |
+
+### account.update_order()
+
+修改未成交委託的限價或數量。回傳 `None`，沒有報錯就代表修改成功。
+
+```python
+account.update_order(order_id, price=new_price)
+```
+
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `order_id` | `str` | 必填 | 券商的委託單編號。 |
+| `price` | `Number` | `None` | 新的限價。 |
+| `quantity` | `Number` | `None` | 新的未成交數量。 |
+
+### account.cancel_order()
+
+取消一筆未成交的委託。
+
+```python
+# order_id 來自 create_order() 的回傳值，或 account.get_orders() 的 key
+account.cancel_order(order_id)
+```
+
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `order_id` | `str` | 必填 | 券商的委託單編號。 |
+
 ## 設定目標部位
 
-`Position` 是要讓帳戶持有的股票與數量。最常用的是從回測報告直接換算：
+`Position` 是要讓帳戶持有的股票與數量。可以直接寫出張數，也可以從回測報告或權重換算，最常用的是 `Position.from_report()`。
+
+### Position()
+
+直接寫出要持有的股票與張數。每筆部位含 `symbol`（股票代號，也可以用 `stock_id`）、`quantity`（數量）和 `order_condition`（`OrderCondition`）。
 
 ```python
 from finlab.online.order_executor import Position
+
+# 持有 1 張 2330，以及 1 張又 100 股 1101
+manual = Position({'2330': 1, '1101': 1.1})
+double = manual * 2  # 部位可以相加、相減，也可以乘除
+```
+
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `stocks` | `dict[str, Number]` | 必填 | 股票代號對應張數，例如 `{'1101': 1}` 是持有一張 1101 台泥；負數代表做空。 |
+| `weights` | `dict[str, float]` 或 `pd.Series` | `None` | 每檔的目標權重，會記在部位裡。 |
+| `margin_trading` | `bool` | `False` | 做多部位使用融資。不能和 `day_trading_long` 同時設定。 |
+| `short_selling` | `bool` | `False` | 做空部位使用融券。不能和 `day_trading_short` 同時設定。 |
+| `day_trading_long` | `bool` | `False` | 做多部位為當沖先買。 |
+| `day_trading_short` | `bool` | `False` | 做空部位為當沖先賣。 |
+
+### Position.from_report()
+
+從回測報告算出「現在」該持有的部位。
+
+```python
+from finlab import backtest, data
+from finlab.online.order_executor import Position
+
+close = data.get('price:收盤價')
+
+report1 = backtest.sim(
+    (close / close.shift(120)).is_largest(10), resample='M', upload=False
+)  # 半年動能
+report2 = backtest.sim(
+    (close / close.shift(20)).is_smallest(10), resample='M', upload=False
+)  # 一個月反轉
 
 # 策略操作金額各一百萬，兩個部位可以相加
 position1 = Position.from_report(report1, 1_000_000)
 position2 = Position.from_report(report2, 1_000_000)
 total_position = position1 + position2
-
-# 也可以直接寫：持有 1 張 2330，以及 1 張又 100 股 1101
-manual = Position({'2330': 1, '1101': 1.1})
 ```
 
-`Position.from_report()` 算的是「現在」該持有的部位：下次換股前用 `report.weights`，換股時間一到（與 `report.is_rebalance_due()` 同一個規則）就改用 `report.next_weights`；有停損停利待出場的股票權重為 0。一份報告裡包含多個策略時，請改用 `finlab.portfolio.Portfolio`。
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `report` | `Report` | 必填 | `backtest.sim()` 的回測報告（或雲端報告）。 |
+| `fund` | `int` | 必填 | 要投入的資金，單位是該市場的貨幣。 |
+| `**kwargs` | | | 傳給 `Position.from_weight()`，例如 `odd_lot`、`price`、`margin_trading`、`leverage`。 |
 
-`Position.from_weight()` 和 `backtest.sim()` 一樣，權重絕對值總和大於 1 時會等比例縮到 1。`odd_lot=False`（預設）只買整張，資金不夠買一張的股票會是 0 股，並發出 `ZeroShareAllocationWarning`。
-### finlab.online.core.position.Position
+下次換股前用 `report.weights`，換股時間一到（與 `report.is_rebalance_due()` 同一個規則）就改用 `report.next_weights`；有停損停利待出場的股票權重為 0。價格預設用該市場最新的參考價，一張幾股由 `report.market` 決定（台股 1,000 股、美股 1 股）。一份報告裡包含多個策略時，請改用 `finlab.portfolio.Portfolio`。
+
+### Position.from_weight()
+
+把權重和資金換算成張數。和 `backtest.sim()` 一樣，權重絕對值總和大於 1 時會等比例縮到 1。
 
 ```python
-Position(stocks, weights, margin_trading, short_selling, day_trading_long, day_trading_short)
-```
-
-使用者可以利用 Position 輕鬆建構股票的部位，並且利用 OrderExecuter 將此部位同步於實際的股票帳戶。
-
-**Attributes**
-
-- `stocks` (`dict` of `str`): `number.Number`): 股票代號與張數 ex: {'1101': 1} 是指持有一張 1101 台泥，可以接受負數，代表做空。
-- `margin_trading` (bool, default False): 做多部位是否使用融資
-- `short_selling` (bool, default False): 做空部位是否使用融券
-- `day_trading_long` (bool, default False): 做多部位為當沖先做多
-- `day_trading_short` (bool, default False): 做空部位為當沖先做空
-
-**Examples**
-
-設計部位，持有一張和 100 股 1101
-```py
 from finlab.online.order_executor import Position
 
-Position({'1101': 1.1})
-```
-output
-```json
-[
-    {'stock_id': '1101',
-     'quantity': 1.1,
-     'order_condition': <OrderCondition.CASH: 1>
-    }
-]
+# 100 萬資金，1101 和 2330 各一半
+Position.from_weight({'1101': 0.5, '2330': 0.5}, fund=1_000_000)
 ```
 
-將兩個部位相加
-```py
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `weights` | `dict[str, float]` 或 `pd.Series` | 必填 | 股票代號對應權重。 |
+| `fund` | `int` | 必填 | 要投入的資金。 |
+| `price` | `pd.Series` 或 `dict[str, float]` | `None` | 每檔的價格；預設用目前市場最新的參考價。 |
+| `odd_lot` | `bool` | `False` | 是否買零股。`False` 時只買整張，資金不夠買一張的股票會是 0 股，並發出 `ZeroShareAllocationWarning`。搭配 `margin_trading` 或 `short_selling` 時只有整張用信用交易：多方不足一張的部分用現股買，空方不足一張的部分不放空。 |
+| `board_lot_size` | `int` | `None` | 一張幾股；預設用目前市場的設定（台股 1,000、美股 1）。 |
+| `allocation` | callable | `greedy_allocation` | 資產配置演算法；預設的 `finlab.online.utils.greedy_allocation` 會盡量把資金用完。 |
+| `precision` | `int` | `None` | 只在 `board_lot_size` 為 1 且 `odd_lot=True` 時有效：數量算到小數第幾位。其他情況不看這個參數：`odd_lot=True` 時算到 1 股，否則只買整張。 |
+| `leverage` | `float` | `1.0` | 目標槓桿倍數。大於 1.0 時總曝險為 `fund * leverage`，從波動度最低的持股開始配融資，讓現股加上融資自備款不超過 `fund`；不能和 `margin_trading`、`day_trading_long` 同時使用。 |
+| `price_history` | `pd.DataFrame` | `None` | 歷史價格，`leverage > 1.0` 時必填（`from_report()` 會自動帶入）。 |
+| `margin_ratio` | `float` | `0.6` | 融資成數，只在 `leverage > 1.0` 時使用；上市股票 0.6，上櫃股票請用 0.5。 |
+| `**kwargs` | | | `margin_trading`、`short_selling`、`day_trading_long`、`day_trading_short`（見 `Position()`）。 |
+
+### Position.from_list() 與 position.to_list()
+
+用 dict 清單建構部位，或把部位轉回 dict 清單。下單前過濾股票就是用這組，見[過濾處置股](#過濾處置股)。
+
+```python
+from finlab.online.enums import OrderCondition
 from finlab.online.order_executor import Position
 
-p1 = Position({'1101': 1})
-p2 = Position({'2330': 1})
-p1 + p2
-```
-output
-```json
-[
-    {'stock_id': '1101', 'quantity': 1.0, 'order_condition': <OrderCondition.CASH: 1>},
-    {'stock_id': '2330', 'quantity': 1.0, 'order_condition': <OrderCondition.CASH: 1>}
-]
+target = Position.from_list([
+    {'stock_id': '1101', 'quantity': 1.1, 'order_condition': OrderCondition.CASH},
+    {'stock_id': '2330', 'quantity': 1, 'order_condition': OrderCondition.MARGIN_TRADING},
+])
+entries = target.to_list()
 ```
 
-#### finlab.online.core.position.Position.from_list
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `position` | `list[dict]` | 必填 | 每個 dict 有 `stock_id`（或 `symbol`）、`quantity`（數量）和 `order_condition`（`OrderCondition`，種類同 `account.create_order()` 的 `order_cond`）。 |
+
+### position.to_json() 與 Position.from_json()
+
+把部位存成 JSON 檔，或從 JSON 檔讀回來。
 
 ```python
-from_list(position) -> Position
+target.to_json('target.json')
+target = Position.from_json('target.json')
 ```
 
-利用 `dict` 建構股票部位
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `path` | `str` | 必填 | JSON 檔案路徑。 |
 
-**Attributes**
+### Position.from_entries() 與 position.to_entries()
 
-- `position` (`list` of `dict`): 股票詳細部位 ```py from finlab.online.enums import OrderCondition from finlab.online.order_executor import Position Position.from_list( [{   'stock_id': '1101', # 股票代號   'quantity': 1.1, # 張數   'order_condition': OrderCondition.CASH # 現股融資融券、先買後賣 }]) ``` 其中 OrderCondition 除了 `CASH` 外，還有 `MARGIN_TRADING`、`DAY_TRADING_LONG`、`SHORT_SELLING`、`DAY_TRADING_SHORT`。
-
-#### finlab.online.core.position.Position.from_entries
+和 `finlab.schemas.PositionEntry` 物件互轉。
 
 ```python
-from_entries(entries) -> Position
+entries = target.to_entries()
+same = Position.from_entries(entries)
 ```
-
-Build Position from schema entries (e.g. finlab.schemas.PositionEntry).
-
-#### finlab.online.core.position.Position.to_entries
-
-```python
-to_entries() -> list[Any]
-```
-
-Convert Position internal payload to schema entries.
-
-#### finlab.online.core.position.Position.from_weight
-
-```python
-from_weight(weights, fund, price, odd_lot, board_lot_size, allocation, precision, leverage, price_history, margin_ratio, **kwargs) -> Position
-```
-
-利用 `weight` 建構股票部位
-
-**Attributes**
-
-- `weights` (dict[str, float] 或 pd.Series): 股票詳細部位，股票代號對應權重。 與 `backtest.sim()` 相同，若權重絕對值總和大於 1，會等比例縮放至總和為 1。
-- `fund` (int): 資金大小
-- `price` (None 或 pd.Series 或 dict[str, float]): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
-- `odd_lot` (bool, default False): 是否考慮零股。為 False 時只買整張，資金不足一張的股票會是 0 股， 並發出 `ZeroShareAllocationWarning`。
-- `board_lot_size` (None 或 int): 一張股票等於幾股
-- `allocation` (function, default greedy_allocation): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。 呼叫方式為 `allocation(weights, price * board_lot_size, effective_fund * 10**precision)`， 其中 effective_fund 在 leverage > 1 時為 fund * leverage，否則為 fund； precision 為依零股與 board_lot_size 調整後的有效精度。 需回傳 `(dict[股票代號, 張數 * 10**precision], 剩餘資金)`。
-- `precision` (None 或 int): board_lot_size 為 1 且 odd_lot=True 時，計算張數的精度，1 代表 0.1 張，2 代表 0.01 張，以此類推。 其他情況只買整數張，精度為 0。
-- `leverage` (float, default 1.0): 目標槓桿倍數，預設為1.0（不使用融資）。若>1.0，會根據波動度分配融資， 總曝險為 fund * leverage，自備款（現股加融資自備款）不超過 fund。
-- `price_history` (None 或 pd.DataFrame): 股票歷史價格，若 leverage > 1.0 時必須提供。
-- `margin_ratio` (float, default 0.6): 融資成數，預設 0.6（上市股票）；上櫃股票為 0.5。只在 leverage > 1.0 時使用。
-- `margin_trading` (bool): 做多部位是否使用融資。odd_lot=True 時零股不能融資，不足一張的部分用現股。
-- `short_selling` (bool): 做空部位是否使用融券。odd_lot=True 時零股不能融券，不足一張的部分不放空。
-- `day_trading_long` (bool): 做多部位為當沖先做多
-
-**Examples**
-
-例如，用 100 萬的資金，全部投入，持有 1101 和 2330 各一半：
-```py
-from finlab.online.order_executor import Position
-
-Position.from_weight({
-'1101': 0.5,
-'2330': 0.5,
-}, fund=1000000)
-
-```
-output
-```
-[
-
-    {'stock_id': '1101', 'quantity': 13, 'order_condition': <OrderCondition.CASH: 1>},
-    {'stock_id': '2330', 'quantity': 1, 'order_condition': <OrderCondition.CASH: 1>}
-      ]
-      ```
-
-#### finlab.online.core.position.Position.from_report
-
-```python
-from_report(report, fund, **kwargs) -> Position
-```
-
-利用回測完的報告 `finlab.report.Report` 建構股票部位。
-
-**Attributes**
-
-- `report` (finlab.report.Report): 回測完的結果報告。
-- `fund` (int): 希望部屬的資金。
-- `price` (pd.Series or `dict` of `float`): 股票代號對應到的價格，若無則使用最近個交易日的收盤價。
-- `odd_lot` (bool): 是否考慮零股。預設為 False，只使用整張操作。
-- `board_lot_size` (int): 一張股票等於幾股。預設為1000，一張等於1000股。
-- `allocation` (func): 資產配置演算法選定，預設為`finlab.online.utils.greedy_allocation`（最大資金部屬貪婪法）。
-- `margin_trading` (bool): 做多部位是否使用融資
-- `short_selling` (bool): 做空部位是否使用融券
-- `day_trading_long` (bool): 做多部位為當沖先做多
-- `day_trading_short` (bool): 做空部位為當沖先做空
-- `leverage` (float): 目標槓桿倍數，預設為1.0（不使用融資）。若>1.0，會根據波動度分配融資。
-
-> **Example**
->
-> ```py
-> from finlab import backtest
-> from finlab.online.order_executor import Position
-> 
-> report1 = backtest.sim(...)
-> report2 = backtest.sim(...)
-> 
-> position1 = Position.from_report(report1, 1000000) # 策略操作金額一百萬
-> position2 = Position.from_report(report2, 1000000) # 策略操作金額一百萬
-> 
-> total_position = position1 + position2
-> ```
-
-#### finlab.online.core.position.Position.to_json
-
-```python
-to_json(path) -> None
-```
-
-Converts the position dictionary to a JSON file and saves it to the specified path.
-
-**Parameters**
-
-- `path` (str): The path where the JSON file will be saved.
-
-**Returns**
-
-- `` (None): None
-
-#### finlab.online.core.position.Position.from_json
-
-```python
-from_json(path) -> Position
-```
-
-Load a JSON file from the given path and convert it to a list of positions.
-
-**Parameters**
-
-- `path` (str): The path to the JSON file.
-
-**Returns**
-
-- `` (Position): None
 
 ## 讓帳戶持股對齊目標
 
-`create_orders()` 會先取消帳戶裡未成交的委託，再送出讓帳戶持股變成目標部位的委託，預設以最後一筆成交價掛限價單，回傳送出（或預覽時將送出）的委託清單。`market_order`、`best_price_limit`、`extra_bid_pct` 三者只能擇一設定。
+### OrderExecutor()
 
-下面的帳戶和目標不一樣。先預覽會送出哪些委託，再一次或分批送出，看帳戶怎麼對齊目標：
+比對目標部位和帳戶目前的持股，算出差額並送出委託。
 
-### 調整掛單價格
+```python
+from finlab.online.order_executor import OrderExecutor
+
+executor = OrderExecutor(target, account=account)
+```
+
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `target_position` | `Position` 或 `dict[str, Number]` | 必填 | 要持有的部位；傳 dict 時會用 `Position()` 轉換。 |
+| `account` | `Account` | 必填 | 已登入的券商帳戶。 |
+
+### executor.create_orders()
+
+先取消帳戶裡未成交的委託，再送出讓帳戶持股變成 `target_position` 的委託，預設以最後一筆成交價掛限價單。回傳送出（或預覽時將送出）的委託清單。
+
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `market_order` | `bool` | `False` | 盡量立即成交（見 `account.create_order()`）。 |
+| `best_price_limit` | `bool` | `False` | 掛最有利的漲跌停價（芭樂價）等待成交；帳戶不支援時會報錯（見 `support_best_price_limit()`）。 |
+| `view_only` | `bool` | `False` | 只印出委託，不下單，也不取消現有委託。 |
+| `extra_bid_pct` | `float` | `0` | 限價偏離最後成交價的比例，範圍 -0.1 到 0.1：`0.01` 是買單高 1%、賣單低 1% 掛，比較容易成交；`-0.01` 方向相反，等較好的價格。 |
+| `progress` | `float` | `1` | 這次送出剩餘差距的多少比例（0 到 1）。 |
+| `progress_precision` | `int` | `0` | `progress` 小於 1 時，數量算到小數第幾位（0 是整張）。 |
+| `buy_only` / `sell_only` | `bool` | `False` | 只下買單或只下賣單。 |
+
+`market_order`、`best_price_limit`、`extra_bid_pct` 三者只能擇一設定。
+
+#### 調整掛單價格
 
 ```python
 # 預設以最後成交價掛限價單，extra_bid_pct 可微調價格
@@ -530,7 +393,7 @@ executor.create_orders(
 executor.create_orders(market_order=True)
 ```
 
-### 大額委託分批送出
+#### 大額委託分批送出
 
 ```python
 import time
@@ -538,14 +401,15 @@ import time
 # 將大額訂單分 3 次執行
 # progress 是「剩餘差距」的比例，不是原始目標的比例
 # 每輪成交後剩餘量會減少，所以比例要遞增
-for p in [1 / 3, 1 / 2, 1]:
+for i, p in enumerate([1 / 3, 1 / 2, 1]):
+    if i > 0:
+        time.sleep(60)  # 每批間隔 1 分鐘
     executor.create_orders(
         progress=p  # 依序執行 1/3、1/2、1 的剩餘量
     )
-    time.sleep(60)  # 間隔 1 分鐘
 ```
 
-### 分開開發與正式環境
+#### 分開開發與正式環境
 
 ```python
 import os
@@ -557,105 +421,79 @@ if os.environ.get('ENV') == 'development':
 else:
     executor.create_orders()
 ```
-### finlab.online.core.executor.OrderExecutor
+
+### executor.update_order_price()
+
+把還沒成交的限價單改到最後成交價（讓沒成交的限價單追價），可以再用 `extra_bid_pct` 調整。
 
 ```python
-OrderExecutor(target_position, account)
+executor.update_order_price(extra_bid_pct=0.01)
 ```
 
-對比實際帳戶與欲部屬的股票部位，進行同步
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `extra_bid_pct` | `float` | `0` | 新限價偏離最後成交價的比例，範圍 -0.1 到 0.1，方向同 `create_orders()`。 |
+| `buy_only` / `sell_only` | `bool` | `False` | 只改買單或只改賣單。 |
 
-**Parameters**
+### executor.cancel_orders()
 
-- `target_position` (Position): 想要部屬的股票部位。
-- `account` (Account): 目前支援永豐與富果帳戶，請參考 Account 來實做。
-
-#### finlab.online.core.executor.OrderExecutor.show_alerting_stocks
+取消所有未成交（含部分成交）的委託，或只取消買單、賣單。
 
 ```python
-show_alerting_stocks() -> None
+executor.cancel_orders(buy_only=True)
 ```
 
-產生下單部位是否有警示股，以及相關資訊
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `buy_only` / `sell_only` | `bool` | `False` | 只取消買單或只取消賣單。 |
 
-#### finlab.online.core.executor.OrderExecutor.cancel_orders
+### executor.generate_orders()
+
+只算出要送的委託（目標部位減去目前持股），不會下單。數量為正是買、為負是賣。
 
 ```python
-cancel_orders(buy_only, sell_only) -> None
+orders = executor.generate_orders()
 ```
 
-刪除所有未實現委託單
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `progress` | `float` | `1` | 剩餘差距要算進來的比例。 |
+| `progress_precision` | `int` | `0` | `progress` 小於 1 時，數量算到小數第幾位。 |
+| `as_entries` | `bool` | `None` | `True` 時回傳 `finlab.schemas.OrderEntry` 物件；預設回傳 dict 清單（finlab 開啟 typed strict 模式時改回傳 `OrderEntry`）。 |
+| `quantity_type` | `str` | `'decimal'` | `as_entries` 時數量的型別：`'decimal'`、`'float'` 或 `'string'`。 |
 
-**Attributes**
+### executor.execute_orders()
 
-- `buy_only` (bool, default False): 若設為 True，只取消買單
-- `sell_only` (bool, default False): 若設為 True，只取消賣單
-
-#### finlab.online.core.executor.OrderExecutor.generate_orders
+送出指定的委託清單，通常來自 `generate_orders()`。
 
 ```python
-generate_orders(progress, progress_precision, as_entries, quantity_type, _internal) -> list[dict[str, Any]] | list[Any]
+orders = executor.generate_orders()
+executor.execute_orders(orders, view_only=True)
 ```
 
-Generate orders based on the difference between target position and present position.
+| 參數 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `orders` | `list[dict]` | 必填 | 要送出的委託。 |
+| `market_order` / `best_price_limit` / `view_only` | `bool` | `False` | 同 `create_orders()`。 |
+| `extra_bid_pct` | `float` | `0` | 同 `create_orders()`。 |
+| `cancel_orders` | `bool` | `True` | 送出前先取消未成交的委託（`view_only=True` 時不取消）。 |
+| `buy_only` / `sell_only` | `bool` | `False` | 只下買單或只下賣單。 |
 
-**Returns**
+### executor.get_order_info()
 
-- `orders` (dict): Orders to be executed.
-
-#### finlab.online.core.executor.OrderExecutor.execute_orders
+逐檔列出價格、目前數量、目標數量與要下的數量，依委託金額由大到小排序。
 
 ```python
-execute_orders(orders, market_order, best_price_limit, view_only, extra_bid_pct, cancel_orders, buy_only, sell_only) -> list[dict[str, Any]]
+executor.get_order_info()
 ```
 
-產生委託單，將部位同步成 self.target_position
-預設以該商品最後一筆成交價設定為限價來下單
+### executor.show_alerting_stocks()
 
-**Attributes**
-
-- `orders` (list): 欲下單的部位，通常是由 `self.generate_orders` 產生。
-- `market_order` (bool, default False): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
-- `best_price_limit` (bool, default False): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
-- `view_only` (bool, default False): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
-- `extra_bid_pct` (float, default 0): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想； 假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
-- `buy_only` (bool, default False): 若設為 True，只下買單
-- `sell_only` (bool, default False): 若設為 True，只下賣單
-
-#### finlab.online.core.executor.OrderExecutor.create_orders
+僅限台股：列出待下單股票中屬於處置股或信用交易警示股的標的，這些股票需要事先向券商圈存現金或股票。
 
 ```python
-create_orders(market_order, best_price_limit, view_only, extra_bid_pct, progress, progress_precision, buy_only, sell_only) -> list[dict[str, Any]]
+executor.show_alerting_stocks()
 ```
-
-產生委託單，將部位同步成 self.target_position
-預設以該商品最後一筆成交價設定為限價來下單
-
-**Attributes**
-
-- `market_order` (bool, default False): 以類市價盡量即刻成交：所有買單掛漲停價，所有賣單掛跌停價
-- `best_price_limit` (bool, default False): 掛芭樂價：所有買單掛跌停價，所有賣單掛漲停價
-- `view_only` (bool, default False): 預設為 False，會實際下單。若設為 True，不會下單，只會回傳欲執行的委託單資料(dict)
-- `extra_bid_pct` (float, default 0): 以該百分比值乘以價格進行追價下單，如設定為 0.05 時，將以當前價的 +(-)5% 的限價進買入(賣出)，也就是更有機會可以成交，但是成交價格可能不理想； 假如設定為 -0.05 時，將以當前價的 -(+)5% 進行買入賣出，也就是限價單將不會立即成交，然而假如成交後，價格比較理想。參數有效範圍為 -0.1 到 0.1 內。
-- `progress` (float, default 1): 進度，預設為 1，即全部下單。若設定為 0.5，則只下一半的單。
-- `progress_precision` (int, default 0): 進度的精度，預設為 0，即只下整數張。若設定為 1，則下到 0.1 張。
-- `buy_only` (bool, default False): 若設為 True，只下買單
-- `sell_only` (bool, default False): 若設為 True，只下賣單
-
-#### finlab.online.core.executor.OrderExecutor.update_order_price
-
-```python
-update_order_price(extra_bid_pct, buy_only, sell_only) -> None
-```
-
-更新委託單，將委託單的限價調整成當天最後一筆價格。
-（讓沒成交的限價單去追價）
-
-**Attributes**
-
-- `extra_bid_pct` (float, default 0): 以該百分比值乘以價格進行追價下單，如設定為 0.1 時，將以超出(低於)現價之10%價格下單，以漲停(跌停)價為限。參數有效範圍為 0 到 0.1 內
-- `buy_only` (bool, default False): 若設為 True，只更新買單
-- `sell_only` (bool, default False): 若設為 True，只更新賣單
 
 ## 下單前要檢查的事
 
@@ -667,10 +505,7 @@ update_order_price(extra_bid_pct, buy_only, sell_only) -> None
 from finlab import data
 from finlab.online.order_executor import OrderExecutor, Position
 
-# 錯誤：直接下單可能買到處置股
-# OrderExecutor(target, account=account).create_orders()  # ❌
-
-# 正確：使用處置股 filter 過濾 finlab.online.Position
+# 使用處置股 filter 過濾目標部位
 disposal_stock_filter = data.get('etl:disposal_stock_filter')
 latest_filter = disposal_stock_filter.iloc[-1].fillna(False)
 
@@ -678,14 +513,14 @@ filtered_target = Position.from_list(
     [entry for entry in target.to_list() if latest_filter.get(entry['stock_id'], False)]
 )
 
-OrderExecutor(filtered_target, account=account).create_orders()  # ✅
+OrderExecutor(filtered_target, account=account).create_orders()
 ```
 
-`executor.show_alerting_stocks()` 會列出委託中屬於處置股或信用交易警示股的標的，這些股票需要事先向券商圈存現金或股票（僅限台股）。
+需要事先圈存的處置股與警示股，可以用 [`executor.show_alerting_stocks()`](#executorshow_alerting_stocks) 列出。
 
 ### 確認資金足夠
 
-下單前比較目標部位市值與 `account.get_total_balance()`，不足時調低 `Position.from_report()` 的 `fund` 或追加資金。檢查方式見下方常見問題「如何確保下單安全？」的 `safe_order_check()`。
+下單前比較目標部位市值與 `account.get_total_balance()`，不足時調低 `Position.from_report()` 的 `fund` 或追加資金。檢查函式 `safe_order_check()` 見實盤下單教學的[錯誤 2：下單前安全檢查失敗](order_api.md#錯誤-2下單前安全檢查失敗)。
 
 ### 漲跌停鎖死可能整天無法成交
 
@@ -700,71 +535,35 @@ print(ref.loc[['2330', '2317'], ['收盤價', '漲停價', '跌停價']])
 
 ## 查詢委託狀態
 
-`account.get_orders()` 回傳目前所有委託單，key 是券商的委託單編號，value 是 `Order`：
+### account.get_orders()
+
+回傳目前所有委託單，key 是券商的委託單編號，value 是 `Order`：
 
 ```python
 for order_id, order in account.get_orders().items():
     print(order_id, order.stock_id, order.status, order.filled_quantity)
 ```
 
-`status` 是 `NEW`、`PARTIALLY_FILLED`、`FILLED` 或 `CANCEL`；`stock_id` 也可以用 `symbol` 取得。
-### finlab.online.core.account.Order
+每個 `Order`（dataclass）有這些欄位：
 
-```python
-Order(order_id, stock_id, action, price, quantity, filled_quantity, status, order_condition, time, org_order)
-```
-
-Order status
-
-委託單的狀態
-
-**Attributes**
-
-- `order_id` (str): 委託單的 id，與券商 API 所提供的 id 一致
-- `stock_id` (str): 股票代號 ex: '2330' (亦可透過 symbol 屬性存取)
-- `action` (Action): 買賣方向，通常為 'BUY' 或是 'SELL'
-- `price` (Number): 股票買賣的價格(限價單)
-- `quantity` (Number): 委託股票的總數量（張數），允許小數點
-- `filled_quantity` (Number): 以成交股票的數量（張數），允許小數點
-- `status` (OrderStatus): 委託狀態，可以設定為：'NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCEL'
-- `time` (datetime.datetime): 委託時間
-- `org_order` (Any = None): 券商所提供的委託物件格式
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `order_id` | `str` | 委託單編號，與券商 API 提供的一致。 |
+| `stock_id` | `str` | 股票代號，例如 `'2330'`（也可以用 `symbol` 取得）。 |
+| `action` | `Action` | `Action.BUY` 或 `Action.SELL`。 |
+| `price` | `Number` | 限價。 |
+| `quantity` | `Number` | 委託總數量，單位跟著帳戶的市場（台股是張，可有小數）。 |
+| `filled_quantity` | `Number` | 已成交數量。 |
+| `status` | `OrderStatus` | `NEW`、`PARTIALLY_FILLED`、`FILLED` 或 `CANCEL`。 |
+| `order_condition` | `OrderCondition` | 現股、融資、融券或當沖。 |
+| `time` | `datetime.datetime` | 委託時間。 |
+| `org_order` | `Any` | 券商原本的委託物件。 |
 
 ## 常見問題
 
 <details><summary>如何確保下單安全？</summary>
 
-實施以下檢查機制：
-
-```python
-def safe_order_check(target, account, max_stocks=50, max_weight=0.15):
-    """下單前安全檢查"""
-    price = account.get_price([p['symbol'] for p in target])
-    # 台股的 quantity 單位是張（1 張 = 1000 股）
-    values = [abs(float(p['quantity'])) * 1000 * price[p['symbol']] for p in target]
-    total = sum(values)
-
-    # 1. 檢查持倉數量
-    if len(values) > max_stocks:
-        raise ValueError(f"❌ 持倉過多（{len(values)} 檔），超過限制 {max_stocks} 檔")
-
-    # 2. 檢查單一持股權重
-    largest = max(values) / total if total else 0
-    if largest > max_weight:
-        raise ValueError(f"❌ 單股權重過高（{largest:.1%}），超過限制 {max_weight:.0%}")
-
-    # 3. 檢查可用資金
-    available = account.get_total_balance()
-    if total > available * 1.1:  # 留 10% 緩衝
-        raise ValueError(f"❌ 資金不足！需要 {total:,.0f}，可用 {available:,.0f}")
-
-    print("✅ 安全檢查通過")
-    return True
-
-# 使用
-if safe_order_check(target, account):
-    executor.create_orders()
-```
+先用 `view_only=True` 預覽委託，並做完[下單前要檢查的事](#下單前要檢查的事)。同時檢查持倉數量、單股權重與可用資金的範例函式 `safe_order_check()`，見實盤下單教學的[錯誤 2：下單前安全檢查失敗](order_api.md#錯誤-2下單前安全檢查失敗)。
 
 </details>
 
@@ -783,39 +582,7 @@ if safe_order_check(target, account):
 
 <details><summary>如何設定自動下單排程？</summary>
 
-```python
-import time
-
-import schedule
-from finlab import data
-from finlab.backtest import sim
-from finlab.online.order_executor import OrderExecutor, Position
-
-def auto_trade():
-    """每日自動下單"""
-    try:
-        # 1. 重新執行策略，取得最新目標部位
-        close = data.get('price:收盤價')
-        position = (close / close.shift(120)).is_largest(20)
-        report = sim(position, resample='M', upload=False)
-        target = Position.from_report(report, fund=1_000_000)
-
-        # 2. 安全檢查
-        if safe_order_check(target, account):
-            # 3. 執行下單
-            OrderExecutor(target, account=account).create_orders()
-            print(f"✅ 下單完成：{time.strftime('%Y-%m-%d %H:%M:%S')}")
-    except Exception as e:
-        # 4. 錯誤通知（Email、聊天群組 webhook）
-        print(f"❌ 下單失敗：{e}")
-
-# 每日 13:00 執行（台股 13:30 收盤前 30 分鐘）
-schedule.every().day.at("13:00").do(auto_trade)
-
-while True:
-    schedule.run_pending()
-    time.sleep(60)
-```
+用 `schedule` 套件每天重跑策略、檢查後下單的範例，見實盤下單教學的[設定每日下單排程](order_api.md#設定每日下單排程)。
 
 不想自己維持一個常駐程式，也可以用 [FinLab CLI](https://studio.finlab.finance/docs/cli) 每天重跑策略。
 
@@ -844,26 +611,13 @@ except Exception as e:
 
 </details>
 
-> [!CAUTION]
-> **最後提醒**
->
-> **請務必在模擬帳戶充分測試後，才使用真實資金！**
->
-> **建議測試清單**：
-> - 下單流程完整執行無錯誤
-> - 持倉計算正確（與預期一致）
-> - 資金控制正常（不超支）
-> - 異常處理機制有效
-> - 通知機制正常運作
-> - 連續運行 1 個月無問題
->
-> **只有在以上項目全部確認後，才考慮使用真實資金！**
-
 ## 下一步
 
-- [實盤下單（單策略）](order_api.md) 各券商的帳密設定與基礎下單流程。
-- [實盤下單（多策略）](order_api2.md) 用 PortfolioSyncManager 合併多個策略的部位後下單。
+投入真實資金前，先逐項確認[上線前的檢查清單](order_api.md#上線前的檢查清單)。
+
+- [下單：單一策略](order_api.md) 各券商的帳密設定與基礎下單流程。
+- [下單：多策略](order_api2.md) 用 PortfolioSyncManager 合併多個策略的部位後下單。
 - [風險管理完整指南](https://studio.finlab.finance/docs/workflows/risk_management) 實盤的部位、停損與資金控管。
 - [完整策略開發流程](https://studio.finlab.finance/docs/workflows/complete_strategy_workflow) 從研究、回測到實盤的步驟。
 
-原始碼在 [GitHub](https://github.com/finlab-python/finlab/blob/main/finlab/online/)。
+原始碼在 [core/](../../core/) 與 [brokers/](../../brokers/)。
