@@ -42,9 +42,9 @@ finlab_online/
 
 ```python
 from finlab.online import OrderExecutor, Position
-
-# See https://doc.finlab.tw/details/order_api/ for full documentation.
 ```
+
+Full documentation, in Chinese and English: [docs/](docs/README.md), starting with [Orders: one strategy](docs/en/order_api.md) ([下單：單一策略](docs/zh-tw/order_api.md)).
 
 ## Testing
 
